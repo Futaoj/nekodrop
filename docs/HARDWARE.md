@@ -88,6 +88,12 @@ every CI build) checks the multi-vendor parsing, the forced *on demand* and
 the provider matching without a card or administrator rights.
 `NekoDropService.exe --status` prints the profile of the card it finds.
 
+## MediaTek MT7922 / MT7921 (`mtkradio`)
+
+Experimental user-mode support for MediaTek Connac2 cards (`14C3:0616` / `14C3:7922` MT7922 / AMD RZ616, and `14C3:7961` / `14C3:0608` MT7921 / AMD RZ608) is implemented in `mtkradio/` (and standalone at [YiHoooong/mtkradio](https://github.com/YiHoooong/mtkradio)). Like Realtek above, it runs in *on-demand* mode (`CardCatalog.cs`: `RadioBackendKind.MtkRadio`, `ConcurrentWifi = false`) via the same on-PC self-signed UMDF register proxy.
+
+See [docs/MT7922.md](MT7922.md) for live Windows 11 benchmarks (4.5 MB/s peak RX on 394 MB transfer, 1.7 MB/s burst TX with VHT 80 MHz 2SS + HW TX BlockAck), Windows TCP buffer / timer findings, and the dual-BSS concurrent Wi-Fi roadmap.
+
 ## The steps
 
 1. **Detection (done).** The diagnostic report names every wireless card, its

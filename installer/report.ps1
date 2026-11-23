@@ -32,6 +32,7 @@ Set-StrictMode -Off
 # The supported IDs are iwxradio/src/cards.h's kDeviceIds, the register
 # proxy's INF and install.ps1's check: keep them in step.
 $SupportedIntelIds = @('43F0', 'A0F0', '02F0', '06F0', '34F0', '3DF0', '4DF0', '2723', '2725', '7A70', '7AF0', '51F0', '51F1', '54F0', '7F70')
+$SupportedMtkIds = @('0616', '7922', '7961', '0608')
 # Known Wi-Fi chips, 'vendor:device' -> kind, name. Used to name the chip and to
 # find a card that has no driver (it is then no network adapter). Never used to
 # call a device wireless by its vendor alone: Intel and Realtek make Ethernet
@@ -95,7 +96,8 @@ $WifiChips = @{
 }
 # kind -> what the report says, and a hint for the reader (may be empty).
 $WifiKinds = @{
-  'supported'   = @('supported by nekodrop', '')
+  'supported'     = @('supported by nekodrop', '')
+  'mtk-supported' = @('supported by nekodrop (MediaTek mtkradio, on-demand AirDrop)', '')
   'intel-fw'    = @('not supported: its firmware is not shipped upstream', 'nekodrop runs the Intel cards whose firmware ForbiddenItlwm ships (API 68); this one has none there.')
   'intel-be'    = @('not supported: Intel Wi-Fi 7, no upstream driver', 'ForbiddenItlwm, which nekodrop ports, has no driver for Wi-Fi 7 cards yet.')
   'intel-other' = @('not supported: an Intel device ID nekodrop does not know', 'Please post this report in an issue: if upstream ships firmware for this card, its ID can be added.')
@@ -122,6 +124,7 @@ function Classify-WifiCard([string]$InstanceId, [string]$FriendlyName = '') {
   elseif ($bus -eq 'PCI' -and $vendor) {
     $key = $vendor + ':' + $device
     if ($vendor -eq '8086' -and $SupportedIntelIds -contains $device) { $kind = 'supported'; $chip = 'Intel Wi-Fi 6/6E' }
+    elseif ($vendor -eq '14C3' -and $SupportedMtkIds -contains $device) { $kind = 'mtk-supported'; $chip = if ($WifiChips.ContainsKey($key)) { $WifiChips[$key][1] } else { 'MediaTek Connac2' } }
     elseif ($WifiChips.ContainsKey($key)) { $kind = $WifiChips[$key][0]; $chip = $WifiChips[$key][1] }
     else {
       # Only reached for a device already known to be wireless (by its medium
@@ -158,8 +161,8 @@ if ($SelfTest) {
     @('pci\ven_10ec&dev_c852&subsys_c85210ec', 'rtl-winawdl', 'Realtek RTL8852CE'),
     @('PCI\VEN_10EC&DEV_B852&SUBSYS_B85217AA\4&1', 'rtl', 'Realtek RTL8852BE'),
     @('PCI\VEN_10EC&DEV_ABCD&SUBSYS_000010EC', 'rtl', 'Realtek ABCD (not in nekodrop''s table)'),
-    @('PCI\VEN_14C3&DEV_7922&SUBSYS_7922103C\4&1', 'mtk', 'MediaTek MT7922'),
-    @('PCI\VEN_14C3&DEV_0616&SUBSYS_E0CD1A3B\4&1', 'mtk', 'MediaTek MT7922 (AMD RZ616)'),
+    @('PCI\VEN_14C3&DEV_7922&SUBSYS_7922103C\4&1', 'mtk-supported', 'MediaTek MT7922'),
+    @('PCI\VEN_14C3&DEV_0616&SUBSYS_E0CD1A3B\4&1', 'mtk-supported', 'MediaTek MT7922 (AMD RZ616)'),
     @('PCI\VEN_14C3&DEV_7927&SUBSYS_792714C3\4&1', 'mtk', 'MediaTek MT7927 (Wi-Fi 7)'),
     @('PCI\VEN_14C3&DEV_7902&SUBSYS_790214C3\4&1', 'mtk', 'MediaTek MT7902'),
     @('PCI\VEN_17CB&DEV_1103&SUBSYS_010817CB\4&1', 'qcom', 'Qualcomm WCN6855 (FastConnect 6800/6900)'),
@@ -361,7 +364,7 @@ function Wireless-Summary($dev) {
   $hw = if ($c.Bus -and $c.HardwareId -and $c.HardwareId -ne $c.Bus) { "$($c.Bus)\$($c.HardwareId)" } else { $c.HardwareId }
   return "$(Dev-Name $dev) (``$(Redact $hw)``): $($c.Chip), $($c.Status)"
 }
-$procs = @('nekodrop-radio', 'awdld', 'nekodrop', 'NekoDropService') | ForEach-Object {
+$procs = @('nekodrop-radio', 'mtkradio', 'awdld', 'nekodrop', 'NekoDropService') | ForEach-Object {
   $p = Get-Process $_ -ErrorAction SilentlyContinue
   if ($p) { "$_ (running)" } else { "$_ (not running)" }
 }
@@ -425,15 +428,15 @@ if ($start -lt 0) {
   W ''
   W '| Step | Result | Line |'
   W '|---|---|---|'
-  W (Stage 'Take the card (driver bind)' 'radio: card 0x' 'taking the card failed|binding .* failed|register proxy did not start|register proxy not openable')
-  W (Stage 'Identify the card' 'radio: .*\((AX210|22000) family' 'unsupported card|not an Intel device|card does not answer')
-  W (Stage 'DMA memory' 'DMA: \d+ pages in use' 'out of DMA memory for (the rings|receive|the transmit|command|the firmware|the peripheral)|could not lock|DMA: .*fail')
-  W (Stage 'Load the firmware' 'radio: firmware \S+: \d+ LMAC' 'firmware has more sections|no image loader|cannot read|firmware file')
-  W (Stage 'Firmware alive' 'radio: firmware alive' 'did not come alive|failed ALIVE|no ALIVE notification|card not ready|APM init failed|hardware start failed')
+  W (Stage 'Take the card (driver bind)' 'radio: card 0x|mtkradio: regproxy opened:' 'taking the card failed|binding .* failed|register proxy did not start|register proxy not openable')
+  W (Stage 'Identify the card' 'radio: .*\((AX210|22000) family|mtkradio: MTK chip_id=' 'unsupported card|not an Intel device|card does not answer')
+  W (Stage 'DMA memory' 'DMA: \d+ pages in use|mtkradio: 32-bit DMA pool locked' 'out of DMA memory for (the rings|receive|the transmit|command|the firmware|the peripheral)|could not lock|DMA: .*fail|SeLockMemoryPrivilege')
+  W (Stage 'Load the firmware' 'radio: firmware \S+: \d+ LMAC|mtkradio: loading RAM firmware' 'firmware has more sections|no image loader|cannot read|firmware file')
+  W (Stage 'Firmware alive' 'radio: firmware alive|mtkradio: MT792\d firmware booted and ready' 'did not come alive|failed ALIVE|no ALIVE notification|card not ready|APM init failed|hardware start failed')
   W (Stage 'PNVM (AX210 family)' 'PNVM: \d+ bytes for this SKU' 'PNVM: none|PNVM: no buffer|PNVM: out of DMA|no PNVM_INIT_COMPLETE|did not take its platform NVM' 'AX210 family')
-  W (Stage 'Firmware init (INIT_COMPLETE)' 'radio: NVM: tx antennas' 'no INIT_COMPLETE|INIT_EXTENDED_CFG failed|NVM_ACCESS_COMPLETE failed|reading the NVM failed')
-  W (Stage 'Firmware setup commands' 'radio: ready on channel' 'firmware init commands failed|PHY context add failed|MAC context|binding failed')
-  W (Stage 'Radio ready' 'radio: ready on channel' 'radio exited during bring-up|never became ready')
+  W (Stage 'Firmware init (INIT_COMPLETE)' 'radio: NVM: tx antennas|mtkradio: WFDMA rings allocated' 'no INIT_COMPLETE|INIT_EXTENDED_CFG failed|NVM_ACCESS_COMPLETE failed|reading the NVM failed')
+  W (Stage 'Firmware setup commands' 'radio: ready on channel|mtkradio: tuned to ch' 'firmware init commands failed|PHY context add failed|MAC context|binding failed')
+  W (Stage 'Radio ready' 'radio: ready on channel|mtkradio: listening on ' 'radio exited during bring-up|never became ready')
   $awdl = $attempt | Where-Object { $_ -match 'rx: \d+ frames, (\d+) AWDL action frames' } | ForEach-Object { [int]$Matches[1] } | Measure-Object -Maximum
   # MIF counts (0.1.9+): awdld takes a peer as valid only after one (#16).
   $mif = $attempt | Where-Object { $_ -match 'AWDL action frames \((\d+) PSF, (\d+) MIF' } | ForEach-Object { [int]$Matches[2] } | Measure-Object -Maximum
