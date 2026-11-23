@@ -4,3 +4,6 @@
 /.claude/
 /app/*/bin/
 /app/*/obj/
+/mtkradio/build/
+mtkradio/firmware/*.bin
+/mtkradio/build-linux/
