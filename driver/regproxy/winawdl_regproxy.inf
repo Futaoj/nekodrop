@@ -40,6 +40,12 @@ HKR,,Icon,,"-5"
 %DeviceDesc% = RegProxy, PCI\VEN_8086&DEV_51F1
 %DeviceDesc% = RegProxy, PCI\VEN_8086&DEV_54F0
 %DeviceDesc% = RegProxy, PCI\VEN_8086&DEV_7F70
+; MediaTek MT7922 / AMD RZ616 and MT7921 / AMD RZ608
+%MtkDeviceDesc% = RegProxy, PCI\VEN_14C3&DEV_0616
+%MtkDeviceDesc% = RegProxy, PCI\VEN_14C3&DEV_7922
+%MtkDeviceDesc% = RegProxy, PCI\VEN_0B48&DEV_7922
+%MtkDeviceDesc% = RegProxy, PCI\VEN_14C3&DEV_7961
+%MtkDeviceDesc% = RegProxy, PCI\VEN_14C3&DEV_0608
 
 [SourceDisksNames]
 1 = %DiskName%
@@ -95,5 +101,6 @@ ServiceBinary      = %13%\winawdl_regproxy.dll
 Provider   = "winairdrop project"
 ClassName  = "winawdl user-space radios"
 DeviceDesc = "Intel Wi-Fi user-space register proxy (nekodrop)"
+MtkDeviceDesc = "MediaTek Wi-Fi user-space register proxy (nekodrop)"
 DiskName   = "winawdl register proxy"
 WudfRdDisplayName = "Windows Driver Foundation - User-mode Driver Framework Reflector"

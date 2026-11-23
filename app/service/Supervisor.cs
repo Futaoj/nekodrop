@@ -53,6 +53,7 @@ public sealed class Supervisor : IDisposable
     /// it is the Intel set, so those paths behave exactly as before the catalog.
     /// </summary>
     AdapterCapabilities _caps = AdapterCapabilities.IntelDefault;
+    RadioBackendKind _backend = RadioBackendKind.Iwx;
 
     /// <summary>
     /// The mode the card can run: the user's choice, except Concurrent on a
@@ -156,6 +157,7 @@ public sealed class Supervisor : IDisposable
             {
                 var p = card.Profile;
                 _caps = p.Capabilities;
+                _backend = p.Backend;
                 // Same line as before the catalog for Intel cards ("Intel INF on record").
                 Say($"card: {card.InstanceId}; driver service {card.Service}, INF {Path.GetFileName(card.InfPath)} ({card.Provider}), problem {card.Problem}" +
                     $"; {p.VendorName} INF on record {Path.GetFileName(_cfg.VendorInf)}");
@@ -374,7 +376,8 @@ public sealed class Supervisor : IDisposable
             // Radio options only for a card whose radio has them (all Intel cards do).
             if (_cfg.FastSend && !kernel && _caps.SupportsFastSend) args.AddRange(["--tx-window", "48"]);
             if (_cfg.Aggregate && !kernel && _caps.SupportsAggregate) args.Add("--aggregate");
-            _radio = Spawn(Path.Combine(_root, "radio", "nekodrop-radio.exe"), args, OnRadioLine);
+            var radioExe = _backend == RadioBackendKind.MtkRadio ? "mtkradio.exe" : "nekodrop-radio.exe";
+            _radio = Spawn(Path.Combine(_root, "radio", radioExe), args, OnRadioLine);
             _startedAt = DateTime.UtcNow;
             // awdld connects to the radio's pipe; give the firmware time to boot.
             for (int i = 0; i < 100 && State == RadioState.Starting && _radio is { HasExited: false }; i++) Thread.Sleep(100);
@@ -435,7 +438,8 @@ public sealed class Supervisor : IDisposable
         Say("radio: " + line);
         var at = line.IndexOf("radio: ", StringComparison.Ordinal);
         var text = at >= 0 ? line[(at + 7)..] : line;
-        if (text.StartsWith("ready on channel", StringComparison.Ordinal))
+        if (text.StartsWith("ready on channel", StringComparison.Ordinal) ||
+            text.StartsWith("listening on ", StringComparison.Ordinal))
         {
             bool bootScan;
             lock (_lock)
@@ -451,6 +455,10 @@ public sealed class Supervisor : IDisposable
         else if (text.StartsWith("bring-up failed: ", StringComparison.Ordinal))
         {
             lock (_lock) _detail = text[17..];
+        }
+        else if (text.StartsWith("OPEN FAILED: ", StringComparison.Ordinal))
+        {
+            lock (_lock) _detail = text[13..];
         }
         else if (text.StartsWith("rx: ", StringComparison.Ordinal))
         {
@@ -757,6 +765,7 @@ public sealed class Supervisor : IDisposable
     {
         var card = Card.Find() ?? throw new InvalidOperationException("no supported Wi-Fi card found");
         _caps = card.Profile.Capabilities;
+        _backend = card.Profile.Backend;
         if (Card.TakenByProxy(card)) return;
         // Only the vendor's INF is the one to give the card back to, never the proxy's (issue #12).
         // Not checked against the vendor's provider names: OEM repackages of

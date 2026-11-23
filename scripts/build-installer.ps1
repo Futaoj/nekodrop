@@ -23,6 +23,13 @@ New-Item -ItemType Directory -Force $stage, $downloads | Out-Null
 New-Item -ItemType Directory -Force "$stage\radio\firmware" | Out-Null
 Copy-Item "$repo\build\iwxradio\winawdl_radio.exe" "$stage\radio\nekodrop-radio.exe"
 Copy-Item "$repo\build\iwxradio\firmware\*" "$stage\radio\firmware\"
+if (Test-Path "$repo\mtkradio\build.ps1") {
+  & "$repo\mtkradio\build.ps1" | Out-Null
+  Copy-Item "$repo\mtkradio\build\mtkradio.exe" "$stage\radio\mtkradio.exe"
+  if (Test-Path "$repo\mtkradio\firmware") {
+    Copy-Item "$repo\mtkradio\firmware\*.bin" "$stage\radio\firmware\"
+  }
+}
 
 'awdl'
 & "$PSScriptRoot\build-awdl.ps1" -MinGW "$repo\third_party\winlibs\mingw64\bin" | Out-Null

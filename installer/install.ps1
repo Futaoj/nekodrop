@@ -38,14 +38,14 @@ function Step($what, [scriptblock]$do) {
   if (-not $DryRun) { & $do }
 }
 
-if (-not (Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -match 'PCI\\VEN_8086&DEV_(43F0|A0F0|02F0|06F0|34F0|3DF0|4DF0|2723|2725|7A70|7AF0|51F0|51F1|54F0|7F70)' })) {
-  throw 'This PC has no Intel Wi-Fi card nekodrop supports (AX201, AX200, AX210, AX211, AX411, or 9560 on Qu); nekodrop cannot run here.'
+if (-not (Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -match 'PCI\\VEN_8086&DEV_(43F0|A0F0|02F0|06F0|34F0|3DF0|4DF0|2723|2725|7A70|7AF0|51F0|51F1|54F0|7F70)|PCI\\VEN_14C3&DEV_(0616|7922|7961|0608)' })) {
+  throw 'This PC has no supported Wi-Fi card (Intel AX200/AX201/AX210/AX211/AX411/9560 or MediaTek MT7922/MT7921); nekodrop cannot run here.'
 }
 
 'Files'
 Step 'stop an earlier service' {
   if (Get-Service $Service -ErrorAction SilentlyContinue) { Stop-Service $Service -Force -ErrorAction SilentlyContinue }
-  Get-Process nekodrop, nekodrop-radio, awdld -ErrorAction SilentlyContinue | Stop-Process -Force
+  Get-Process nekodrop, nekodrop-radio, mtkradio, awdld -ErrorAction SilentlyContinue | Stop-Process -Force
 }
 Step "copy to $Target" {
   New-Item -ItemType Directory -Force $Target | Out-Null

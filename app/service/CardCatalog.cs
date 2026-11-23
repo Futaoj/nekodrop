@@ -8,6 +8,8 @@ public enum RadioBackendKind
     Iwx,
     /// <summary>winawdl's devourer (Realtek RTL8852CE): monitor and inject only, no station.</summary>
     Devourer,
+    /// <summary>mtkradio: user-mode MediaTek MT7921 / MT7922 (RZ608 / RZ616) Connac2 driver.</summary>
+    MtkRadio,
 }
 
 /// <summary>
@@ -76,10 +78,16 @@ public static class CardCatalog
     const string ProxyProvider = "winairdrop project";
     // Killer (Rivet Networks) cards are Intel chips with Intel's driver repackaged.
     static readonly string[] IntelProviders = ["Intel", "Killer", "Rivet Networks"];
+    static readonly string[] MediaTekProviders = ["MediaTek", "AMD", "Lenovo", "HP", "ASUS", "Microsoft"];
+    static readonly AdapterCapabilities MediaTekCaps = new(false, false, false, false, 0x100000);
 
     static AdapterProfile Intel(string device, string family) =>
         new("8086", device, "Intel", family, RadioBackendKind.Iwx, AdapterCapabilities.IntelDefault,
             ProxyInf, ProxyService, ProxyProvider, IntelProviders, Active: true);
+
+    static AdapterProfile MediaTek(string device, string family) =>
+        new("14C3", device, "MediaTek", family, RadioBackendKind.MtkRadio, MediaTekCaps,
+            ProxyInf, ProxyService, ProxyProvider, MediaTekProviders, Active: true);
 
     /// <summary>Every card listed, taken or not.</summary>
     public static readonly IReadOnlyList<AdapterProfile> AllProfiles =
@@ -95,6 +103,11 @@ public static class CardCatalog
         Intel("7AF0", "AX210 / AX211 / AX411"), Intel("51F0", "AX210 / AX211 / AX411"),
         Intel("51F1", "AX210 / AX211 / AX411"), Intel("54F0", "AX210 / AX211 / AX411"),
         Intel("7F70", "AX210 / AX211 / AX411"),
+        // MediaTek Connac2 (MT7921 / MT7922 / AMD RZ608 / RZ616) via user-mode mtkradio.exe.
+        MediaTek("0616", "MT7922 (RZ616)"),
+        MediaTek("7922", "MT7922"),
+        MediaTek("7961", "MT7921"),
+        MediaTek("0608", "MT7921 (RZ608)"),
         // Not taken (docs/HARDWARE.md, step 4): winawdl drives it with devourer,
         // which has no station (so no Wi-Fi beside AirDrop), and its registers
         // are a BAR of at least 64 KiB. The proxy's INF does not match it yet.
@@ -166,10 +179,23 @@ public static class CardCatalog
         var fail = new List<string>();
         void Check(bool ok, string what) { if (!ok) fail.Add(what); }
 
-        // The 15 Intel IDs the service took before the catalog (Card.DeviceIds, 0.1.20).
+        // The 15 Intel IDs + 4 MediaTek Connac2 IDs (MT7921/MT7922).
         string[] intel = ["43F0", "A0F0", "02F0", "06F0", "34F0", "3DF0", "4DF0",
                           "2723", "2725", "7A70", "7AF0", "51F0", "51F1", "54F0", "7F70"];
-        Check(ActiveProfiles.Count == intel.Length, $"{ActiveProfiles.Count} active profiles, expected {intel.Length}");
+        string[] mtk = ["0616", "7922", "7961", "0608"];
+        Check(ActiveProfiles.Count == intel.Length + mtk.Length,
+              $"{ActiveProfiles.Count} active profiles, expected {intel.Length + mtk.Length}");
+        foreach (var dev in mtk)
+        {
+            var id = $"PCI\\VEN_14C3&DEV_{dev}&SUBSYS_E0DF105B&REV_00\\4&79D7C7&0&000F";
+            var p = MatchActive(id);
+            if (p is null) { fail.Add($"14C3:{dev} is not taken"); continue; }
+            Check(p.VendorName == "MediaTek" && p.Backend == RadioBackendKind.MtkRadio,
+                  $"14C3:{dev} vendor {p.VendorName} backend {p.Backend}");
+            Check(p.Capabilities.MinBarBytes == 0x100000, $"14C3:{dev} BAR {p.Capabilities.MinBarBytes:x}");
+            Check(EffectiveMode(NetMode.Concurrent, p.Capabilities) == NetMode.OnDemand,
+                  $"14C3:{dev} Concurrent not forced to OnDemand");
+        }
         foreach (var dev in intel)
         {
             var id = $"PCI\\VEN_8086&DEV_{dev}&SUBSYS_00748086&REV_00\\3&11583659&0&A3";
@@ -219,7 +245,7 @@ public static class CardCatalog
 
         // Ethernet chips from the same vendors and Wi-Fi cards nekodrop does not know.
         foreach (var other in new[] { "PCI\\VEN_8086&DEV_15F3&SUBSYS_00008086\\1", "PCI\\VEN_10EC&DEV_8168&SUBSYS_00000000\\1",
-                                      "PCI\\VEN_14C3&DEV_7922&SUBSYS_00000000\\1", "PCI\\VEN_8086&DEV_7E40&SUBSYS_00908086\\1" })
+                                      "PCI\\VEN_14C3&DEV_7925&SUBSYS_00000000\\1", "PCI\\VEN_8086&DEV_7E40&SUBSYS_00908086\\1" })
         {
             Check(MatchActive(other) is null, $"{other} would be taken");
             Check(Classify(other) is null, $"{other} is classified");

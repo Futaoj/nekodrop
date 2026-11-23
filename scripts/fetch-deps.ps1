@@ -52,3 +52,12 @@ if (-not (Test-Path "$kit\Include\wdf\umdf")) {
   }
   'WDK 10.0.26100.6584 (NuGet)'
 } else { 'WDK: installed' }
+
+# MediaTek MT7922 firmware blobs (linux-firmware) for mtkradio.
+$mtkFw = Join-Path $repo 'mtkradio\firmware'
+New-Item -ItemType Directory -Force $mtkFw | Out-Null
+$mtkBase = 'https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/mediatek'
+foreach ($f in 'WIFI_MT7922_patch_mcu_1_1_hdr.bin', 'WIFI_RAM_CODE_MT7922_1.bin') {
+  Get-File "$mtkBase/$f" (Join-Path $mtkFw $f) $null
+}
+'MediaTek MT7922 firmware (linux-firmware)'

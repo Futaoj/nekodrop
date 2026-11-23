@@ -11,6 +11,8 @@ $DriverSettings = @{
   CertFile     = 'winairdrop-signing.cer'
   # The cards the radio drives (iwxradio/src/cards.h): Qu/QuZ CNVi, AX200, AX210 family.
   DeviceIds    = @('43F0', 'A0F0', '02F0', '06F0', '34F0', '3DF0', '4DF0', '2723', '2725', '7A70', '7AF0', '51F0', '51F1', '54F0', '7F70')
+  # MediaTek MT7922 / RZ616 and MT7921 / RZ608
+  MtkHardwareIds = @('PCI\VEN_14C3&DEV_0616', 'PCI\VEN_14C3&DEV_7922', 'PCI\VEN_0B48&DEV_7922', 'PCI\VEN_14C3&DEV_7961', 'PCI\VEN_14C3&DEV_0608')
   TrustStores  = @('Root', 'TrustedPublisher')
 }
 
@@ -26,8 +28,9 @@ function Get-WifiCard {
   Get-PnpDevice -PresentOnly |
     Where-Object {
       $id = $_.InstanceId
-      $id -like 'PCI\VEN_8086&DEV_*' -and
-        ($DriverSettings.DeviceIds | Where-Object { $id -like "PCI\VEN_8086&DEV_$_*" })
+      ($id -like 'PCI\VEN_8086&DEV_*' -and
+        ($DriverSettings.DeviceIds | Where-Object { $id -like "PCI\VEN_8086&DEV_$_*" })) -or
+      ($DriverSettings.MtkHardwareIds | Where-Object { $id -like "$_*" })
     } |
     Select-Object -First 1
 }

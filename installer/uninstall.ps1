@@ -9,7 +9,7 @@ $CertSubject = 'CN=nekodrop driver (signed on this PC)'
 
 'Giving the Wi-Fi card back'
 if (Get-Service $Service -ErrorAction SilentlyContinue) { Stop-Service $Service -Force }
-Get-Process nekodrop, nekodrop-radio, awdld -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process nekodrop, nekodrop-radio, mtkradio, awdld -ErrorAction SilentlyContinue | Stop-Process -Force
 & (Join-Path $Target 'NekoDropService.exe') --give-back
 
 'Service'
