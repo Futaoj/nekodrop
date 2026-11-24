@@ -11,6 +11,9 @@ public enum RadioBackendKind
     /// <summary>nekodrop-radio-mt: the MediaTek MT7902 driver ported from Linux mt76 (mtradio/): sniffer, inject,
     /// AWDL peer stations, and a 5 GHz Wi-Fi station on the host (the card moves between the router and AWDL).</summary>
     Mt76,
+    /// <summary>nekodrop-radio-mtk: the MediaTek MT7922 / MT7921 user-mode driver (mtkradio/):
+    /// on-demand AWDL monitor and inject, no Wi-Fi station.</summary>
+    MtkRadio,
 }
 
 /// <summary>
@@ -87,6 +90,8 @@ public static class CardCatalog
      * (mtradio's --test-kinds), and a station's every frame does: 5 GHz only. */
     static readonly AdapterCapabilities MediaTekCaps = new(true, false, false, false, 0x10000, StationOn24GHz: false);
     static readonly string[] MediaTekProviders = ["MediaTek"];
+    static readonly AdapterCapabilities MtkRadioCaps = new(false, false, false, false, 0x100000);
+    static readonly string[] MtkRadioProviders = ["MediaTek", "AMD"];
 
     static AdapterProfile Intel(string device, string family) =>
         new("8086", device, "Intel", family, RadioBackendKind.Iwx, AdapterCapabilities.IntelDefault,
@@ -117,6 +122,16 @@ public static class CardCatalog
         // card's one channel with AWDL); 1 MiB BAR0.
         new AdapterProfile("14C3", "7902", "MediaTek", "MT7902", RadioBackendKind.Mt76, MediaTekCaps,
             ProxyInf, ProxyService, ProxyProvider, MediaTekProviders, Active: true),
+        // MediaTek MT7922 / MT7921 (nekodrop-radio-mtk.exe, mtkradio/):
+        // monitor and inject only (no station, so Concurrent runs OnDemand); 1 MiB BAR0.
+        new AdapterProfile("14C3", "0616", "MediaTek", "MT7922 (RZ616)", RadioBackendKind.MtkRadio, MtkRadioCaps,
+            ProxyInf, ProxyService, ProxyProvider, MtkRadioProviders, Active: true),
+        new AdapterProfile("14C3", "7922", "MediaTek", "MT7922", RadioBackendKind.MtkRadio, MtkRadioCaps,
+            ProxyInf, ProxyService, ProxyProvider, MtkRadioProviders, Active: true),
+        new AdapterProfile("14C3", "7961", "MediaTek", "MT7921", RadioBackendKind.MtkRadio, MtkRadioCaps,
+            ProxyInf, ProxyService, ProxyProvider, MtkRadioProviders, Active: true),
+        new AdapterProfile("14C3", "0608", "MediaTek", "MT7921 (RZ608)", RadioBackendKind.MtkRadio, MtkRadioCaps,
+            ProxyInf, ProxyService, ProxyProvider, MtkRadioProviders, Active: true),
     ];
 
     /// <summary>The cards the service takes.</summary>
@@ -200,6 +215,7 @@ public static class CardCatalog
         new("so", "Intel AX211 / AX411 (So, CNVi)", "8086", RadioBackendKind.Iwx, AdapterCapabilities.IntelDefault, IntelProviders),
         new("rtl8852ce", "Realtek RTL8852CE", "10EC", RadioBackendKind.Devourer, RealtekCaps, ["Realtek"]),
         new("mt7902", "MediaTek MT7902", "14C3", RadioBackendKind.Mt76, MediaTekCaps, MediaTekProviders),
+        new("mt7922", "MediaTek MT7922 / MT7921 (RZ616 / RZ608)", "14C3", RadioBackendKind.MtkRadio, MtkRadioCaps, MtkRadioProviders),
     ];
 
     /// <summary>
@@ -234,10 +250,11 @@ public static class CardCatalog
         void Check(bool ok, string what) { if (!ok) fail.Add(what); }
 
         // The 15 Intel IDs the service took before the catalog (Card.DeviceIds, 0.1.20)
-        // plus Realtek RTL8852CE (10EC:C852) and MediaTek MT7902 (14C3:7902) backends = 17 active profiles.
+        // plus Realtek RTL8852CE (10EC:C852), MediaTek MT7902 (14C3:7902), and
+        // MediaTek MT7922/MT7921 (14C3:0616, 7922, 7961, 0608) = 21 active profiles.
         string[] intel = ["43F0", "A0F0", "02F0", "06F0", "34F0", "3DF0", "4DF0",
                           "2723", "2725", "7A70", "7AF0", "51F0", "51F1", "54F0", "7F70"];
-        Check(ActiveProfiles.Count == intel.Length + 2, $"{ActiveProfiles.Count} active profiles, expected {intel.Length + 2}");
+        Check(ActiveProfiles.Count == intel.Length + 6, $"{ActiveProfiles.Count} active profiles, expected {intel.Length + 6}");
         foreach (var dev in intel)
         {
             var id = $"PCI\\VEN_8086&DEV_{dev}&SUBSYS_00748086&REV_00\\3&11583659&0&A3";
@@ -347,6 +364,42 @@ public static class CardCatalog
                   "Mt76 ch 6 default launch args");
         }
 
+        // Built-in MediaTek MT7922 / MT7921: active, MtkRadio backend, 1 MiB BAR, forced to OnDemand.
+        foreach (var (dev, family) in new[] { ("0616", "MT7922 (RZ616)"), ("7922", "MT7922"),
+                                              ("7961", "MT7921"), ("0608", "MT7921 (RZ608)") })
+        {
+            var id = $"PCI\\VEN_14C3&DEV_{dev}&SUBSYS_E0CD1A3B&REV_00\\4&1";
+            var mtk = MatchActive(id);
+            if (mtk is null) { fail.Add($"14C3:{dev} is not active"); continue; }
+            Check(Classify(id) == mtk, $"14C3:{dev} Classify and MatchActive disagree");
+            Check(MatchActive($"pci\\ven_14c3&dev_{dev.ToLowerInvariant()}&subsys_e0cd1a3b\\4&1") == mtk,
+                  $"lower-case 14C3:{dev} not taken");
+            Check(mtk.HardwareId == $"PCI\\VEN_14C3&DEV_{dev}", $"14C3:{dev} hardware ID {mtk.HardwareId}");
+            Check(mtk.VendorName == "MediaTek" && mtk.FamilyName == family && mtk.Backend == RadioBackendKind.MtkRadio,
+                  $"14C3:{dev} vendor {mtk.VendorName} family {mtk.FamilyName} backend {mtk.Backend}");
+            Check(!mtk.Capabilities.SupportsConcurrentWifi && !mtk.Capabilities.SupportsFastSend &&
+                  !mtk.Capabilities.SupportsAggregate && !mtk.Capabilities.SupportsKernelDriver,
+                  $"14C3:{dev} capabilities");
+            Check(mtk.Capabilities.MinBarBytes == 0x100000, $"14C3:{dev} BAR {mtk.Capabilities.MinBarBytes:x}");
+            Check(EffectiveMode(NetMode.Concurrent, mtk.Capabilities) == NetMode.OnDemand,
+                  $"14C3:{dev} Concurrent not forced to OnDemand");
+            Check(EffectiveMode(NetMode.OnDemand, mtk.Capabilities) == NetMode.OnDemand, $"14C3:{dev} OnDemand changed");
+            Check(EffectiveMode(NetMode.Off, mtk.Capabilities) == NetMode.Off, $"14C3:{dev} Off changed");
+            Check(IsVendorProviderMatch(mtk, "MediaTek, Inc."), $"14C3:{dev} MediaTek provider not matched");
+            Check(IsVendorProviderMatch(mtk, "AMD"), $"14C3:{dev} AMD provider not matched");
+            Check(!IsVendorProviderMatch(mtk, "Intel"), $"14C3:{dev} Intel provider matched as MediaTek's");
+            Check(!IsVendorProviderMatch(mtk, "winairdrop project"), $"14C3:{dev} proxy provider matched as MediaTek's");
+            Check(SameLaunch(BuildRadioLaunch(mtk, 149, true, "JP", @"C:\run\sta.conf", true, true, true, true),
+                             "nekodrop-radio-mtk.exe", "149", "--width", "80", "--country", "JP"),
+                  $"MtkRadio 14C3:{dev} ch 149 launch args");
+            Check(SameLaunch(BuildRadioLaunch(mtk, 6, false, "ZZ", null, false, false),
+                             "nekodrop-radio-mtk.exe", "6", "--width", "20"),
+                  $"MtkRadio 14C3:{dev} ch 6 launch args (ZZ omitted)");
+            Check(SameLaunch(BuildRadioLaunch(mtk, 44, false, "00", null, false, false),
+                             "nekodrop-radio-mtk.exe", "44", "--width", "80"),
+                  $"MtkRadio 14C3:{dev} ch 44 launch args (00 omitted)");
+        }
+
         // Every backend kind, profile and manual model has a registered radio backend.
         foreach (var k in Enum.GetValues<RadioBackendKind>())
             Check(RadioBackends.Registered.Any(b => b.Kind == k), $"no radio backend registered for {k}");
@@ -366,6 +419,8 @@ public static class CardCatalog
         }
         var mr = ManualProfile("PCI\\VEN_10EC&DEV_C852", "rtl8852ce");
         Check(mr is { Backend: RadioBackendKind.Devourer, RadioFamily: null }, "manual rtl8852ce profile");
+        var mm = ManualProfile("PCI\\VEN_14C3&DEV_7922", "mt7922");
+        Check(mm is { Backend: RadioBackendKind.MtkRadio, RadioFamily: null }, "manual mt7922 profile");
         Check(ManualProfile("PCI\\VEN_10EC&DEV_C852", "qu") is null, "an Intel model accepted for a Realtek card");
         Check(ManualProfile("PCI\\VEN_8086&DEV_2723", "nope") is null, "an unknown model accepted");
         Check(ManualProfile("USB\\VID_0BDA&PID_8812", "rtl8852ce") is null, "a USB device accepted");
@@ -373,7 +428,7 @@ public static class CardCatalog
 
         // Ethernet chips from the same vendors and Wi-Fi cards nekodrop does not know.
         foreach (var other in new[] { "PCI\\VEN_8086&DEV_15F3&SUBSYS_00008086\\1", "PCI\\VEN_10EC&DEV_8168&SUBSYS_00000000\\1",
-                                      "PCI\\VEN_14C3&DEV_7922&SUBSYS_00000000\\1", "PCI\\VEN_8086&DEV_7E40&SUBSYS_00908086\\1" })
+                                      "PCI\\VEN_14C3&DEV_7925&SUBSYS_00000000\\1", "PCI\\VEN_8086&DEV_7E40&SUBSYS_00908086\\1" })
         {
             Check(MatchActive(other) is null, $"{other} would be taken");
             Check(Classify(other) is null, $"{other} is classified");

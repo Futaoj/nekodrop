@@ -44,6 +44,7 @@ public static class RadioBackends
         new IwxRadioBackend(),
         new DevourerRadioBackend(),
         new Mt76RadioBackend(),
+        new MtkRadioBackend(),
     }.ToDictionary(b => b.Kind);
 
     public static IRadioBackend Get(RadioBackendKind kind) =>
@@ -113,6 +114,24 @@ public sealed class Mt76RadioBackend : IRadioBackend
         var args = new List<string> { s.Channel.ToString(), "--width", s.Width.ToString() };
         if (s.Country is { Length: 2 } c && c != "ZZ" && c != "00") args.AddRange(["--country", c]);
         if (s.StaConf is not null) args.AddRange(["--sta-config", s.StaConf]);
+        return args;
+    }
+}
+
+/// <summary>
+/// MediaTek MT7922 / MT7921: nekodrop-radio-mtk.exe (mtkradio/).
+/// Monitor and inject only, no station: CardCatalog runs it on demand.
+/// Takes --country when known; none of the Intel-only or station options.
+/// </summary>
+public sealed class MtkRadioBackend : IRadioBackend
+{
+    public RadioBackendKind Kind => RadioBackendKind.MtkRadio;
+    public string ExeName => "nekodrop-radio-mtk.exe";
+
+    public IReadOnlyList<string> BuildArgs(RadioStart s)
+    {
+        var args = new List<string> { s.Channel.ToString(), "--width", s.Width.ToString() };
+        if (s.Country is { Length: 2 } c && c != "ZZ" && c != "00") args.AddRange(["--country", c]);
         return args;
     }
 }
