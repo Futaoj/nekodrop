@@ -1007,7 +1007,7 @@ bool IwxDevice::load_pnvm() {
  * a monitor needs. */
 bool IwxDevice::run_init_sequence(std::string &error) {
   _use_mld = bz() && _fw.has_capa(IWX_UCODE_TLV_CAPA_MLD_API_SUPPORT);
-  if (_use_mld) _log("firmware MLD API enabled (monitor/inject only, experimental)");
+  if (_use_mld) _log("firmware MLD API enabled (experimental)");
   iwx_init_extended_cfg_cmd init_cfg{};
   init_cfg.init_flags = htole32(IWX_INIT_NVM);
   _init_complete = false;
@@ -1155,6 +1155,7 @@ void IwxDevice::stop() {
   _proxy.set_close_ops({});
   _open = false;
   _phy_added = _mac_added = _binding_added = _link_added = _link_active = _sta_added = _queue_enabled = false;
+  _sta_link_added = _sta_link_active = false;
   _use_mld = false;
   _ba_station = _agg_queue_enabled = _agg_active = false;
 }
@@ -1181,10 +1182,14 @@ static std::string cmd_name(uint32_t id) {
   case IWX_MAC_CONTEXT_CMD: return " (MAC_CONTEXT)";
   case IWX_BINDING_CONTEXT_CMD: return " (BINDING_CONTEXT)";
   case IWX_TIME_QUOTA_CMD: return " (TIME_QUOTA)";
+  case IWX_WIDE_ID(IWX_MAC_CONF_GROUP, IWX_SESSION_PROTECTION_CMD): return " (SESSION_PROTECTION)";
   case IWX_WIDE_ID(IWX_MAC_CONF_GROUP, IWX_MAC_CONFIG_CMD): return " (MAC_CONFIG)";
   case IWX_WIDE_ID(IWX_MAC_CONF_GROUP, IWX_LINK_CONFIG_CMD): return " (LINK_CONFIG)";
   case IWX_WIDE_ID(IWX_MAC_CONF_GROUP, IWX_STA_CONFIG_CMD): return " (STA_CONFIG)";
   case IWX_WIDE_ID(IWX_MAC_CONF_GROUP, IWX_STA_REMOVE_CMD): return " (STA_REMOVE)";
+  case IWX_WIDE_ID(IWX_DATA_PATH_GROUP, IWX_RX_BAID_ALLOCATION_CONFIG_CMD): return " (RX_BAID_CFG)";
+  case IWX_WIDE_ID(IWX_DATA_PATH_GROUP, IWX_SCD_QUEUE_CONFIG_CMD): return " (SCD_QUEUE_CONFIG)";
+  case IWX_WIDE_ID(IWX_DATA_PATH_GROUP, IWX_SEC_KEY_CMD): return " (SEC_KEY)";
   default: return "";
   }
 }
@@ -1907,15 +1912,30 @@ int IwxDevice::add_monitor_sta() {
 int IwxDevice::enable_monitor_queue() { return enable_queue(_dataq, IWX_MONITOR_STA_ID, IWX_MGMT_TID); }
 
 int IwxDevice::enable_queue(TxRing &ring, uint8_t sta_id, uint8_t tid) {
-  iwx_tx_queue_cfg_cmd cmd{};
-  cmd.sta_id = sta_id;
-  cmd.tid = tid;
-  cmd.flags = htole16(IWX_TX_QUEUE_CFG_ENABLE_QUEUE);
-  cmd.cb_size = htole32(IWX_TFD_QUEUE_CB_SIZE(ring.count));
-  cmd.byte_cnt_addr = htole64(ring.bc_tbl.pa);
-  cmd.tfdq_addr = htole64(ring.desc.pa);
   std::vector<uint8_t> resp;
-  const int err = send_cmd(IWX_SCD_QUEUE_CFG, &cmd, sizeof(cmd), true, &resp);
+  int err;
+  if (use_mld() && cmd_version(IWX_DATA_PATH_GROUP, IWX_SCD_QUEUE_CONFIG_CMD) == 3) {
+    /* MLD / API 100: SCD_QUEUE_CONFIG_CMD v3 (0x05:0x17) replaces legacy
+     * SCD_QUEUE_CFG; TX_QUEUE_CFG_ENABLE_QUEUE is not valid in v3 flags. */
+    iwx_scd_queue_cfg_cmd cmd{};
+    cmd.operation = htole32(IWX_SCD_QUEUE_ADD);
+    cmd.u.add.sta_mask = htole32(1u << sta_id);
+    cmd.u.add.tid = tid;
+    cmd.u.add.flags = 0;
+    cmd.u.add.cb_size = htole32(IWX_TFD_QUEUE_CB_SIZE(ring.count));
+    cmd.u.add.bc_dram_addr = htole64(ring.bc_tbl.pa);
+    cmd.u.add.tfdq_dram_addr = htole64(ring.desc.pa);
+    err = send_cmd(IWX_WIDE_ID(IWX_DATA_PATH_GROUP, IWX_SCD_QUEUE_CONFIG_CMD), &cmd, sizeof(cmd), true, &resp);
+  } else {
+    iwx_tx_queue_cfg_cmd cmd{};
+    cmd.sta_id = sta_id;
+    cmd.tid = tid;
+    cmd.flags = htole16(IWX_TX_QUEUE_CFG_ENABLE_QUEUE);
+    cmd.cb_size = htole32(IWX_TFD_QUEUE_CB_SIZE(ring.count));
+    cmd.byte_cnt_addr = htole64(ring.bc_tbl.pa);
+    cmd.tfdq_addr = htole64(ring.desc.pa);
+    err = send_cmd(IWX_SCD_QUEUE_CFG, &cmd, sizeof(cmd), true, &resp);
+  }
   if (err) return err;
   const auto *pkt = reinterpret_cast<const iwx_rx_packet *>(resp.data());
   if ((pkt->hdr.group_id & IWX_CMD_FAILED_MSK) ||
@@ -1930,6 +1950,17 @@ int IwxDevice::enable_queue(TxRing &ring, uint8_t sta_id, uint8_t tid) {
   _log("transmit queue " + std::to_string(ring.qid) + " assigned for station " +
        std::to_string(sta_id) + ", write pointer " + std::to_string(ring.cur));
   return 0;
+}
+
+int IwxDevice::disable_queue(uint8_t sta_id, uint8_t tid) {
+  if (!use_mld()) return 0;
+  const uint8_t ver = cmd_version(IWX_DATA_PATH_GROUP, IWX_SCD_QUEUE_CONFIG_CMD);
+  if (ver == IWX_FW_CMD_VER_UNKNOWN || ver == 0) return 0;
+  iwx_scd_queue_cfg_cmd cmd{};
+  cmd.operation = htole32(IWX_SCD_QUEUE_REMOVE);
+  cmd.u.remove.sta_mask = htole32(1u << sta_id);
+  cmd.u.remove.tid = htole32(tid);
+  return send_cmd(IWX_WIDE_ID(IWX_DATA_PATH_GROUP, IWX_SCD_QUEUE_CONFIG_CMD), &cmd, sizeof(cmd), false, nullptr);
 }
 
 int IwxDevice::mld_mac_cmd(uint32_t action) {

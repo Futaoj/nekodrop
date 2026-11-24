@@ -65,6 +65,12 @@ int main(int argc, char **argv) {
   EXPECT_SIZE(iwx_remove_sta_cmd, 4);        /* REMOVE_STA_API_S_VER_1 */
   EXPECT_SIZE(iwx_rlc_config_cmd, 32);       /* RLC_CONFIG_CMD_API_S_VER_2 */
   EXPECT_SIZE(iwx_mcc_update_resp_v8, 24);   /* LAR_UPDATE_MCC_CMD_RESP_S_VER_8 */
+  EXPECT_SIZE(iwx_rx_baid_cfg_cmd, 16);      /* RX_BAID_ALLOCATION_CONFIG_CMD_API_S_VER_2 */
+  EXPECT_SIZE(iwx_rx_baid_cfg_resp, 4);      /* RX_BAID_ALLOCATION_RESPONSE_API_S_VER_1 */
+  EXPECT_SIZE(iwx_scd_queue_cfg_cmd, 36);    /* TX_QUEUE_CFG_CMD_API_S_VER_3 */
+  EXPECT_SIZE(iwx_sec_key_cmd, 80);          /* SEC_KEY_CMD_API_S_VER_1 */
+  EXPECT_SIZE(iwx_tlc_config_cmd_v4, 28);    /* TLC_MNG_CONFIG_CMD_API_S_VER_4 */
+  EXPECT_SIZE(iwx_scan_config, 12);          /* SCAN_CONFIG_DB_CMD_API_S_5 */
 
   /* Card selection (cards.h), with register values as iwx keeps them. */
   struct CardCase { uint16_t dev; uint32_t hw_rev, rf_id; const char *fw; bool ax210, bz, integrated; };

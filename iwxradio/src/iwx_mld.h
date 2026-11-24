@@ -62,6 +62,12 @@ struct iwx_prph_scratch_mem_desc_addr_array {
 
 /* IWX_DATA_PATH_GROUP = 0x5 */
 #define IWX_RLC_CONFIG_CMD                              0x08u
+#define IWX_RX_BAID_ALLOCATION_CONFIG_CMD               0x16u
+#define IWX_SCD_QUEUE_CONFIG_CMD                        0x17u
+#define IWX_SEC_KEY_CMD                                 0x18u
+
+#define IWX_MAX_BAID                                    32u
+#define IWX_CHAN_CFG_FLAGS_BAND_POS                     30u
 
 /* MAC_FILTER_FLAGS_MASK_E_VER_1 */
 #define IWX_MAC_CFG_FILTER_PROMISC                      (1u << 0)
@@ -251,4 +257,118 @@ struct iwx_mcc_update_resp_v8 {
   uint8_t reserved[3];
   uint32_t n_channels;
   uint32_t channels[0];
+} __packed;
+
+/* enum iwl_rx_baid_action (RX_BAID_ALLOCATION_ACTION_E_VER_1) */
+#define IWX_RX_BAID_ACTION_ADD                          0u
+#define IWX_RX_BAID_ACTION_MODIFY                       1u
+#define IWX_RX_BAID_ACTION_REMOVE                       2u
+
+struct iwx_rx_baid_cfg_cmd_alloc {
+  uint32_t sta_id_mask;
+  uint8_t tid;
+  uint8_t reserved[3];
+  uint16_t ssn;
+  uint16_t win_size;
+} __packed; /* RX_BAID_ALLOCATION_ADD_CMD_API_S_VER_1 */
+
+struct iwx_rx_baid_cfg_cmd_modify {
+  uint32_t old_sta_id_mask;
+  uint32_t new_sta_id_mask;
+  uint32_t tid;
+} __packed; /* RX_BAID_ALLOCATION_MODIFY_CMD_API_S_VER_2 */
+
+struct iwx_rx_baid_cfg_cmd_remove_v1 {
+  uint32_t baid;
+} __packed; /* RX_BAID_ALLOCATION_REMOVE_CMD_API_S_VER_1 */
+
+struct iwx_rx_baid_cfg_cmd_remove {
+  uint32_t sta_id_mask;
+  uint32_t tid;
+} __packed; /* RX_BAID_ALLOCATION_REMOVE_CMD_API_S_VER_2 */
+
+/* RX_BAID_ALLOCATION_CONFIG_CMD_API_S_VER_2 (16 bytes) */
+struct iwx_rx_baid_cfg_cmd {
+  uint32_t action;
+  union {
+    struct iwx_rx_baid_cfg_cmd_alloc alloc;
+    struct iwx_rx_baid_cfg_cmd_modify modify;
+    struct iwx_rx_baid_cfg_cmd_remove_v1 remove_v1;
+    struct iwx_rx_baid_cfg_cmd_remove remove;
+  };
+} __packed;
+
+/* RX_BAID_ALLOCATION_RESPONSE_API_S_VER_1 (4 bytes) */
+struct iwx_rx_baid_cfg_resp {
+  uint32_t baid;
+} __packed;
+
+/* enum iwl_scd_queue_cfg_operation */
+#define IWX_SCD_QUEUE_ADD                               0u
+#define IWX_SCD_QUEUE_REMOVE                            1u
+#define IWX_SCD_QUEUE_MODIFY                            2u
+
+/* TX_QUEUE_CFG_CMD_API_S_VER_3 (36 bytes, DATA_PATH_GROUP:SCD_QUEUE_CONFIG_CMD) */
+struct iwx_scd_queue_cfg_cmd {
+  uint32_t operation;
+  union {
+    struct {
+      uint32_t sta_mask;
+      uint8_t tid;
+      uint8_t reserved[3];
+      uint32_t flags;
+      uint32_t cb_size;
+      uint64_t bc_dram_addr;
+      uint64_t tfdq_dram_addr;
+    } __packed add;
+    struct {
+      uint32_t sta_mask;
+      uint32_t tid;
+    } __packed remove;
+    struct {
+      uint32_t old_sta_mask;
+      uint32_t tid;
+      uint32_t new_sta_mask;
+    } __packed modify;
+  } __packed u;
+} __packed;
+
+/* enum iwl_sec_key_flags */
+#define IWX_SEC_KEY_FLAG_CIPHER_MASK                    0x07u
+#define IWX_SEC_KEY_FLAG_CIPHER_WEP                     0x01u
+#define IWX_SEC_KEY_FLAG_CIPHER_CCMP                    0x02u
+#define IWX_SEC_KEY_FLAG_CIPHER_TKIP                    0x03u
+#define IWX_SEC_KEY_FLAG_CIPHER_GCMP                    0x05u
+#define IWX_SEC_KEY_FLAG_NO_TX                          0x08u
+#define IWX_SEC_KEY_FLAG_KEY_SIZE                       0x10u
+#define IWX_SEC_KEY_FLAG_MFP                            0x20u
+#define IWX_SEC_KEY_FLAG_MCAST_KEY                      0x40u
+#define IWX_SEC_KEY_FLAG_SPP_AMSDU                      0x80u
+
+/* SEC_KEY_CMD_API_S_VER_1 (80 bytes, DATA_PATH_GROUP:SEC_KEY_CMD) */
+struct iwx_sec_key_cmd {
+  uint32_t action;
+  union {
+    struct {
+      uint32_t sta_mask;
+      uint32_t key_id;
+      uint32_t key_flags;
+      uint8_t key[32];
+      uint8_t tkip_mic_rx_key[8];
+      uint8_t tkip_mic_tx_key[8];
+      uint64_t rx_seq;
+      uint64_t tx_seq;
+    } __packed add;
+    struct {
+      uint32_t old_sta_mask;
+      uint32_t new_sta_mask;
+      uint32_t key_id;
+      uint32_t key_flags;
+    } __packed modify;
+    struct {
+      uint32_t sta_mask;
+      uint32_t key_id;
+      uint32_t key_flags;
+    } __packed remove;
+  } __packed u;
 } __packed;

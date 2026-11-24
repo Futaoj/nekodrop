@@ -248,11 +248,18 @@ private:
   int binding_cmd(uint32_t action);
   int add_monitor_sta();
   int enable_monitor_queue();
-  /* MLD API (Bz / BE200, monitor/inject only) */
+  /* MLD API (Bz / BE200) */
   int mld_mac_cmd(uint32_t action);
   int mld_link_add();
   int mld_link_modify(bool active, uint32_t modify_mask);
   int mld_add_monitor_sta();
+  int mld_sta_mac_cmd(uint32_t action, bool assoc);
+  int mld_sta_link_add();
+  int mld_sta_link_modify(bool active, uint32_t modify_mask);
+  int mld_sta_link_remove();
+  int mld_sta_cfg_ap(bool assoc);
+  int mld_sec_key_remove(uint32_t key_id, uint32_t key_flags);
+  int disable_queue(uint8_t sta_id, uint8_t tid);
 
   /* Receive */
   void post_rx_buf(unsigned index); /* iwx_update_rx_desc */
@@ -348,10 +355,13 @@ private:
   TxStats _tx_stats;
   StaParams _sta{};
   bool _sta_phy_added = false, _sta_mac_added = false, _sta_binding_added = false,
+       _sta_link_added = false, _sta_link_active = false,
        _sta_sta_added = false, _sta_queue_enabled = false, _sta_shared_binding = false,
-       _sta_assoc = false, _sta_tlc = false, _sta_session_prot = false;
+       _sta_assoc = false, _sta_tlc = false, _sta_session_prot = false, _sta_mfp = false;
   uint16_t _sta_aid = 0;
-  uint8_t _sta_dtim = 1, _sta_ba_tids = 0;
+  uint8_t _sta_dtim = 1, _sta_ba_tids = 0, _sta_gtk_mask = 0, _sta_igtk_id = 0;
+  uint32_t _sta_ptk_flags = 0;
+  uint8_t _sta_baid[8] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
   unsigned _sta_tx_acked = 0, _sta_tx_failed = 0, _sta_tx_fail_logged = 0, _sta_tx_submitted = 0;
   bool _promisc = true;
   bool _ba_station = false;
