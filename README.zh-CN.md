@@ -97,7 +97,7 @@ nekodrop 通过模块化底层驱动后端（`CardCatalog` + `radio_backend.h`�
 | Intel Wi-Fi 6E AX411 / Killer AX1690（CNVi） | 与 AX211 相同 | `so-a0-gf4-a0-68` + PNVM（`iwx`，同时连 Wi-Fi / 按需） | 🧪 能识别、固件能启动（[#25](../../issues/25)）；已包含 AX211 的 0.1.31 修复，待用户确认 |
 | So 平台上的 Intel Wi-Fi 6 AX203 / 9560 | 与 AX211 相同 | `so-a0-hr/jf-b0-68`（`iwx`，同时连 Wi-Fi / 按需） | ⚠️ 未测试 |
 | **Realtek RTL8852CE** | `10EC:C852` | 内嵌固件（`devourer`，仅按需接管） | ⚠️ 已内置，还没有用户反馈 |
-| **MediaTek MT7902** | `14C3:7902` | linux-firmware `WIFI_RAM_CODE_MT7902_1`（移植自 `mt76`，仅按需接管） | ⚠️ 已内置；一张卡上双向 AirDrop 实测可用（接收约 15 MB/s，发送约 5 MB/s） |
+| **MediaTek MT7902** | `14C3:7902` | linux-firmware `WIFI_RAM_CODE_MT7902_1`（移植自 `mt76`，同时连 Wi-Fi（仅 5 GHz）与按需接管） | ⚠️ 已内置；一张卡上双向 AirDrop 实测可用（接收约 15 MB/s，发送约 5 MB/s）；同时连 Wi-Fi 已在一张卡上实测（AirDrop 待命时下载约 3.5 MB/s、上传约 1.3 MB/s） |
 | Intel SnJ `2726`、QnJ `2720`、Meteor Lake `7E40`/`2729` | `8086:` | 上游没有固件 | ❌ |
 | Intel BE200 / BE201（Wi-Fi 7） | `8086:` | 上游没有驱动 | ❌ |
 | 其他 Realtek、MediaTek、高通、博通 | | | ❌ |

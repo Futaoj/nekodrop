@@ -49,6 +49,24 @@ struct TxRate {
   bool wide80 = false;   /* VHT at 80 MHz */
 };
 
+/* The network the station joins, read from Windows before the card is taken
+ * (moved here from iwx.h unchanged, for sta_device.h). */
+struct StaParams {
+  uint8_t bssid[6];
+  uint8_t addr[6];      /* our address: the TAP adapter's */
+  uint8_t channel;
+  unsigned width = 20;  /* PHY width while associated */
+  uint16_t beacon_int = 100;
+  bool ht = false, vht = false, mimo = false;
+  /* The AP's own capabilities from its beacon, for backends whose firmware
+   * picks the rate (HT capability info, A-MPDU parameters, VHT capability
+   * info and RX MCS map). */
+  uint16_t ap_ht_cap = 0;
+  uint8_t ap_ampdu = 0;
+  uint32_t ap_vht_cap = 0;
+  uint16_t ap_vht_mcs = 0xffff;
+};
+
 struct TxStats {
   uint64_t submitted = 0, completed = 0, acked = 0, failed = 0, retries = 0,
            dropped_full = 0;
@@ -93,9 +111,9 @@ using RadioTxStatusHandler = std::function<void(unsigned slot, bool acked)>;
  * starts as a bare listener/injector and opts in. */
 struct RadioCapabilities {
   const char *backend = "";               /* short name for the log: "iwx", "kernel" */
-  /* A Wi-Fi station beside AWDL on this backend (WifiStation, wifi_sta.h;
-   * sta_transmit, sta_tx_acked, sta_tx_failed). WifiStation is written for
-   * IwxDevice, so today only it can set this. */
+  /* A Wi-Fi station beside AWDL on this backend (WifiStation, wifi_sta.h,
+   * through StaDevice, sta_device.h; sta_transmit, sta_tx_acked,
+   * sta_tx_failed). */
   bool supports_station = false;
   /* Windows keeps its own station on this card (the kernel driver): a
    * station config handed to the radio is ignored with that reason. */

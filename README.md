@@ -99,7 +99,7 @@ Quick summary of currently active cards:
 | **Realtek RTL8852CE** | `10EC:C852` | embedded (`devourer`, On-Demand only) | ⚠️ built in, no user report yet |
 | Intel SnJ `2726`, QnJ `2720`, Meteor Lake `7E40`/`2729` | `8086:` | not shipped upstream | ❌ |
 | Intel BE200 / BE201 (Wi-Fi 7) | `8086:` | no upstream driver | ❌ |
-| **MediaTek MT7902** | `14C3:7902` | linux-firmware `WIFI_RAM_CODE_MT7902_1` (`mt76` port, On-Demand only) | ⚠️ built in; AirDrop both ways on one card (~15 MB/s receive, ~5 MB/s send) |
+| **MediaTek MT7902** | `14C3:7902` | linux-firmware `WIFI_RAM_CODE_MT7902_1` (`mt76` port, Concurrent (5 GHz Wi-Fi) & On-Demand) | ⚠️ built in; AirDrop both ways on one card (~15 MB/s receive, ~5 MB/s send); Concurrent tested on one card (Wi-Fi beside AirDrop ~3.5 MB/s down, ~1.3 MB/s up) |
 | Other Realtek, MediaTek, Qualcomm, Broadcom | | | ❌ |
 
 To check your card: *Device Manager → Network adapters*. On a PC without a supported Wi-Fi card, the installer refuses and lists each detected wireless card, its PCI/USB ID, why nekodrop does not run on it, and how to run `installer/report.ps1`. On an untested card (including the built-in Realtek RTL8852CE backend), nekodrop may fail to start the radio; if it does, the card stays usable: run **restore** (below) and please report the log in an [issue](../../issues).

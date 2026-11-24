@@ -99,8 +99,9 @@ public sealed class DevourerRadioBackend : IRadioBackend
 
 /// <summary>
 /// MediaTek MT7902: nekodrop-radio-mt.exe (mtradio/, ported from Linux mt76).
-/// No station mode, so the service runs it on demand. Takes the
-/// country for the firmware's channel domain.
+/// Takes the country for the firmware's channel domain and, in Concurrent
+/// mode, the station config: its host-side station joins 5 GHz networks and
+/// shares the card's one channel with AWDL. None of the Intel-only options.
 /// </summary>
 public sealed class Mt76RadioBackend : IRadioBackend
 {
@@ -111,6 +112,7 @@ public sealed class Mt76RadioBackend : IRadioBackend
     {
         var args = new List<string> { s.Channel.ToString(), "--width", s.Width.ToString() };
         if (s.Country is { Length: 2 } c && c != "ZZ" && c != "00") args.AddRange(["--country", c]);
+        if (s.StaConf is not null) args.AddRange(["--sta-config", s.StaConf]);
         return args;
     }
 }

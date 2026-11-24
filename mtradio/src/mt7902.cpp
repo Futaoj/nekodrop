@@ -409,7 +409,7 @@ bool Mt7902::rx_take(RxRing &r, std::vector<uint8_t> &out) {
 /* ---- MCU ---- */
 
 bool Mt7902::mcu_send(const Command &cmd, const void *data, size_t len, bool wait,
-                      std::vector<uint8_t> *answer, unsigned timeout_ms) {
+                      std::vector<uint8_t> *answer, unsigned timeout_ms, bool log_timeout) {
   /* mt76_connac2_mcu_fill_message */
   _seq = static_cast<uint8_t>((_seq + 1) & 0xf);
   if (!_seq) _seq = 1;
@@ -473,6 +473,7 @@ bool Mt7902::mcu_send(const Command &cmd, const void *data, size_t len, bool wai
     }
     handle_rx(frame);
   }
+  if (!log_timeout) return false;
   log(format("mt7902: no answer to MCU command %s%02x/%02x (seq %u); WM ring cpu %u dma %u, event ring cpu %u dma %u tail %u",
              cmd.uni ? "UNI " : "", cmd.cid, cmd.ext_cid, seq, rr(ring_reg(true, _tx_mcu.hw, kRingCpuIdx)),
              rr(ring_reg(true, _tx_mcu.hw, kRingDmaIdx)), rr(ring_reg(false, _rx_mcu.hw, kRingCpuIdx)),

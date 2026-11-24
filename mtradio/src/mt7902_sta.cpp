@@ -37,8 +37,8 @@ constexpr uint8_t kMcuUniStaRecUpdate = 0x03;
  * pointers: the buffer grows. */
 class StaReq {
 public:
-  StaReq(uint8_t wcid, uint8_t muar) {
-    _b = {0 /* bss_idx */, wcid, 0, 0 /* tlv_num */, 1 /* is_tlv_append */, muar, 0 /* wlan_idx_hi */, 0};
+  StaReq(uint8_t wcid, uint8_t omac) {
+    _b = {omac /* bss_idx */, wcid, 0, 0 /* tlv_num */, 1 /* is_tlv_append */, omac /* muar */, 0 /* wlan_idx_hi */, 0};
   }
   uint8_t *add(uint16_t tag, uint16_t len) {
     const size_t at = put(tag, len);
@@ -89,8 +89,8 @@ template <class T> void put(uint8_t *at, size_t off, T v) { std::memcpy(at + off
 
 } // namespace
 
-bool Mt7902::sta_add(uint8_t wcid, const uint8_t peer[6], const PeerCaps &caps) {
-  StaReq r(wcid, 0 /* our omac */);
+bool Mt7902::sta_add(uint8_t wcid, const uint8_t peer[6], const PeerCaps &caps, uint8_t omac) {
+  StaReq r(wcid, omac);
   { /* mt76_connac_mcu_sta_basic_tlv, ad-hoc */
     uint8_t *t = r.add(kStaRecBasic, 20);
     put<uint32_t>(t, 4, kConnectionInfraSta);
@@ -119,13 +119,13 @@ bool Mt7902::sta_add(uint8_t wcid, const uint8_t peer[6], const PeerCaps &caps) 
     ra[7] = caps.rx_mcs[1];
     uint8_t *st = r.add(kStaRecState, 12);
     st[8] = kStaStateAssoc;
-    if (caps.vht) st[9] = static_cast<uint8_t>(caps.bw | ((caps.nss - 1) << 4));
+    if (caps.vht || omac) st[9] = static_cast<uint8_t>(caps.bw | ((caps.nss - 1) << 4));
   }
   r.wtbl(kWtblResetAndSet, wcid);
   { /* mt76_connac_mcu_wtbl_generic_tlv, _hdr_trans_tlv, _ht_tlv */
     uint8_t *g = r.wadd(kWtblGeneric, 20);
     std::memcpy(g + 4, peer, 6);
-    g[10] = 0; /* muar_idx: our omac */
+    g[10] = omac; /* muar_idx */
     g[13] = 1; /* qos */
     uint8_t *rx = r.wadd(kWtblRx, 12);
     rx[5] = 0; /* rca1: 0 under an AP interface (mt76_connac_mcu_wtbl_generic_tlv) */
@@ -149,13 +149,13 @@ bool Mt7902::sta_add(uint8_t wcid, const uint8_t peer[6], const PeerCaps &caps) 
     r.wadd(kWtblSmps, 8);
   }
   const auto &b = r.bytes();
-  const bool ok = mcu_send(uni_cmd(kMcuUniStaRecUpdate), b.data(), b.size(), true);
+  const bool ok = mcu_send(uni_cmd(kMcuUniStaRecUpdate), b.data(), b.size(), true, nullptr, sta_cmd_timeout_ms);
   log(std::string("mt7902: station ") + std::to_string(wcid) + (ok ? " added" : " not added"));
   return ok;
 }
 
-bool Mt7902::sta_remove(uint8_t wcid, const uint8_t peer[6]) {
-  StaReq r(wcid, 0);
+bool Mt7902::sta_remove(uint8_t wcid, const uint8_t peer[6], uint8_t omac) {
+  StaReq r(wcid, omac);
   uint8_t *t = r.add(kStaRecBasic, 20);
   put<uint32_t>(t, 4, kConnectionInfraSta);
   t[8] = kConnStateDisconnect;
@@ -163,13 +163,13 @@ bool Mt7902::sta_remove(uint8_t wcid, const uint8_t peer[6]) {
   put<uint16_t>(t, 18, 0x1);
   r.wtbl(kWtblResetAndSet, wcid);
   const auto &b = r.bytes();
-  return mcu_send(uni_cmd(kMcuUniStaRecUpdate), b.data(), b.size(), true);
+  return mcu_send(uni_cmd(kMcuUniStaRecUpdate), b.data(), b.size(), true, nullptr, sta_cmd_timeout_ms);
 }
 
 bool Mt7902::sta_ba(uint8_t wcid, const uint8_t peer[6], uint8_t tid, uint16_t ssn, uint16_t win, bool tx,
-                    bool enable) {
+                    bool enable, uint8_t omac) {
   { /* mt76_connac_mcu_wtbl_ba_tlv (connac2) */
-    StaReq r(wcid, 0);
+    StaReq r(wcid, omac);
     r.wtbl(kWtblSet, wcid);
     uint8_t *ba = r.wadd(kWtblBa, 28);
     ba[4] = tid;
@@ -186,10 +186,10 @@ bool Mt7902::sta_ba(uint8_t wcid, const uint8_t peer[6], uint8_t tid, uint16_t s
     }
     put<uint16_t>(ba, 12, enable ? win : 0);
     const auto &b = r.bytes();
-    if (!mcu_send(uni_cmd(kMcuUniStaRecUpdate), b.data(), b.size(), true)) return false;
+    if (!mcu_send(uni_cmd(kMcuUniStaRecUpdate), b.data(), b.size(), true, nullptr, sta_cmd_timeout_ms)) return false;
   }
   { /* mt76_connac_mcu_sta_ba_tlv */
-    StaReq r(wcid, 0);
+    StaReq r(wcid, omac);
     uint8_t *ba = r.add(kStaRecBa, 12);
     ba[4] = tid;
     ba[5] = tx ? kBaTypeOriginator : kBaTypeRecipient;
@@ -198,6 +198,6 @@ bool Mt7902::sta_ba(uint8_t wcid, const uint8_t peer[6], uint8_t tid, uint16_t s
     put<uint16_t>(ba, 8, ssn);
     put<uint16_t>(ba, 10, win);
     const auto &b = r.bytes();
-    return mcu_send(uni_cmd(kMcuUniStaRecUpdate), b.data(), b.size(), true);
+    return mcu_send(uni_cmd(kMcuUniStaRecUpdate), b.data(), b.size(), true, nullptr, sta_cmd_timeout_ms);
   }
 }

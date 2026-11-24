@@ -44,10 +44,11 @@ nekodrop 在用户态直接驱动无线网卡芯片，使 Windows 原生运行�
 
 ---
 
-## MediaTek（`VEN_14C3`）— `mt76` 后端（规划中）
+## MediaTek（`VEN_14C3`）— `mt76` 后端（`nekodrop-radio-mt.exe`，首先支持 MT7902）
 
 | 网卡 / 系列 | PCI Device ID | 支持模式 | 状态 |
 |---|---|---|---|
+| **MediaTek MT7902** | `7902` | 同时连 Wi-Fi（仅 5 GHz）与按需接管 | ⚠️ 用户态 mt76/mt7921 移植（`mtradio/`）。一张卡上双向 AirDrop 实测可用（华硕台式机，`SUBSYS_60401A3B`）：双向 A-MPDU，接收约 15 MB/s，发送约 5 MB/s。同时连 Wi-Fi：固件同一时间只有一个信道，radio 在路由器和 AWDL 之间分时切换（约 3/4 时间在路由器上，AirDrop 传数据时减少；固件选速率并接收路由器的 A-MPDU，实测下载约 3.5 MB/s、上传约 1.3 MB/s，CCMP 在主机侧完成）。2.4 GHz 上需要 ACK 的帧发不出去，因此 Wi-Fi 只连 5 GHz。需要 linux-firmware 的 `WIFI_*_MT7902*`（Windows 驱动自带的那份不认 UNI 命令） |
 | **MediaTek MT7921 / RZ608** | `7961` `0608` | 按需接管（后续可演进并发） | 🗓️ 规划中（`regproxy` 已支持 BAR0 1 MiB；WFDMA 架构极契合用户态 AWE） |
 | **MediaTek MT7922 / RZ616** | `7922` `0616` | 按需接管（后续可演进并发） | 🗓️ 规划中（与 MT7921 共享约 95% 代码） |
 | MediaTek MT7925 | `7925` | 按需接管 | 🗓️ 规划中 |

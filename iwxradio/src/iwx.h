@@ -30,19 +30,10 @@
 #include "dma.h"
 #include "fw.h"
 #include "proxy.h"
-/* RxFrame, TxRate, TxStats, the open options and the backend contract: shared
- * with KernelDevice and future backends, which need none of the headers above. */
+/* RxFrame, TxRate, TxStats, StaParams, the open options and the backend
+ * contract: shared with KernelDevice and future backends, which need none of
+ * the headers above. */
 #include "radio_backend.h"
-
-/* The network the station joins, read from Windows before the card is taken. */
-struct StaParams {
-  uint8_t bssid[6];
-  uint8_t addr[6];      /* our address: the TAP adapter's */
-  uint8_t channel;
-  unsigned width = 20;  /* PHY width while associated */
-  uint16_t beacon_int = 100;
-  bool ht = false, vht = false, mimo = false;
-};
 
 class IwxDevice {
 public:

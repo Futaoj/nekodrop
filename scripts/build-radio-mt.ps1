@@ -22,6 +22,8 @@ if ($LASTEXITCODE -ne 0) { throw "cmake configure failed ($LASTEXITCODE)" }
 
 & $tools.CMake --build $build
 if ($LASTEXITCODE -ne 0) { throw "build failed ($LASTEXITCODE)" }
+& (Join-Path $build 'ccmp_test.exe')
+if ($LASTEXITCODE -ne 0) { throw "ccmp_test failed ($LASTEXITCODE)" }
 
 # The MediaTek Windows driver's copy of this firmware answers no unified (UNI)
 # commands, so the daemon needs linux-firmware's.

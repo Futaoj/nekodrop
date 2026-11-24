@@ -95,13 +95,27 @@ public:
    * sniffer on `channel`. `country` is two letters. */
   bool radio_start(uint8_t channel, uint8_t width_mhz, const std::string &country, std::string &error);
   bool set_channel(uint8_t channel, uint8_t width_mhz);
+  /* How set_channel moves (the station's time sharing pays it twice an
+   * entry): the sniffer's own channel too, and whether to wait for the
+   * firmware's answers. Microseconds of the last move's steps: RF channel
+   * switch, sniffer, MAC timing. */
+  bool move_sniffer = true, move_wait = true;
+  /* How long a move waits for the firmware's answer: now and then it takes
+   * a third of a second, longer than a router lets a station be away. */
+  unsigned move_timeout_ms = 3000;
+  uint64_t last_move_us[3] = {};
   /* The address the card acknowledges unicast frames for, and the BSSID of
    * its (ad-hoc) interface. */
   bool set_identity(const uint8_t own[6], const uint8_t bssid[6]);
+  /* A second own address, for the Wi-Fi station (own MAC 1, BSS 1): the
+   * MAC acknowledges unicast frames to it too. `bssid` is the AP's. */
+  bool set_station_identity(const uint8_t addr[6], const uint8_t bssid[6]);
+  void clear_station_identity();
+  static constexpr uint8_t kStationOmac = 1;
   /* Queues one 802.11 frame (no FCS) at `rate` (TXD rate value, see
-   * tx_rate_*). Returns its token (named again in the TX status), or -1
-   * when every TX slot is still out or the ring is full. */
-  int transmit(const uint8_t *frame, size_t len, uint16_t rate);
+   * tx_rate_*), from own MAC `omac`. Returns its token (named again in the
+   * TX status), or -1 when every TX slot is still out or the ring is full. */
+  int transmit(const uint8_t *frame, size_t len, uint16_t rate, uint8_t omac = 0);
   /* Test knobs for transmit(): -1 keeps the default. */
   int force_no_ack = -1, force_altx = -1;
   unsigned tx_slots_free() const { return static_cast<unsigned>(_tx_free_slots.size()); }
@@ -126,18 +140,24 @@ public:
     uint8_t nss = 2;
   };
   static constexpr uint8_t kFirstPeerWcid = 1, kLastPeerWcid = 8;
-  bool sta_add(uint8_t wcid, const uint8_t peer[6], const PeerCaps &caps);
-  bool sta_remove(uint8_t wcid, const uint8_t peer[6]);
-  bool sta_ba(uint8_t wcid, const uint8_t peer[6], uint8_t tid, uint16_t ssn, uint16_t win, bool tx, bool enable);
+  /* The Wi-Fi station's access point, under own MAC 1 (mt_station.h). */
+  static constexpr uint8_t kApWcid = 9;
+  /* How long STA record commands wait for the firmware's answer. */
+  unsigned sta_cmd_timeout_ms = 3000;
+  /* `omac`: the own MAC (and BSS) the peer talks to: 0 for AWDL. */
+  bool sta_add(uint8_t wcid, const uint8_t peer[6], const PeerCaps &caps, uint8_t omac = 0);
+  bool sta_remove(uint8_t wcid, const uint8_t peer[6], uint8_t omac = 0);
+  bool sta_ba(uint8_t wcid, const uint8_t peer[6], uint8_t tid, uint16_t ssn, uint16_t win, bool tx, bool enable,
+              uint8_t omac = 0);
   /* A QoS data frame to a peer station: the firmware's rate, Block Ack
    * allowed, the frame's own sequence number kept. Token or -1. */
-  int transmit_sta(const uint8_t *frame, size_t len, uint8_t wcid);
+  int transmit_sta(const uint8_t *frame, size_t len, uint8_t wcid, uint8_t omac = 0);
 
   static uint16_t tx_rate_ofdm(unsigned mbps);
   static uint16_t tx_rate_cck(unsigned mbps_x2);
   static uint16_t tx_rate_ht(unsigned mcs);
   bool mcu_send(const Command &cmd, const void *data, size_t len, bool wait,
-                std::vector<uint8_t> *answer = nullptr, unsigned timeout_ms = 3000);
+                std::vector<uint8_t> *answer = nullptr, unsigned timeout_ms = 3000, bool log_timeout = true);
 
   /* Frames and events the firmware sent that no command waited for. */
   using EventHandler = std::function<void(const uint8_t *data, size_t len)>;
@@ -204,9 +224,10 @@ private:
   void handle_rx(const std::vector<uint8_t> &buf);
   void handle_tx_free(const uint8_t *data, size_t len);
   bool add_interface(bool enable);
+  bool add_omac(uint8_t omac, const uint8_t addr[6], const uint8_t bssid[6], bool enable);
   bool sniffer(bool enable);
-  bool sniffer_config();
-  bool channel_switch(uint8_t ext_cmd_id);
+  bool sniffer_config(bool wait = true);
+  bool channel_switch(uint8_t ext_cmd_id, bool wait = true);
   void set_timing(); /* mt792x_mac_set_timeing */
   /* Copies the frame into a free TX slot and queues it with this TXD. */
   int queue_frame(const uint8_t *frame, size_t len, uint32_t txd[8]);
@@ -220,5 +241,7 @@ private:
   uint8_t _channel = 0, _width = 20;
   uint8_t _own[6] = {}, _bssid[6] = {};
   bool _iface_up = false;
+  uint8_t _sta_addr[6] = {}, _sta_bssid[6] = {};
+  bool _sta_iface_up = false;
   std::vector<uint8_t> _rx_scratch;
 };

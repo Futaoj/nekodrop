@@ -46,6 +46,7 @@
 #include "kdev.h"
 #include "radio_backend.h"
 
+#include <optional>
 #include <type_traits>
 #include <map>
 #include "radio_link.h"
@@ -451,12 +452,19 @@ int main(int argc, char **argv) {
     /* One informational line for reports; it matches no pattern report.ps1
      * or Supervisor.cs reacts to (iwx_selftest checks the wording). */
     log_line(radio::format_capabilities_summary(caps));
+    /* The station drives the backend through StaDevice (sta_device.h); the
+     * wrapper is only named, never built, for a backend without a station. */
+    using StaDev = std::conditional_t<caps.supports_station, StaDeviceOf<Dev>, int>;
+    std::optional<StaDev> sta_dev;
     std::unique_ptr<WifiStation> sta;
     StaConfig sta_cfg;
     if (!opt.sta_config.empty()) {
       std::string err;
       if constexpr (caps.supports_station) {
-        if (sta_cfg.load(opt.sta_config, err)) sta = std::make_unique<WifiStation>(dev, log_line);
+        if (sta_cfg.load(opt.sta_config, err)) {
+          sta_dev.emplace(dev);
+          sta = std::make_unique<WifiStation>(*sta_dev, log_line);
+        }
         else log_line("station config: " + err);
       } else {
         log_line(radio::station_policy_message(caps));

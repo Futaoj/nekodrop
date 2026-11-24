@@ -48,7 +48,7 @@ nekodrop drives the Wi-Fi chip directly from user mode so Windows can speak Appl
 
 | Card / Family | PCI Device IDs | Modes | Status |
 |---|---|---|---|
-| **MediaTek MT7902** | `7902` | On-Demand | ⚠️ user-mode mt76/mt7921 port (`mtradio/`). AirDrop both ways verified on one card (ASUS desktop, `SUBSYS_60401A3B`, iPhone on 5 GHz ch 44): A-MPDU both ways, ~15 MB/s receive, ~5 MB/s send. On 2.4 GHz frames needing an ACK never complete, so it sends without ACK there. Needs linux-firmware's `WIFI_*_MT7902*` (the Windows driver's copy ignores UNI commands) |
+| **MediaTek MT7902** | `7902` | Concurrent (5 GHz Wi-Fi only) & On-Demand | ⚠️ user-mode mt76/mt7921 port (`mtradio/`). Concurrent: the firmware has one channel, so the radio time-shares it between the router and AWDL (about 3/4 of the time on the router, less while AirDrop moves data; ~3.5 MB/s download and ~1.3 MB/s upload measured with firmware rate control and the router's A-MPDUs, host-side CCMP). AirDrop both ways verified on one card (ASUS desktop, `SUBSYS_60401A3B`, iPhone on 5 GHz ch 44): A-MPDU both ways, ~15 MB/s receive, ~5 MB/s send. On 2.4 GHz frames needing an ACK never complete, so it sends without ACK there. Needs linux-firmware's `WIFI_*_MT7902*` (the Windows driver's copy ignores UNI commands) |
 | **MediaTek MT7921 / RZ608** | `7961` `0608` | On-Demand (Concurrent feasible later) | 🗓️ Planned (BAR0 1 MiB ready in `regproxy`; WFDMA architecture is AWE-friendly) |
 | **MediaTek MT7922 / RZ616** | `7922` `0616` | On-Demand (Concurrent feasible later) | 🗓️ Planned (shares ~95% code with MT7921) |
 | MediaTek MT7925 | `7925` | On-Demand | 🗓️ Planned |

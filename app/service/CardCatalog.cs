@@ -8,7 +8,8 @@ public enum RadioBackendKind
     Iwx,
     /// <summary>winawdl's devourer (Realtek RTL8852CE): monitor and inject only, no station.</summary>
     Devourer,
-    /// <summary>nekodrop-radio-mt: the MediaTek MT7902 driver ported from Linux mt76 (mtradio/): sniffer, inject and AWDL peer stations, no station mode.</summary>
+    /// <summary>nekodrop-radio-mt: the MediaTek MT7902 driver ported from Linux mt76 (mtradio/): sniffer, inject,
+    /// AWDL peer stations, and a 5 GHz Wi-Fi station on the host (the card moves between the router and AWDL).</summary>
     Mt76,
 }
 
@@ -22,8 +23,10 @@ public enum RadioBackendKind
 /// <param name="SupportsAggregate">the radio takes --aggregate (A-MPDU sending, always on since 0.1.35)</param>
 /// <param name="SupportsKernelDriver">nekodrop-wlan.sys can own the card (Windows' Wi-Fi and AWDL on one driver)</param>
 /// <param name="MinBarBytes">the smallest register BAR the register proxy must map (driver/regproxy MIN_BAR_LEN)</param>
+/// <param name="StationOn24GHz">the radio's station joins 2.4 GHz networks too; without it a dual-band
+/// network is joined at its 5 GHz access point</param>
 public sealed record AdapterCapabilities(bool SupportsConcurrentWifi, bool SupportsFastSend, bool SupportsAggregate,
-                                         bool SupportsKernelDriver, uint MinBarBytes)
+                                         bool SupportsKernelDriver, uint MinBarBytes, bool StationOn24GHz = true)
 {
     /// <summary>
     /// The Intel cards nekodrop runs today. Also what the service assumes before
@@ -80,7 +83,9 @@ public static class CardCatalog
     // Killer (Rivet Networks) cards are Intel chips with Intel's driver repackaged.
     static readonly string[] IntelProviders = ["Intel", "Killer", "Rivet Networks"];
 
-    static readonly AdapterCapabilities MediaTekCaps = new(false, false, false, false, 0x10000);
+    /* The card completes no frame that waits for an acknowledgement on 2.4 GHz
+     * (mtradio's --test-kinds), and a station's every frame does: 5 GHz only. */
+    static readonly AdapterCapabilities MediaTekCaps = new(true, false, false, false, 0x10000, StationOn24GHz: false);
     static readonly string[] MediaTekProviders = ["MediaTek"];
 
     static AdapterProfile Intel(string device, string family) =>
@@ -108,7 +113,8 @@ public static class CardCatalog
             new AdapterCapabilities(false, false, false, false, 0x10000),
             ProxyInf, ProxyService, ProxyProvider, ["Realtek"], Active: true),
         // MediaTek MT7902 (nekodrop-radio-mt.exe, ported from Linux mt76/mt7921):
-        // sniffer and inject only, so on demand; 1 MiB BAR0.
+        // Concurrent with a 5 GHz network (the radio's host-side station shares the
+        // card's one channel with AWDL); 1 MiB BAR0.
         new AdapterProfile("14C3", "7902", "MediaTek", "MT7902", RadioBackendKind.Mt76, MediaTekCaps,
             ProxyInf, ProxyService, ProxyProvider, MediaTekProviders, Active: true),
     ];
@@ -228,7 +234,7 @@ public static class CardCatalog
         void Check(bool ok, string what) { if (!ok) fail.Add(what); }
 
         // The 15 Intel IDs the service took before the catalog (Card.DeviceIds, 0.1.20)
-        // plus Realtek RTL8852CE (10EC:C852) and MediaTek MT7902 (14C3:7902) on-demand backends = 17 active profiles.
+        // plus Realtek RTL8852CE (10EC:C852) and MediaTek MT7902 (14C3:7902) backends = 17 active profiles.
         string[] intel = ["43F0", "A0F0", "02F0", "06F0", "34F0", "3DF0", "4DF0",
                           "2723", "2725", "7A70", "7AF0", "51F0", "51F1", "54F0", "7F70"];
         Check(ActiveProfiles.Count == intel.Length + 2, $"{ActiveProfiles.Count} active profiles, expected {intel.Length + 2}");
@@ -319,6 +325,26 @@ public static class CardCatalog
             Check(SameLaunch(BuildRadioLaunch(r, 149, false, "", null, false, false),
                              "nekodrop-radio-rtl.exe", "149", "--width", "80"),
                   "Devourer ch 149 default launch args");
+        }
+
+        // Built-in MediaTek MT7902: active, Mt76 backend, Concurrent kept; the station
+        // config and the country go to the radio, no Intel option does.
+        var mt = MatchActive("PCI\\VEN_14C3&DEV_7902&SUBSYS_60401A3B&REV_00\\6&1");
+        if (mt is null) fail.Add("14C3:7902 is not active");
+        else
+        {
+            Check(mt.VendorName == "MediaTek" && mt.Backend == RadioBackendKind.Mt76, $"14C3:7902 vendor {mt.VendorName} backend {mt.Backend}");
+            Check(mt.Capabilities.SupportsConcurrentWifi && !mt.Capabilities.SupportsFastSend &&
+                  !mt.Capabilities.SupportsAggregate && !mt.Capabilities.SupportsKernelDriver &&
+                  !mt.Capabilities.StationOn24GHz, "14C3:7902 capabilities");
+            Check(AdapterCapabilities.IntelDefault.StationOn24GHz, "Intel station must keep 2.4 GHz");
+            Check(EffectiveMode(NetMode.Concurrent, mt.Capabilities) == NetMode.Concurrent, "14C3:7902 Concurrent changed");
+            Check(SameLaunch(BuildRadioLaunch(mt, 44, false, "JP", @"C:\run\sta.conf", true, true, true, true),
+                             "nekodrop-radio-mt.exe", "44", "--width", "80", "--country", "JP", "--sta-config", @"C:\run\sta.conf"),
+                  "Mt76 launch args with a station");
+            Check(SameLaunch(BuildRadioLaunch(mt, 6, false, "", null, false, false),
+                             "nekodrop-radio-mt.exe", "6", "--width", "20"),
+                  "Mt76 ch 6 default launch args");
         }
 
         // Every backend kind, profile and manual model has a registered radio backend.

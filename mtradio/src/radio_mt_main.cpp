@@ -4,13 +4,24 @@
  * (radio_link.h), like nekodrop-radio-rtl does for the RTL8852CE.
  *
  * Usage: nekodrop-radio-mt <channel> [--width 20|40|80] [--country CC]
- *        [--fw-dir DIR] [--data-rate auto|MCSn|OFDMn]
+ *        [--fw-dir DIR] [--data-rate auto|MCSn|OFDMn] [--sta-config FILE]
+ *        [--run-for SECONDS]
  *        nekodrop-radio-mt <channel> --test-rx SECONDS   (no pipe: what is heard)
  *        nekodrop-radio-mt <channel> --test-tx SECONDS   (probes an access point heard)
+ *        nekodrop-radio-mt <channel> --test-switch N     (times N channel moves)
+ *
+ * With --sta-config the radio also runs a Wi-Fi station (Concurrent mode):
+ * iwxradio's WifiStation through MtStation (mt_station.h). The card has one
+ * channel at a time, so when the access point is on another channel than
+ * AWDL the radio moves between the two in step with AWDL's 16-entry channel
+ * sequence, naming the router's channel in the entries it spends there (the
+ * coexistence plan of iwxradio's coex_plan.h). stdin takes "scan [SSID hex]"
+ * and "rejoin" from the service, as the Intel radio's.
  *
  * One thread owns the card: it drains the RX rings and the client's queue.
  * Another reads the pipe. Lines starting "radio: " are for NekoDropService
- * (Supervisor.OnRadioLine): "ready on channel", "bring-up failed: ", "rx: ". */
+ * (Supervisor.OnRadioLine): "ready on channel", "bring-up failed: ", "rx: ",
+ * "event: ". */
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -21,6 +32,7 @@
 
 #include <timeapi.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -39,9 +51,12 @@
 #include <vector>
 
 #include "awdl_policy.h"
+#include "coex_plan.h"
 #include "mt7902.h"
+#include "mt_station.h"
 #include "pipe_server.h"
 #include "radio_link.h"
+#include "wifi_sta.h"
 
 namespace {
 
@@ -120,8 +135,10 @@ struct Options {
   std::string fw_dir;
   std::string data_rate = "auto";
   bool aggregate = true;
-  unsigned test_rx = 0, test_tx = 0, test_kinds = 0, test_sta = 0;
+  unsigned test_rx = 0, test_tx = 0, test_kinds = 0, test_sta = 0, test_switch = 0, run_for = 0;
+  bool test_scan = false;
   int only = -1;
+  std::string sta_config;
 };
 
 std::optional<Options> parse(int argc, char **argv) {
@@ -143,6 +160,10 @@ std::optional<Options> parse(int argc, char **argv) {
     else if (a == "--test-kinds" && more) o.test_kinds = static_cast<unsigned>(std::atoi(argv[++i]));
     else if (a == "--only" && more) o.only = std::atoi(argv[++i]);
     else if (a == "--test-sta" && more) o.test_sta = static_cast<unsigned>(std::atoi(argv[++i]));
+    else if (a == "--test-switch" && more) o.test_switch = static_cast<unsigned>(std::atoi(argv[++i]));
+    else if (a == "--test-scan") o.test_scan = true;
+    else if (a == "--run-for" && more) o.run_for = static_cast<unsigned>(std::atoi(argv[++i]));
+    else if (a == "--sta-config" && more) o.sta_config = argv[++i];
     else return std::nullopt;
   }
   if (o.width == 0) o.width = o.channel > 14 ? 80 : 20;
@@ -206,15 +227,131 @@ RateLadder make_ladder(const std::string &spec) {
   return l;
 }
 
+/* Networks heard in beacons and probe responses, for the service's Wi-Fi
+ * list (as iwxradio's radio_main). */
+struct BssSeen {
+  std::string ssid;
+  uint8_t channel = 0;
+  int8_t dbm = -127;
+  std::string security;
+  Clock::time_point seen{};
+};
+
+std::string bss_security(const uint8_t *ies, size_t len, uint16_t capability) {
+  bool psk = false, sae = false, dot1x = false, rsn = false, owe = false;
+  for (size_t i = 0; i + 2 <= len;) {
+    const uint8_t id = ies[i], n = ies[i + 1];
+    if (i + 2 + n > len) break;
+    if (id == 48 && n >= 8) {
+      rsn = true;
+      const uint8_t *r = ies + i + 2;
+      size_t o = 2 + 4;
+      const unsigned pc = r[o] | r[o + 1] << 8;
+      o += 2 + 4u * pc;
+      if (o + 2 <= n) {
+        const unsigned ac = r[o] | r[o + 1] << 8;
+        o += 2;
+        for (unsigned k = 0; k < ac && o + 4 <= n; k++, o += 4) {
+          if (r[o] != 0x00 || r[o + 1] != 0x0f || r[o + 2] != 0xac) continue;
+          if (r[o + 3] == 2 || r[o + 3] == 6) psk = true;
+          else if (r[o + 3] == 8) sae = true;
+          else if (r[o + 3] == 18) owe = true;
+          else if (r[o + 3] == 1 || r[o + 3] == 5) dot1x = true;
+        }
+      }
+    }
+    i += 2 + n;
+  }
+  if (rsn) {
+    if (psk && sae) return "wpa2/3-psk";
+    if (sae) return "wpa3-sae";
+    if (psk) return "wpa2-psk";
+    if (owe) return "owe";
+    if (dot1x) return "802.1x";
+    return "rsn";
+  }
+  return (capability & 0x10) ? "wep" : "open";
+}
+
+/* Our AWDL schedule's clock, from the sync TLV (4) of the frames awdld sends:
+ * the AW counter and period. Entry k of the 16-entry channel sequence spans
+ * AWs 4k..4k+3 (iwxradio's coex_plan.h in_step). A frame leaves at or after
+ * the start of its AW, never before, so the earliest estimate of when AW 0
+ * began is kept; a counter jump (awdld adopting a peer's) starts over. */
+struct AwClock {
+  bool valid = false;
+  double aw_us = 16 * 1024.0;
+  double base_us = 0; /* when AW 0 began, on our clock */
+  uint64_t last_note_us = 0;
+
+  void note(uint64_t now_us, unsigned counter, unsigned period_tu) {
+    if (period_tu < 8 || period_tu > 64) return;
+    aw_us = period_tu * 1024.0;
+    const double candidate = static_cast<double>(now_us) - counter * aw_us;
+    if (!valid || candidate < base_us || candidate - base_us > 1.5 * aw_us || now_us - last_note_us > 5000000)
+      base_us = candidate;
+    valid = true;
+    last_note_us = now_us;
+  }
+  /* The entry (0-15) at `t_us`. Without awdld's frames, our own clock. */
+  unsigned entry(uint64_t t_us) const {
+    const double aws = (static_cast<double>(t_us) - (valid ? base_us : 0.0)) / aw_us;
+    const int64_t aw = static_cast<int64_t>(aws >= 0 ? aws : aws - 1);
+    return static_cast<unsigned>(((aw / 4) % 16 + 16) % 16);
+  }
+};
+
+/* The AW counter and period in an AWDL action frame's sync TLV (4). */
+bool frame_sync(const uint8_t *f, size_t len, unsigned &counter, unsigned &period_tu) {
+  for (size_t i = 40; i + 3 <= len;) {
+    const size_t n = size_t(f[i + 1]) | size_t(f[i + 2]) << 8;
+    if (i + 3 + n > len) return false;
+    const uint8_t *v = f + i + 3;
+    if (f[i] == 4 && n >= 31) {
+      period_tu = static_cast<unsigned>(v[5] | v[6] << 8);
+      counter = static_cast<unsigned>(v[29] | v[30] << 8);
+      return true;
+    }
+    i += 3 + n;
+  }
+  return false;
+}
+
+uint64_t now_us() {
+  return static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::microseconds>(Clock::now().time_since_epoch()).count());
+}
+
 /* ---- The relay ---- */
 struct ClientMsg {
   uint16_t type;
   std::vector<uint8_t> payload;
+  Clock::time_point at = Clock::now();
 };
+
+/* Local messages, beside the pipe's radio_link types. */
+constexpr uint16_t kStaEthernet = 0x100;   /* a frame from the TAP adapter */
+constexpr uint16_t kScanRequest = 0x101;   /* "scan [SSID hex]" on stdin */
+constexpr uint16_t kRejoinRequest = 0x102; /* "rejoin" on stdin */
+
+/* While AirDrop moves no data, Wi-Fi gets 12 of the 16 entries: AWDL keeps
+ * the first four (a quarter second in every second) to be found. */
+constexpr uint8_t kNoPeerAway[16] = {0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
 
 class Relay {
 public:
   Relay(Mt7902 &dev, PipeServer &pipe, RateLadder ladder) : _dev(dev), _pipe(pipe), _ladder(std::move(ladder)) {
+    /* Channel moves (scans, the station's time sharing, AWDL's channel)
+     * retune the RF only: with the sniffer's own channel too a move took
+     * 21 ms (median) and up to 0.36 s, which a router took for a lost
+     * station; without it 10.5 ms, at most 11.6 ms, and the card hears the
+     * new channel. Not waiting for the firmware's answer left it on the old
+     * channel (--test-switch, --test-scan, 2026-11-24). */
+    dev.move_sniffer = false;
+    /* The answer comes in ~10 ms; now and then not for 0.35 s, so a move
+     * goes on after 60 ms (the switch itself still happens). */
+    dev.move_timeout_ms = 60;
+    dev.sta_cmd_timeout_ms = 500;
     dev.set_rx_handler([this](const Mt7902::RxFrame &f) { on_rx(f); });
     dev.set_tx_status_handler([this](unsigned token, bool acked, unsigned tries) { on_tx_status(token, acked, tries); });
   }
@@ -240,36 +377,88 @@ public:
     _queue.clear();
   }
 
+  /* Starts the Wi-Fi station beside AWDL (Concurrent mode). */
+  bool start_station(StaConfig cfg) {
+    /* Block Ack from the AP: MtStation reorders on the host. */
+    cfg.block_ack = true;
+    const auto log = [](const std::string &l) { say("%s", l.c_str()); };
+    if (cfg.channel <= 14) {
+      /* The card completes no frame that waits for an acknowledgement on
+       * 2.4 GHz (--test-kinds), and a station's every frame does. */
+      say("station: \"%s\" is on 2.4 GHz (channel %u); the MT7902 joins only 5 GHz networks beside AirDrop",
+          cfg.ssid.c_str(), cfg.channel);
+      say("event: wifi failed");
+      return false;
+    }
+    _sta_dev = std::make_unique<MtStation>(_dev, log);
+    _sta = std::make_unique<WifiStation>(*_sta_dev, log);
+    std::string err;
+    if (!_sta->start(cfg, err)) {
+      say("station: %s", err.c_str());
+      say("event: wifi failed");
+      _sta.reset();
+      _sta_dev.reset();
+      return false;
+    }
+    say("station: joining \"%s\" on channel %u, AWDL on %u%s", cfg.ssid.c_str(), cfg.channel, channel,
+        cfg.channel == channel ? " (one channel for both)" : " (the card moves between the two)");
+    return true;
+  }
+  WifiStation *station() { return _sta.get(); }
+
   /* The card's thread. */
   void run() {
     auto last_report = Clock::now();
     unsigned idle = 0;
-    /* Two lanes: AWDL's own frames (action frames carrying the sync
+    /* Three lanes: AWDL's own frames (action frames carrying the sync
      * timestamps, multicast, settings) never wait behind a burst of unicast
      * data, and data never takes the last kReservedSlots TX slots. Late
-     * sync frames make an iPhone drop us from AWDL mid-transfer. */
-    std::deque<ClientMsg> ctrl, data;
+     * sync frames make an iPhone drop us from AWDL mid-transfer. Local
+     * messages (settings, the station's Ethernet frames, scans) never wait
+     * for AWDL frames, which wait while the card is with the router. */
+    std::deque<ClientMsg> ctrl, data, local;
     while (!g_stop) {
       {
         std::lock_guard<std::mutex> lock(_mutex);
-        while (!_queue.empty() && ctrl.size() + data.size() < 512) {
+        while (!_queue.empty() && ctrl.size() + data.size() + local.size() < 1024) {
           ClientMsg &m = _queue.front();
-          (is_unicast_data(m) ? data : ctrl).push_back(std::move(m));
+          if (m.type != RADIO_LINK_TX) local.push_back(std::move(m));
+          else (is_unicast_data(m) ? data : ctrl).push_back(std::move(m));
           _queue.pop_front();
         }
       }
       unsigned did = 0;
-      while (!ctrl.empty()) {
-        if (!handle(ctrl.front())) break; /* no TX slot: try again after polling */
-        ctrl.pop_front();
+      while (!local.empty()) {
+        handle(local.front());
+        local.pop_front();
         did++;
       }
-      while (!data.empty() && _dev.tx_slots_free() > kReservedSlots) {
-        if (!handle(data.front())) break;
-        data.pop_front();
-        did++;
+      did += schedule();
+      if (_dev.channel() == channel && !_scan.active) {
+        while (!ctrl.empty()) {
+          /* Held while the card was away: its sync timestamps are stale. */
+          if (Clock::now() - ctrl.front().at > std::chrono::milliseconds(40)) {
+            ctrl.pop_front();
+            _tx_stale++;
+            continue;
+          }
+          if (!handle(ctrl.front())) break; /* no TX slot: try again after polling */
+          ctrl.pop_front();
+          did++;
+        }
+        while (!data.empty() && _dev.tx_slots_free() > kReservedSlots) {
+          if (!handle(data.front())) break;
+          data.pop_front();
+          did++;
+        }
+      } else {
+        while (ctrl.size() > 256) {
+          ctrl.pop_front();
+          _tx_stale++;
+        }
       }
       did += _dev.poll();
+      if (_sta) did += station_tick();
       if (_pipe.connected()) _pipe.flush_send();
       /* Every TX slot out for seconds: the card stopped reporting sent
        * frames, and nothing more can go out. */
@@ -301,15 +490,300 @@ public:
         _tx_failed, _tx_refused, _ladder.levels[_ladder.level].first.c_str(), _ladder.up, _ladder.down,
         _addba_declined, static_cast<unsigned>(_peers.size()), _tx_sta, _rx_ba_sessions, _tx_ba_sessions,
         _rx_to_us_pm);
+    if (_sta) {
+      const MtStation::Stats &s = _sta_dev->stats();
+      unsigned router = 0;
+      for (uint8_t a : _away) router += a;
+      say("wifi: %s, %llu packets in, %llu out; frames to the AP %llu sent, %llu acked, %llu failed, %llu held, "
+          "%llu dropped, rate %s (%llu at it); from the AP %llu (and %llu to others), %llu opened, %llu bad MIC, "
+          "%llu without key, %llu replayed, %llu repeats, %llu sent again by the AP, A-MPDU sessions %u (%llu "
+          "reordered, %llu late); sleep/wake frames %llu/%llu sent, %llu/%llu acked; channel moves "
+          "%llu (%llu us average, %llu us longest), %u of 16 entries on the router's channel%s, %llu%% of the time "
+          "there; AWDL frames held too long %llu",
+          _sta->state_name(), _sta->rx_packets(), _sta->tx_packets(), s.tx, s.tx_acked, s.tx_failed, s.tx_held,
+          s.tx_dropped, _sta_dev->rate_name().c_str(), s.tx_fw, s.rx, s.rx_others, s.rx_opened, s.rx_bad_mic,
+          s.rx_no_key, s.rx_replay, s.rx_repeat, s.rx_retry, s.rx_ba, s.rx_reordered, s.rx_late, s.sleep_sent,
+          s.wake_sent, s.sleep_acked, s.wake_acked, _moves,
+          _moves ? _move_us / _moves : 0ull, _move_us_max, _timeshare ? router : 0u,
+          _aw.valid ? "" : " (no AWDL clock yet)", _here_total_us ? _here_us * 100 / _here_total_us : 0ull, _tx_stale);
+    }
   }
 
   uint8_t channel = 0, width = 20;
   bool aggregate = true;
 
 private:
+  /* ---- Wi-Fi station: events, answers, the channel scheduler, scans ---- */
+
+  unsigned station_tick() {
+    unsigned did = 0;
+    _sta->tick(now_us());
+    _sta_dev->tick();
+    RxFrame late{};
+    while (_sta_dev->take(late)) {
+      _sta->on_frame(late);
+      did++;
+    }
+    if (_sta->state() != _published_wifi) {
+      _published_wifi = _sta->state();
+      if (_published_wifi == WifiStation::State::Running) _running_since = Clock::now();
+      say("event: wifi %s", _sta->state_name());
+    }
+    std::vector<uint8_t> ans;
+    while (_sta->take_addba(ans)) {
+      TxRate r; /* 6 Mb/s */
+      _sta_dev->sta_transmit(ans.data(), ans.size(), r, (ans[1] & 0x40) != 0);
+      did++;
+    }
+    return did;
+  }
+
+  bool station_on_air() const { return _sta && _sta_dev->joined(); }
+
+  /* The channel the card should be on now, and moves it there. */
+  unsigned schedule() {
+    if (_scan.active) return scan_step();
+    uint8_t want = channel, want_w = width;
+    _timeshare = false;
+    if (station_on_air()) {
+      const uint8_t s = _sta_dev->channel();
+      const WifiStation::State st = _sta->state();
+      const bool joining = st == WifiStation::State::Listening || st == WifiStation::State::Authenticating ||
+                           st == WifiStation::State::Associating || st == WifiStation::State::Handshake;
+      if (s == channel) {
+        want_w = width;
+      } else if (joining) {
+        /* A join takes the card for the second or so it needs, at AWDL's
+         * width (the sniffer's): the moves stay the RF switch alone. */
+        want = s;
+        want_w = width;
+      } else if (st == WifiStation::State::Running && Clock::now() - _running_since < std::chrono::seconds(3)) {
+        /* The first seconds after joining (DHCP, ARP, the router's own
+         * checks) stay with the router: leaving at once got us
+         * disconnected, reason 1, twice in a row. */
+        want = s;
+        want_w = _sta_dev->width();
+      } else if (st == WifiStation::State::Running) {
+        _timeshare = true;
+        const uint64_t t = now_us();
+        plan(t, s);
+        /* A little early, so the card is there when the entry begins. */
+        if (_away[_aw.entry(t + 2000)]) {
+          want = s;
+          want_w = _sta_dev->width();
+        }
+      }
+    }
+    return move_to(want, want > 14 ? want_w : 20);
+  }
+
+  /* Which of the 16 entries go to the router. While AirDrop moves data, the
+   * plan's tables (Apple's, coex_plan.h) give AWDL most of them. Otherwise
+   * Wi-Fi keeps 12: Apple's idle table (4 for the router) assumes AWDL is up
+   * only while something uses it, and nekodrop's is up all the time, with
+   * iPhones nearby talking AWDL now and then (2026-11-24: 130 KB/s). */
+  void plan(uint64_t t, uint8_t s) {
+    const bool moving = _last_awdl_data_us && t - _last_awdl_data_us < awdl_plan::kDataHoldUS;
+    _meter.note(t, _sta->rx_packets() + _sta->tx_packets(), _sta->rx_bytes() + _sta->tx_bytes());
+    uint8_t away[16];
+    if (!moving || !awdl_plan::plan_entries(true, s, _sta_dev->width(), channel, true, _meter.cls, away))
+      std::memcpy(away, kNoPeerAway, 16);
+    if (std::memcmp(away, _away, 16) != 0) {
+      std::memcpy(_away, away, 16);
+      unsigned n = 0;
+      for (uint8_t a : away) n += a;
+      say("timeshare: %u of 16 entries on the router's channel %u (%s)", n, s,
+          moving ? "AirDrop moving data" : "AirDrop idle");
+    }
+  }
+
+  unsigned move_to(uint8_t want, uint8_t w) {
+    const uint8_t at = _dev.channel();
+    const bool at_router = station_on_air() && at == _sta_dev->channel();
+    /* Time on the router's channel while joined (the report's share). */
+    const uint64_t t = now_us();
+    if (_here_last_us && _sta && _sta->state() == WifiStation::State::Running) {
+      _here_total_us += t - _here_last_us;
+      if (at_router) _here_us += t - _here_last_us;
+    }
+    _here_last_us = t;
+    if (want == at && w == _dev.width_mhz() && !_move_failed) {
+      if (_sta) _sta_dev->on_channel(at_router);
+      return 0;
+    }
+    /* Leaving the router: it holds our frames once it knows we sleep. */
+    const bool running = _sta && _sta->state() == WifiStation::State::Running;
+    if (want != at && at_router && _sta_dev->associated() && running) {
+      if (!_ps_asked) {
+        _sta_dev->send_null(true);
+        _ps_asked = true;
+        _ps_at = Clock::now();
+        return 1;
+      }
+      if (_sta_dev->null_pending() && Clock::now() - _ps_at < std::chrono::milliseconds(8)) return 0;
+    }
+    _ps_asked = false;
+    if (_sta) _sta_dev->on_channel(false);
+    const auto t0 = Clock::now();
+    const bool ok = _dev.set_channel(want, w);
+    const uint64_t us =
+        static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - t0).count());
+    _moves++;
+    _move_us += us;
+    if (us > _move_us_max) _move_us_max = us;
+    if (!ok && _move_fail_logged++ < 5) say("channel move to %u failed", want);
+    /* The switch may not have happened: the next round does it once more. */
+    _move_failed = !ok && !_move_failed;
+    const bool to_router = station_on_air() && want == _sta_dev->channel();
+    if (to_router) {
+      _sta_dev->on_channel(true);
+      if (_sta_dev->associated() && running && want != channel) _sta_dev->send_null(false);
+    }
+    return 1;
+  }
+
+  /* ---- Scans for the service's Wi-Fi list: every channel in turn ---- */
+  struct Scan {
+    bool active = false, ps_done = false;
+    std::vector<uint8_t> channels, ssid;
+    size_t next = 0;
+    Clock::time_point until{}, started{};
+    uint64_t frames = 0, beacons = 0;
+    std::map<uint8_t, std::pair<uint64_t, uint64_t>> heard; /* channel -> frames, beacons */
+  } _scan;
+
+  void start_scan(const std::vector<uint8_t> &ssid) {
+    if (_scan.active) return;
+    _scan = Scan{};
+    _scan.active = true;
+    _scan.ssid = ssid;
+    _scan.started = Clock::now();
+    for (uint8_t c = 36; c <= 64; c += 4) _scan.channels.push_back(c);
+    for (uint8_t c = 100; c <= 144; c += 4) _scan.channels.push_back(c);
+    for (uint8_t c = 149; c <= 165; c += 4) _scan.channels.push_back(c);
+    for (uint8_t c = 1; c <= 13; c++) _scan.channels.push_back(c);
+    say("event: scan-started");
+  }
+
+  unsigned scan_step() {
+    const auto now = Clock::now();
+    if (!_scan.ps_done) {
+      const bool running = _sta && _sta->state() == WifiStation::State::Running;
+      if (station_on_air() && running && _dev.channel() == _sta_dev->channel()) {
+        if (!_ps_asked) {
+          _sta_dev->send_null(true);
+          _ps_asked = true;
+          _ps_at = now;
+          return 1;
+        }
+        if (_sta_dev->null_pending() && now - _ps_at < std::chrono::milliseconds(8)) return 0;
+      }
+      _ps_asked = false;
+      _scan.ps_done = true;
+      if (_sta) _sta_dev->on_channel(false);
+    }
+    if (_scan.until != Clock::time_point{} && now < _scan.until) return 0;
+    if (_scan.next >= _scan.channels.size()) {
+      _scan.active = false;
+      std::string heard;
+      for (const auto &[ch, c] : _scan.heard)
+        heard += " " + std::to_string(ch) + ":" + std::to_string(c.first) + "/" + std::to_string(c.second);
+      say("scan: %llu frames, %llu beacons or probe responses (channel:frames/beacons%s)", _scan.frames,
+          _scan.beacons, heard.c_str());
+      unsigned n = 0;
+      for (const auto &[bssid, b] : _bss) {
+        if (b.seen < _scan.started || b.ssid.empty()) continue;
+        std::string hex;
+        char h[3];
+        for (unsigned char c : b.ssid) {
+          std::snprintf(h, sizeof(h), "%02x", c);
+          hex += h;
+        }
+        say("event: bss %s %u %d %s %s", bssid.c_str(), b.channel, b.dbm, b.security.c_str(), hex.c_str());
+        n++;
+      }
+      say("event: scan-done %u", n);
+      return 1;
+    }
+    const uint8_t ch = _scan.channels[_scan.next++];
+    _dev.set_channel(ch, 20);
+    const bool radar = ch >= 52 && ch <= 144;
+    if (!radar) probe(ch);
+    /* From when the card is there: a beacon every 102 ms, so a radar
+     * channel (listening only) gets two intervals; one interval (120 ms)
+     * often missed the AP when the move ran late. */
+    _scan.until = Clock::now() + std::chrono::milliseconds(radar ? 250 : 150);
+    return 1;
+  }
+
+  /* A broadcast probe request, for the wildcard SSID or the one asked for. */
+  void probe(uint8_t ch) {
+    std::vector<uint8_t> f(24, 0);
+    f[0] = 0x40;
+    std::memset(&f[4], 0xff, 6);
+    std::memcpy(&f[10], _own_set ? _own.data() : _dev.mac_address(), 6);
+    std::memset(&f[16], 0xff, 6);
+    _seq = static_cast<uint16_t>((_seq + 1) & 0xfff);
+    f[22] = static_cast<uint8_t>(_seq << 4);
+    f[23] = static_cast<uint8_t>(_seq >> 4);
+    f.push_back(0);
+    f.push_back(static_cast<uint8_t>(_scan.ssid.size()));
+    f.insert(f.end(), _scan.ssid.begin(), _scan.ssid.end());
+    if (ch <= 14) f.insert(f.end(), {1, 8, 0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24});
+    else f.insert(f.end(), {1, 8, 0x8c, 0x12, 0x98, 0x24, 0xb0, 0x48, 0x60, 0x6c});
+    _dev.force_no_ack = 1;
+    _dev.transmit(f.data(), f.size(), Mt7902::tx_rate_ofdm(6));
+    _dev.force_no_ack = -1;
+  }
+
+  void note_bss(const Mt7902::RxFrame &f) {
+    const uint16_t fc = fc_of(f.data);
+    const bool beacon = f.len >= 36 && ((fc & 0xfc) == 0x80 || (fc & 0xfc) == 0x50);
+    if (_scan.active) {
+      _scan.frames++;
+      _scan.beacons += beacon;
+      auto &h = _scan.heard[f.channel];
+      h.first++;
+      h.second += beacon;
+    }
+    if (!beacon) return;
+    const std::string key = mac_str(f.data + 16);
+    if (_bss.size() >= 256 && !_bss.count(key)) return;
+    BssSeen &b = _bss[key];
+    const uint8_t *ies = f.data + 36;
+    const size_t n = f.len - 36;
+    uint8_t ch = f.channel;
+    for (size_t i = 0; i + 2 <= n;) {
+      const uint8_t id = ies[i], l = ies[i + 1];
+      if (i + 2 + l > n) break;
+      if (id == 0 && l <= 32) b.ssid.assign(reinterpret_cast<const char *>(ies + i + 2), l);
+      else if ((id == 3 || id == 61) && l >= 1 && ies[i + 2]) ch = ies[i + 2];
+      i += 2 + l;
+    }
+    b.channel = ch;
+    b.dbm = f.dbm;
+    b.security = bss_security(ies, n, static_cast<uint16_t>(f.data[34] | f.data[35] << 8));
+    b.seen = Clock::now();
+  }
+
   bool handle(const ClientMsg &m) {
     const bool six = m.payload.size() == 6;
-    if (m.type == RADIO_LINK_TX) return send_client_frame(m.payload);
+    if (m.type == RADIO_LINK_TX) return send_client_frame(m);
+    if (m.type == kStaEthernet) {
+      if (_sta) _sta->on_ethernet(m.payload.data(), m.payload.size());
+      return true;
+    }
+    if (m.type == kScanRequest) {
+      start_scan(m.payload);
+      return true;
+    }
+    if (m.type == kRejoinRequest) {
+      if (_sta) {
+        say("event: wifi-stall");
+        _sta->rejoin("the gateway stopped answering");
+      }
+      return true;
+    }
     if (m.type == RADIO_LINK_SET_ADDRESS && six) {
       std::memcpy(_own.data(), m.payload.data(), 6);
       _own_set = true;
@@ -319,14 +793,9 @@ private:
       _bssid_set = _bssid != Mac{};
       adopt_identity();
     } else if (m.type == RADIO_LINK_SET_CHANNEL && m.payload.size() == 1 && m.payload[0] != channel) {
-      const uint8_t to = m.payload[0];
-      const uint8_t w = to > 14 ? width : 20;
-      if (_dev.set_channel(to, w)) {
-        say("channel %u -> %u", channel, to);
-        channel = to;
-      } else {
-        say("channel change to %u failed; staying on %u", to, channel);
-      }
+      /* AWDL's channel: the scheduler takes the card there. */
+      say("channel %u -> %u", channel, m.payload[0]);
+      channel = m.payload[0];
     }
     return true;
   }
@@ -341,11 +810,28 @@ private:
       say("the card will not acknowledge frames for the client; peers will repeat everything they send it");
   }
 
-  bool send_client_frame(const std::vector<uint8_t> &msg) {
+  bool send_client_frame(const ClientMsg &m) {
+    const std::vector<uint8_t> &msg = m.payload;
     if (msg.size() < 4) return true;
     const size_t rt = msg[2] | static_cast<size_t>(msg[3]) << 8;
     if (rt >= msg.size() || msg.size() - rt < 10) return true;
-    return send_frame(msg.data() + rt, msg.size() - rt, false);
+    const uint8_t *f = msg.data() + rt;
+    const size_t len = msg.size() - rt;
+    if (is_awdl(f, len)) {
+      unsigned counter = 0, period = 0;
+      if (frame_sync(f, len, counter, period)) {
+        const uint64_t at = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(m.at.time_since_epoch()).count());
+        _aw.note(at, counter, period);
+      }
+      if (_timeshare && station_on_air()) {
+        /* Our channel sequence names the router where the card will be there. */
+        _rewritten.assign(f, f + len);
+        if (awdl_plan::rewrite_frame(_rewritten.data(), len, _away, _sta_dev->channel()))
+          return send_frame(_rewritten.data(), len, false);
+      }
+    }
+    return send_frame(f, len, false);
   }
 
   /* Returns false only when the card has no room: the caller retries. */
@@ -353,6 +839,7 @@ private:
     const uint16_t fc = fc_of(f);
     const bool group = (f[4] & 1) != 0;
     const bool unicast_data = is_data(fc) && !group;
+    if (unicast_data && !ours) _last_awdl_data_us = now_us();
     if (unicast_data && !ours && len >= 24) {
       Peer *p = station(f + 4);
       if (p && p->sta_ok) return send_to_station(*p, f, len);
@@ -377,6 +864,7 @@ private:
   }
 
   void on_tx_status(unsigned token, bool acked, unsigned) {
+    if (_sta_dev && _sta_dev->on_tx_status(token, acked)) return;
     auto it = _inflight.find(token);
     const bool unicast_data = it != _inflight.end() && it->second;
     if (it != _inflight.end()) _inflight.erase(it);
@@ -388,6 +876,19 @@ private:
     _rx++;
     if (f.len < 10) return;
     const uint16_t fc = fc_of(f.data);
+    note_bss(f);
+    if (station_on_air() && f.len >= 20) {
+      const RxFrame r{f.data, f.len, f.dbm, f.channel, 0, 0, false};
+      /* Block Ack requests from the AP, for the reorder buffers (WifiStation
+       * leaves control frames to the card). */
+      const bool bar = (f.data[0] & 0xfc) == 0x84 && std::memcmp(f.data + 10, _sta_dev->ap(), 6) == 0;
+      if (bar || _sta->owns(r)) {
+        _sta_dev->receive(f);
+        RxFrame opened{};
+        while (_sta_dev->take(opened)) _sta->on_frame(opened);
+        return;
+      }
+    }
     if (is_awdl(f.data, f.len)) {
       _rx_awdl++;
       /* NekoDropService moves the radio to the peer's 5 GHz channel, and
@@ -412,6 +913,7 @@ private:
     const bool to_us = _own_set && std::memcmp(f.data + 4, _own.data(), 6) == 0;
     if (to_us && is_data(fc)) {
       _rx_to_us++;
+      _last_awdl_data_us = now_us();
       if (f.data[1] & 0x08) _rx_to_us_retry++;
       if (f.data[1] & 0x10) _rx_to_us_pm++; /* the peer says it is going to sleep */
     }
@@ -658,6 +1160,23 @@ private:
   uint64_t _tx_sta = 0, _rx_ba_sessions = 0, _tx_ba_sessions = 0;
   Clock::time_point _stalled_since{};
   uint64_t _rx_to_us_pm = 0;
+
+  /* The Wi-Fi station (Concurrent mode); _sta drives _sta_dev, so it goes first. */
+  std::unique_ptr<MtStation> _sta_dev;
+  std::unique_ptr<WifiStation> _sta;
+  WifiStation::State _published_wifi = WifiStation::State::Idle;
+  std::vector<uint8_t> _rewritten;
+  std::map<std::string, BssSeen> _bss;
+  AwClock _aw;
+  awdl_plan::InfraMeter _meter;
+  uint8_t _away[16] = {};
+  bool _timeshare = false, _ps_asked = false;
+  Clock::time_point _ps_at{}, _running_since{};
+  uint64_t _last_awdl_data_us = 0;
+  uint64_t _here_us = 0, _here_total_us = 0, _here_last_us = 0;
+  uint64_t _moves = 0, _move_us = 0, _move_us_max = 0, _tx_stale = 0;
+  unsigned _move_fail_logged = 0;
+  bool _move_failed = false;
 };
 
 /* ---- Self tests on the air ---- */
@@ -894,6 +1413,109 @@ int test_sta(Mt7902 &dev, unsigned frames) {
   return ok ? 0 : 7;
 }
 
+/* How long a channel move takes, between the given channel and the other
+ * 5 GHz block (the station/AWDL time sharing pays it twice an entry). */
+int test_switch(Mt7902 &dev, unsigned moves) {
+  const uint8_t a = dev.channel(), b = a == 100 ? 44 : 100;
+  const uint8_t wa = dev.width_mhz();
+  /* Frames heard after each move, and on which channel the card says. */
+  uint64_t heard = 0, heard_there = 0;
+  uint8_t target = 0;
+  dev.set_rx_handler([&](const Mt7902::RxFrame &f) {
+    heard++;
+    heard_there += f.channel == target;
+  });
+  struct Way {
+    const char *name;
+    bool sniffer, wait;
+  };
+  const Way ways[] = {{"switch + sniffer, waiting", true, true},
+                      {"switch only, waiting", false, true},
+                      {"switch + sniffer, not waiting", true, false},
+                      {"switch only, not waiting", false, false}};
+  for (const Way &w : ways) {
+    dev.move_sniffer = w.sniffer;
+    dev.move_wait = w.wait;
+    std::vector<uint64_t> total;
+    uint64_t steps[3] = {}, failed = 0;
+    heard = heard_there = 0;
+    for (unsigned i = 0; i < moves && !g_stop; i++) {
+      target = i % 2 ? a : b;
+      const auto t0 = Clock::now();
+      if (!dev.set_channel(target, target > 14 ? wa : 20)) failed++;
+      total.push_back(static_cast<uint64_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - t0).count()));
+      for (int k = 0; k < 3; k++) steps[k] += dev.last_move_us[k];
+      const auto listen = Clock::now() + std::chrono::milliseconds(120);
+      while (Clock::now() < listen)
+        if (!dev.poll()) Sleep(1);
+    }
+    std::sort(total.begin(), total.end());
+    const size_t n = total.size();
+    say("test-switch: %-30s %zu moves %u<->%u: median %llu us, 90%% %llu us, longest %llu us (RF %llu, sniffer %llu, "
+        "timing %llu us average); %llu frames heard after the moves, %llu%% on the channel moved to; %llu failed",
+        w.name, n, a, b, n ? total[n / 2] : 0ull, n ? total[n * 9 / 10] : 0ull, n ? total[n - 1] : 0ull,
+        n ? steps[0] / n : 0ull, n ? steps[1] / n : 0ull, n ? steps[2] / n : 0ull, heard,
+        heard ? heard_there * 100 / heard : 0ull, failed);
+  }
+  dev.move_sniffer = dev.move_wait = true;
+  return 0;
+}
+
+/* What the card hears while it visits channels as a Wi-Fi scan does: as
+ * brought up, then with AWDL's identity set (as awdld does), each with and
+ * without a probe request after every move. */
+int test_scan(Mt7902 &dev) {
+  const uint8_t home = dev.channel(), home_w = dev.width_mhz();
+  const uint8_t chans[] = {36, 44, 100, 108, 149, 157, 1, 6};
+  uint64_t frames = 0, beacons = 0, wrong = 0;
+  uint8_t target = 0;
+  dev.set_rx_handler([&](const Mt7902::RxFrame &f) {
+    frames++;
+    beacons += f.len >= 36 && ((fc_of(f.data) & 0xfc) == 0x80 || (fc_of(f.data) & 0xfc) == 0x50);
+    wrong += f.channel != target;
+  });
+  const auto visit = [&](const char *name, bool probe) {
+    frames = beacons = wrong = 0;
+    std::string per;
+    for (uint8_t ch : chans) {
+      const uint64_t before = frames;
+      target = ch;
+      dev.set_channel(ch, 20);
+      if (probe) {
+        uint8_t f[24 + 2 + 10] = {0x40};
+        std::memset(f + 4, 0xff, 6);
+        std::memcpy(f + 10, dev.mac_address(), 6);
+        std::memset(f + 16, 0xff, 6);
+        f[24] = 0;
+        f[25] = 0;
+        const uint8_t rates[] = {1, 8, 0x8c, 0x12, 0x98, 0x24, 0xb0, 0x48, 0x60, 0x6c};
+        std::memcpy(f + 26, rates, sizeof(rates));
+        dev.force_no_ack = 1;
+        dev.transmit(f, sizeof(f), Mt7902::tx_rate_ofdm(6));
+        dev.force_no_ack = -1;
+      }
+      const auto end = Clock::now() + std::chrono::milliseconds(150);
+      while (Clock::now() < end)
+        if (!dev.poll()) Sleep(1);
+      per += " " + std::to_string(ch) + ":" + std::to_string(frames - before);
+    }
+    dev.set_channel(home, home_w);
+    say("test-scan: %-34s %llu frames, %llu beacons, %llu on another channel (per channel:%s)", name, frames, beacons,
+        wrong, per.c_str());
+  };
+  visit("as brought up, listening only", false);
+  visit("as brought up, probing", true);
+  uint8_t own[6] = {0x42, 0x9a, 0xa1, 0x2c, 0x2f, 0xc5};
+  say("test-scan: AWDL identity set: %s", dev.set_identity(own, kAwdlBssid) ? "yes" : "no");
+  visit("with AWDL's identity, listening only", false);
+  visit("with AWDL's identity, probing", true);
+  dev.move_wait = false;
+  visit("identity, probing, not waiting", true);
+  dev.move_wait = true;
+  return 0;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -955,6 +1577,8 @@ int main(int argc, char **argv) {
   else if (opt->test_tx) rc = test_tx(dev, opt->test_tx);
   else if (opt->test_kinds) rc = test_kinds(dev, opt->test_kinds, opt->only);
   else if (opt->test_sta) rc = test_sta(dev, opt->test_sta);
+  else if (opt->test_switch) rc = test_switch(dev, opt->test_switch);
+  else if (opt->test_scan) rc = test_scan(dev);
   else {
     PipeServer pipe(RADIO_LINK_PIPE_NAME, [] { return g_stop.load(); });
     if (!pipe.valid()) {
@@ -988,10 +1612,68 @@ int main(int argc, char **argv) {
       }
     });
     say("ready on channel %u, waiting for a client", opt->channel);
+    /* The Wi-Fi station (Concurrent mode). */
+    std::thread tap_thread;
+    if (!opt->sta_config.empty()) {
+      StaConfig cfg;
+      std::string err;
+      const bool loaded = cfg.load(opt->sta_config, err);
+      /* The file holds the Wi-Fi password: gone once read. */
+      DeleteFileA(opt->sta_config.c_str());
+      if (!loaded) {
+        say("station config: %s", err.c_str());
+        say("event: wifi failed");
+      } else if (relay.start_station(cfg)) {
+        WifiStation *sta = relay.station();
+        tap_thread = std::thread([&relay, sta] {
+          std::vector<uint8_t> eth;
+          while (!g_stop) {
+            if (!sta->tap().read(eth, 200)) {
+              Sleep(20);
+              continue;
+            }
+            if (!eth.empty()) relay.push({kStaEthernet, eth});
+          }
+        });
+      }
+    }
+    /* The service's Wi-Fi scans and rejoins, as the Intel radio takes them. */
+    std::thread([&relay] {
+      char line[128];
+      while (!g_stop && std::fgets(line, sizeof(line), stdin)) {
+        if (std::strncmp(line, "rejoin", 6) == 0) {
+          relay.push({kRejoinRequest, {}});
+          continue;
+        }
+        if (std::strncmp(line, "scan", 4) != 0) continue;
+        std::vector<uint8_t> ssid;
+        for (const char *h = line + 4; *h;) {
+          if (*h == ' ') {
+            h++;
+            continue;
+          }
+          if (!std::isxdigit(static_cast<unsigned char>(h[0])) || !std::isxdigit(static_cast<unsigned char>(h[1]))) break;
+          const char b[3] = {h[0], h[1], 0};
+          if (ssid.size() < 32) ssid.push_back(static_cast<uint8_t>(std::strtoul(b, nullptr, 16)));
+          h += 2;
+        }
+        relay.push({kScanRequest, ssid});
+      }
+    }).detach();
+    std::thread timer;
+    if (opt->run_for)
+      timer = std::thread([secs = opt->run_for] {
+        const auto end = Clock::now() + std::chrono::seconds(secs);
+        while (!g_stop && Clock::now() < end) Sleep(100);
+        g_stop = true;
+      });
     relay.run();
     relay.report();
     g_stop = true;
     reader.join();
+    if (tap_thread.joinable()) tap_thread.join();
+    if (timer.joinable()) timer.join();
+    if (WifiStation *sta = relay.station()) sta->stop();
   }
   dev.close();
   timeEndPeriod(1);
