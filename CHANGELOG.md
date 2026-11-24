@@ -6,6 +6,18 @@
 
 ---
 
+## v2.1.5 (Preview / 预览版)
+
+### 中文
+
+- Intel 网卡启动时如果遇到固件崩溃，nekodrop 会把网卡交还给 Windows 驱动，省去一轮轮的重启。想再试，可以在窗口里点「重试」。[#50](https://github.com/zheznanohana/nekodrop/issues/50) · [#53](https://github.com/zheznanohana/nekodrop/issues/53)
+
+### English
+
+- If Intel Wi-Fi firmware crashes during startup, nekodrop hands the card back to the Windows driver instead of restarting it repeatedly. Select **Retry** in the window to try again. [#50](https://github.com/zheznanohana/nekodrop/issues/50) · [#53](https://github.com/zheznanohana/nekodrop/issues/53)
+
+---
+
 ## v2.1.4 (Preview / 预览版) — 2026-11-25
 
 ### 中文

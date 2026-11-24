@@ -43,6 +43,7 @@ public sealed class Supervisor : IDisposable
     static readonly TimeSpan StaleScan = TimeSpan.FromSeconds(20);
     string _detail = "";
     bool _wanted;
+    bool _earlyFirmwareError, _holdFirmwareRetry;
     DateTime _lastUse = DateTime.UtcNow, _lastData = DateTime.UtcNow, _startedAt;
     long _rxToUs;
     int _restarts;
@@ -276,8 +277,10 @@ public sealed class Supervisor : IDisposable
     }
 
     /// <summary>The client wants AirDrop now (opened the window, a phone nearby is sharing).</summary>
-    public void Wake()
+    public void Wake(bool retry = false)
     {
+        lock (_lock)
+            if (_holdFirmwareRetry && !retry) return;
         _lastUse = DateTime.UtcNow;
         if (_cfg.Mode != NetMode.Off) Start("woken");
     }
@@ -290,6 +293,7 @@ public sealed class Supervisor : IDisposable
         {
             if (_wanted && State is RadioState.On or RadioState.Starting) return;
             _wanted = true;
+            _holdFirmwareRetry = false;
             _restarts = 0;
             _retryAt = DateTime.MinValue;
         }
@@ -335,6 +339,7 @@ public sealed class Supervisor : IDisposable
         lock (_lock)
         {
             State = RadioState.Starting; _channel = channel; _detail = "";
+            _earlyFirmwareError = false;
             // A scan the old radio never finished must not block auto-connect forever (Codex review #29).
             _scanBusy = false;
             _wantBootScan = false;
@@ -426,8 +431,8 @@ public sealed class Supervisor : IDisposable
             if (!_wanted) { lock (_lock) State = RadioState.Off; Publish(); return; }
             var launch = CardCatalog.BuildRadioLaunch(_profile, channel, kernel, _cfg.Country, staConf, true, _cfg.FastUnlock,
                                                       _cfg.CoexPlan, btCoexBalanced: true);
-            _radio = Spawn(Path.Combine(_root, "radio", launch.ExeName), launch.Args, OnRadioLine);
             _startedAt = DateTime.UtcNow;
+            _radio = Spawn(Path.Combine(_root, "radio", launch.ExeName), launch.Args, OnRadioLine);
             // awdld connects to the radio's pipe; give the firmware time to boot.
             for (int i = 0; i < 100 && State == RadioState.Starting && _radio is { HasExited: false }; i++) Thread.Sleep(100);
             if (_radio is null || _radio.HasExited) throw new InvalidOperationException("the radio exited during bring-up: " + _detail);
@@ -517,6 +522,15 @@ public sealed class Supervisor : IDisposable
         else if (text.StartsWith("bring-up failed: ", StringComparison.Ordinal))
         {
             lock (_lock) _detail = text[17..];
+        }
+        else if (text.StartsWith("firmware/DMA error:", StringComparison.Ordinal))
+        {
+            // BE200 #53 reports this as soon as it says ready. AX201 #50
+            // reached the same fatal path during its first Wi-Fi association.
+            lock (_lock)
+                if (_profile.Backend == RadioBackendKind.Iwx &&
+                    DateTime.UtcNow - _startedAt <= TimeSpan.FromSeconds(30))
+                    _earlyFirmwareError = true;
         }
         else if (text.StartsWith("rx: ", StringComparison.Ordinal))
         {
@@ -737,6 +751,23 @@ public sealed class Supervisor : IDisposable
             if ((radioDown || awdldDown || startStuck) && (State != RadioState.Starting || startStuck) &&
                 _launchGate.CurrentCount > 0)
             {
+                bool firmwareFault;
+                lock (_lock)
+                {
+                    firmwareFault = _earlyFirmwareError;
+                    if (firmwareFault) _holdFirmwareRetry = true;
+                }
+                if (firmwareFault)
+                {
+                    Stop("firmware error during startup; restoring the Windows driver", giveBack: true);
+                    lock (_lock)
+                    {
+                        State = RadioState.Error;
+                        _detail = "The Wi-Fi firmware stopped during startup. Select Retry to try again.";
+                    }
+                    Publish();
+                    continue;
+                }
                 // Out of contiguous DMA memory (#30): six restarts 2.7 s apart all failed
                 // the same way, while a start 16 s or 90 s later worked. Back off 5, 10, 20,
                 // 30, 30 s before each restart, so Windows has time to free memory; every

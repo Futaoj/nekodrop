@@ -278,7 +278,7 @@ public partial class RadarView : UserControl
         switch (A.Model.Air)
         {
             case "off": A.Service.SetMode("concurrent"); break;
-            case "error": A.Service.Wake(); break;
+            case "error": A.Service.Wake(retry: true); break;
             case "service_stopped": App.StartService(); break;
             default: A.ShowSettings("hardware"); break;
         }

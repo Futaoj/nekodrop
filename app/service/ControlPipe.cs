@@ -63,7 +63,7 @@ public sealed class ControlPipe(Supervisor sup)
                 switch ((string?)cmd?["do"])
                 {
                     case "status": await Send(writer, sup.Snapshot()); break;
-                    case "wake": sup.Wake(); break;
+                    case "wake": sup.Wake(retry: (bool?)cmd?["retry"] == true); break;
                     case "touch": sup.Touch(); break;
                     case "stop": sup.Stop("asked by the client", giveBack: true); break;
                     case "mode":
