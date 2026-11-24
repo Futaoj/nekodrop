@@ -134,6 +134,16 @@ Logs are what let us fix things, especially on cards we don't have. Please attac
 | `C:\ProgramData\nekodrop\install.log` | the installer: driver, TAP adapter, firewall, service |
 | `C:\ProgramData\nekodrop\restore.log` | the one-click restore |
 
+## Supporting a new card
+
+nekodrop supports the cards in the table above and nothing else. **Requests to support another card, without code, are closed** with a pointer here. We can only add a card that we have, or that someone ports and tests on real hardware. New laptop Wi-Fi (Intel Wi-Fi 7 CNVi such as BE201/BE211, Panther Lake `8086:E440`, which Windows calls "AX211", Qualcomm, Broadcom) needs a new driver port, not a new ID.
+
+If you have the card and want to port it, pull requests are welcome:
+
+- **The process, step by step:** [`.claude/skills/add-wifi-card/SKILL.md`](.claude/skills/add-wifi-card/SKILL.md). It is written as a skill for AI coding agents (Claude Code picks it up from this repository on its own), and reads fine as a guide for people. It covers identifying the card, the radio daemon, the service, the register proxy, installer and firmware pinning, Concurrent mode, verification and what a PR needs. It was distilled from the AX210-family, RTL8852CE, MT7902, MT7922/MT7921 and BE200 ports.
+- **The architecture:** [docs/ADDING-A-CARD.md](docs/ADDING-A-CARD.md).
+- **A PR needs a diagnostic report from a real run:** AirDrop both ways, with speeds. Code that only compiles ships as experimental.
+
 ## Requirements
 
 - Windows 10 2004 (build 19041) or later, x64 (Windows 10 22H2 confirmed working in 0.1.16+, [#18](../../issues/18)).

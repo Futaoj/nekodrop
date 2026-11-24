@@ -20,6 +20,13 @@ same for every card: the daemon speaks winawdl's radio pipe
 
 radio 守护进程之上的部分（awdld、AirDrop 引擎、客户端）对所有网卡都一样：守护进程只需要实现 winawdl 的 radio 管道协议。
 
+The step-by-step process, with the lessons from every port so far, is the skill
+[`.claude/skills/add-wifi-card/SKILL.md`](../.claude/skills/add-wifi-card/SKILL.md)
+(for AI coding agents, and readable by people).
+
+完整的适配步骤和以往每次适配的经验，整理在 skill
+[`.claude/skills/add-wifi-card/SKILL.md`](../.claude/skills/add-wifi-card/SKILL.md) 里（写给 AI 编程助手，人也可以直接读）。
+
 ## Today / 现状
 
 | Backend (`RadioBackendKind`) | Daemon | Cards | Station (Wi-Fi beside AirDrop) |

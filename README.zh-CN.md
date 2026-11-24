@@ -134,6 +134,16 @@ nekodrop 通过模块化底层驱动后端（`CardCatalog` + `radio_backend.h`�
 | `C:\ProgramData\nekodrop\install.log` | 安装过程：驱动、TAP 网卡、防火墙、服务 |
 | `C:\ProgramData\nekodrop\restore.log` | 一键回退 |
 
+## 适配新网卡
+
+nekodrop 只支持上表里的网卡。**单纯要求支持其他网卡、不附代码的 issue 会直接关闭**，并附上本节链接。我们只能适配手上有的网卡，或者有人移植并在真机上测过的网卡。新笔记本里的网卡，比如 Intel Wi-Fi 7 的 CNVi 版本（BE201/BE211、Panther Lake `8086:E440`，Windows 里显示为「AX211」）、高通、博通，都需要重新移植驱动，不是加一个设备 ID 就能支持的。
+
+如果你手上有这张卡，想自己适配，欢迎提 PR：
+
+- **完整流程：** [`.claude/skills/add-wifi-card/SKILL.md`](.claude/skills/add-wifi-card/SKILL.md)。它是写给 AI 编程助手的 skill（Claude Code 打开这个仓库会自动识别），人直接读也能当教程用。内容包括：识别网卡、radio 驱动程序、服务、寄存器代理、安装程序和固件锁定、同时连 Wi-Fi 模式、验证方法，以及 PR 需要附带的东西。它是从 AX210 系列、RTL8852CE、MT7902、MT7922/MT7921 和 BE200 的实际适配过程中整理出来的。
+- **架构说明：** [docs/ADDING-A-CARD.md](docs/ADDING-A-CARD.md)。
+- **PR 需要附上真机运行的诊断报告：** 双向 AirDrop，并写明速度。只编译通过的代码会作为实验性支持发布。
+
 ## 系统要求
 
 - Windows 10 2004（版本 19041）或更新的 64 位系统（Windows 10 22H2 在 0.1.16 及以上已确认双向可用，[#18](../../issues/18)）。
