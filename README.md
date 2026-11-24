@@ -15,7 +15,7 @@
 
 <p align="center">
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-0078d4">
-  <img alt="card" src="https://img.shields.io/badge/card-Intel%20AX201%20%7C%20AX200%20%7C%20AX210%20%7C%20AX211%20%C2%B7%20Realtek%20RTL8852CE%20%C2%B7%20MediaTek%20MT7902-6c5ce7">
+  <img alt="card" src="https://img.shields.io/badge/card-Intel%20AX201%20%7C%20AX200%20%7C%20AX210%20%7C%20AX211%20%7C%20BE200%20%C2%B7%20Realtek%20RTL8852CE%20%C2%B7%20MediaTek%20MT7902%20%7C%20MT7921%20%7C%20MT7922-6c5ce7">
   <img alt="license" src="https://img.shields.io/badge/license-GPL--2.0-blue">
   <img alt="status" src="https://img.shields.io/badge/status-preview-yellow">
 </p>
@@ -337,7 +337,7 @@ Thanks to everyone who sent code and careful test reports:
 - [@BaiBaiAi](https://github.com/BaiBaiAi): Windows → iPhone sending without a client certificate ([#13](../../pull/13)), pipelined AWDL transmit so large uploads finish ([#15](../../pull/15)), and the first AX210 test report ([#14](../../issues/14)).
 - [@XXD051030](https://github.com/XXD051030): the optional balanced Bluetooth coexistence mode for Intel cards, so the PC finds iPhones and Macs in seconds instead of minutes, with a careful before/after study on an AX200 ([#26](../../pull/26)).
 - [@GGBond-cer](https://github.com/GGBond-cer): many detailed AX200 test reports that pinned down the A-MPDU and speed problems ([#4](../../issues/4)), the root cause of the uninstaller leftovers ([#22](../../issues/22)), the throughput testing guide ([#28](../../pull/28)), and the uninstaller fix that keeps Setup from being killed by its own cleanup step ([#38](../../pull/38)), and deleting the downloaded installer after an update ([#44](../../pull/44)).
-- [@DaiJiequn](https://github.com/DaiJiequn): MediaTek MT7902 support, a user-mode port of Linux mt76 that runs AirDrop both ways on demand ([#34](../../pull/34)).
+- [@DaiJiequn](https://github.com/DaiJiequn): MediaTek MT7902 support, a user-mode port of Linux mt76 that runs AirDrop both ways on demand ([#34](../../pull/34)), and its Concurrent mode, Wi-Fi beside AirDrop with the router's A-MPDUs, whose shared station code MT7921/MT7922 now use too ([#47](../../pull/47)).
 - [@sh17632](https://github.com/sh17632): the AirDrop-style radar and Share sheet design that became the 2.0 interface ([#36](../../issues/36)), and AX211 test reports ([#35](../../issues/35)).
 - [@YiHoooong](https://github.com/YiHoooong): MediaTek MT7922/MT7921 user-mode radio (mtkradio), tested on an MT7922 / AMD RZ616 ([#40](../../pull/40)).
 
