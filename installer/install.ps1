@@ -478,6 +478,31 @@ Step 'stop an earlier service' {
 }
 Step "copy to $Target" {
   New-Item -ItemType Directory -Force $Target | Out-Null
+  # The Explorer menu (nekodrop-shell.dll) is loaded by explorer.exe and its
+  # COM hosts, which are not ours to stop, so the copy failed on it five times
+  # in a row.  A loaded DLL can still be renamed: move it aside, Explorer keeps
+  # the old one until it restarts, and the new one is used from then on.
+  # Leftovers from earlier updates go now, or at the next restart if still loaded.
+  Get-ChildItem -LiteralPath $Target -Filter 'nekodrop-shell.dll.*.old' -ErrorAction SilentlyContinue |
+    ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+  $shellDll = Join-Path $Target 'nekodrop-shell.dll'
+  if (Test-Path -LiteralPath $shellDll) {
+    try { [IO.File]::Open($shellDll, 'Open', 'ReadWrite', 'None').Dispose() }
+    catch {
+      $aside = "$shellDll.$((Get-Date).ToString('yyyyMMddHHmmss')).old"
+      try {
+        Move-Item -LiteralPath $shellDll $aside -Force -ErrorAction Stop
+        "    nekodrop-shell.dll is in use by Explorer: moved aside, replaced after the next sign-in"
+        if (-not ('NekoDrop.MoveLater' -as [type])) {
+          Add-Type -Namespace NekoDrop -Name MoveLater -MemberDefinition @'
+[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+public static extern bool MoveFileEx(string from, string to, int flags);
+'@
+        }
+        [NekoDrop.MoveLater]::MoveFileEx($aside, $null, 4) | Out-Null  # MOVEFILE_DELAY_UNTIL_REBOOT
+      } catch { "    nekodrop-shell.dll is in use and could not be moved aside: $($_.Exception.Message)" }
+    }
+  }
   # A file can stay locked a moment after its process exits (or a process may
   # have been started again meanwhile): retry, and say who holds it.
   for ($try = 1; ; $try++) {

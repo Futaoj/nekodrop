@@ -2,7 +2,7 @@
 ; One exe installs everything: the client and service (self-contained, no .NET
 ; needed), the user-mode radio, awdld + Wintun, the AirDrop engine with its own
 ; Python, the register-proxy driver, TAP-Windows, firewall rules and the service.
-#define AppVersion "2.1.0"
+#define AppVersion "2.1.1"
 
 [Setup]
 AppId={{6C1F2E7A-4B8E-4E57-9C61-5E2B1D0A9F31}
@@ -29,8 +29,8 @@ Name: "zh"; MessagesFile: "ChineseSimplified.isl"
 Name: "en"; MessagesFile: "compiler:Default.isl"
 
 [CustomMessages]
-zh.Installing=正在安装驱动、TAP 网卡、防火墙规则和 nekodrop 服务…
-en.Installing=Installing the driver, TAP adapter, firewall rules and the nekodrop service...
+zh.Installing=正在安装驱动、TAP 网卡、防火墙规则和 nekodrop 服务（约需 1 分钟）…
+en.Installing=Installing the driver, TAP adapter, firewall rules and the nekodrop service (about a minute)…
 zh.Failed=nekodrop 的系统组件没有装好：%n%n%1%n%n完整日志：%2
 en.Failed=nekodrop's system parts did not install:%n%n%1%n%nFull log: %2
 zh.StartNow=启动 nekodrop
@@ -82,22 +82,39 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Code: Integer;
-  Err: AnsiString;
+  Lines: TArrayOfString;
+  Err: String;
   Log: String;
+  I: Integer;
 begin
   if CurStep <> ssPostInstall then Exit;
   WizardForm.StatusLabel.Caption := CustomMessage('Installing');
   Log := ExpandConstant('{commonappdata}\nekodrop\install.log');
-  if not Exec('powershell.exe',
-      '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{tmp}\nekodrop-stage\install.ps1') +
-      '" -Target "' + ExpandConstant('{app}') + '"',
-      '', SW_HIDE, ewWaitUntilTerminated, Code) then
-    Code := -1;
+  // The files are copied by now, so the bar stood full and still for the half
+  // minute or more the driver, TAP and service take, and looked stuck (#45):
+  // let it run while install.ps1 works.
+  WizardForm.ProgressGauge.Style := npbstMarquee;
+  try
+    if not Exec('powershell.exe',
+        '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{tmp}\nekodrop-stage\install.ps1') +
+        '" -Target "' + ExpandConstant('{app}') + '"',
+        '', SW_HIDE, ewWaitUntilTerminated, Code) then
+      Code := -1;
+  finally
+    WizardForm.ProgressGauge.Style := npbstNormal;
+  end;
   if Code <> 0 then
   begin
     InstallFailed := True;
-    if not LoadStringFromFile(ExpandConstant('{commonappdata}\nekodrop\install-error.txt'), Err) then
+    // install.ps1 writes UTF-8 (with a BOM); LoadStringFromFile read it as ANSI,
+    // which garbled Windows' own Chinese error text and showed the BOM as a stray character.
+    Err := '';
+    if LoadStringsFromFile(ExpandConstant('{commonappdata}\nekodrop\install-error.txt'), Lines) then
+      for I := 0 to GetArrayLength(Lines) - 1 do
+        Err := Err + Lines[I] + #13#10;
+    Err := Trim(Err);
+    if Err = '' then
       Err := 'install.ps1 exit code ' + IntToStr(Code);
-    SuppressibleMsgBox(FmtMessage(CustomMessage('Failed'), [String(Err), Log]), mbError, MB_OK, IDOK);
+    SuppressibleMsgBox(FmtMessage(CustomMessage('Failed'), [Err, Log]), mbError, MB_OK, IDOK);
   end;
 end;
