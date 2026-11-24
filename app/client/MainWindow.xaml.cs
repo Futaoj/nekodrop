@@ -35,6 +35,7 @@ public partial class MainWindow : Window
         A.Model.ReceivedFiles.CollectionChanged += OnReceived;
         A.Model.PropertyChanged += OnModel;
         Drop += OnDrop;
+        DragEnter += (_, _) => _dragAt = DateTime.UtcNow;
         DragOver += (_, e) => { e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None; e.Handled = true; };
         Closed += (_, _) =>
         {
@@ -218,7 +219,15 @@ public partial class MainWindow : Window
     {
         if (_dialog || !IsVisible) return;
         var left = Grace - (DateTime.UtcNow - ShownAt);
-        if (left <= TimeSpan.Zero) { Shut(); return; }
+        if (left <= TimeSpan.Zero)
+        {
+            // #45: pressing on a file in Explorer to drag it here takes the focus
+            // first. While the button is held, wait: a drag that reaches the
+            // panel keeps it out, a plain click elsewhere closes it on release.
+            if (Native.LeftButtonDown()) WaitForRelease();
+            else Shut();
+            return;
+        }
         // Take the focus back once things settle, so a later click elsewhere still closes it.
         var t = new System.Windows.Threading.DispatcherTimer { Interval = left };
         t.Tick += (_, _) =>
@@ -230,6 +239,25 @@ public partial class MainWindow : Window
     }
 
     public static readonly TimeSpan Grace = TimeSpan.FromMilliseconds(600);
+
+    /// <summary>When a drag last came over the panel.</summary>
+    DateTime _dragAt = DateTime.MinValue;
+
+    /// <summary>The focus went while the left button was down: decide when it comes up.</summary>
+    void WaitForRelease()
+    {
+        var since = DateTime.UtcNow;
+        var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+        t.Tick += (_, _) =>
+        {
+            if (!IsVisible || _closing) { t.Stop(); return; }
+            if (Native.LeftButtonDown()) return;
+            t.Stop();
+            if (_dragAt >= since) Activate(); // dropped here (or dragged across): stay
+            else if (!IsActive) Shut();
+        };
+        t.Start();
+    }
 
     /// <summary>When it last came out.</summary>
     public DateTime ShownAt { get; private set; }

@@ -14,6 +14,8 @@ public sealed class Settings
     public bool Ask { get; set; } = true;
     /// <summary>Senders accepted without asking, by the name and model they give.</summary>
     public List<string> AlwaysAccept { get; set; } = [];
+    /// <summary>The last senders that asked ("name|model", newest first), offered by Settings' Add (#45).</summary>
+    public List<string> RecentSenders { get; set; } = [];
     public bool StartWithWindows { get; set; } = true;
     /// <summary>Visible to everyone for 10 minutes at a time, as on an iPhone.</summary>
     public bool Discoverable { get; set; } = true;

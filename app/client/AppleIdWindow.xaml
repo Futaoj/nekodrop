@@ -38,6 +38,8 @@
         <TextBox x:Name="CodeBox" Style="{StaticResource WinTextBox}" MaxLength="8" FontFamily="Consolas" FontSize="16"/>
       </StackPanel>
       <TextBlock x:Name="StatusText" Style="{StaticResource Sub12}" TextWrapping="Wrap" Margin="0,12,0,0"/>
+      <ProgressBar x:Name="DownloadBar" Height="4" Margin="0,8,0,0" Minimum="0" Maximum="100" Visibility="Collapsed"
+                   Foreground="{DynamicResource Accent}" Background="{DynamicResource Border}" BorderThickness="0"/>
     </StackPanel>
 
     <Border Grid.Row="2" Background="{DynamicResource Card}" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Padding="16,0">

@@ -153,7 +153,11 @@
           </Border>
           <Border Style="{StaticResource CardPad}">
             <StackPanel>
-              <TextBlock x:Name="TrustedTitle" Style="{StaticResource T13S}"/>
+              <DockPanel>
+                <Button x:Name="TrustedAdd" DockPanel.Dock="Right" Style="{StaticResource WinButton}" Content="{local:T set.trustedAdd}"
+                        Padding="10,4,10,4" Click="TrustedAdd_Click"/>
+                <TextBlock x:Name="TrustedTitle" Style="{StaticResource T13S}" VerticalAlignment="Center"/>
+              </DockPanel>
               <TextBlock x:Name="TrustedEmpty" Text="{local:T set.trustedNone}" Style="{StaticResource Dim11}" FontSize="12" Margin="0,8,0,0"/>
               <StackPanel x:Name="TrustedList" Margin="0,4,0,0"/>
             </StackPanel>

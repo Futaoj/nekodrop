@@ -89,6 +89,17 @@ public static class Native
     const int GWL_STYLE = -16;
     const int WS_SYSMENU = 0x00080000;
 
+    [DllImport("user32.dll")]
+    static extern short GetAsyncKeyState(int key);
+
+    /// <summary>The left mouse button is held now, whichever program has the focus (#45).</summary>
+    public static bool LeftButtonDown()
+    {
+        // VK_LBUTTON is the physical left button; with the buttons swapped it is VK_RBUTTON.
+        var key = System.Windows.Forms.SystemInformation.MouseButtonsSwapped ? 0x02 : 0x01;
+        return (GetAsyncKeyState(key) & 0x8000) != 0;
+    }
+
     [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
     static extern int GetWindowLong(IntPtr hwnd, int index);
 

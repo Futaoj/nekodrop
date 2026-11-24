@@ -122,6 +122,23 @@ public partial class SettingsWindow : Window
 
     // ----------------------------------------------------- always accept
 
+    /// <summary>
+    /// The list could only shrink: nothing added to it (#45). Offers the
+    /// senders that asked lately, by the same name and model the check uses.
+    /// </summary>
+    void TrustedAdd_Click(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu { PlacementTarget = TrustedAdd, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+        foreach (var key in A.Settings.RecentSenders.Where(k => !_trusted.Contains(k)))
+        {
+            var item = new MenuItem { Header = key.Replace("|", " · ") };
+            item.Click += (_, _) => { _trusted.Add(key); ShowTrusted(); };
+            menu.Items.Add(item);
+        }
+        if (menu.Items.Count == 0) menu.Items.Add(new MenuItem { Header = L.T("set.trustedAddNone"), IsEnabled = false });
+        menu.IsOpen = true;
+    }
+
     void ShowTrusted()
     {
         TrustedTitle.Text = L.F("set.trustedCount", _trusted.Count);

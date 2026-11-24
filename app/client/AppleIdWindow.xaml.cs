@@ -21,6 +21,16 @@ public partial class AppleIdWindow : Window
         Loaded += (_, _) => EmailBox.Focus();
     }
 
+    /// <summary>Apple's and Windows' terse answers, said so that the reader knows what to do (#42, #45).</summary>
+    static string Explain(string failure)
+    {
+        // Apple refuses the iCloud for Windows 7.21 component for this account.
+        if (failure.Contains("-27952")) return L.F("aid.tooOld", failure);
+        // ERROR_BAD_EXE_FORMAT: AOSKit.dll was replaced by a 64-bit one (a newer iCloud's).
+        if (failure.Contains("AOSKit") && failure.Contains("193")) return L.F("aid.wrongAoskit", failure);
+        return failure;
+    }
+
     void Say(string text, bool error = false)
     {
         StatusText.Text = text;
@@ -49,7 +59,19 @@ public partial class AppleIdWindow : Window
         var failure = await AppleId.SignIn(email, password,
             ev => Dispatcher.Invoke(() =>
             {
-                if ((string?)ev["ev"] == "status" && (string?)ev["msg"] is { } msg) Say(msg);
+                if ((string?)ev["ev"] == "status" && (string?)ev["msg"] is { } msg) { DownloadBar.Visibility = Visibility.Collapsed; Say(msg); }
+                // The first sign-in downloads iCloud's component (about 160 MB): show how far (#42).
+                if ((string?)ev["ev"] == "progress")
+                {
+                    var got = (double?)ev["done"] ?? 0;
+                    var total = (double?)ev["total"] ?? 0;
+                    DownloadBar.Visibility = Visibility.Visible;
+                    DownloadBar.IsIndeterminate = total <= 0;
+                    if (total > 0) DownloadBar.Value = got * 100 / total;
+                    Say(total > 0
+                        ? L.F("aid.downloading", (int)(got * 100 / total), (int)(got / 1048576), (int)(total / 1048576))
+                        : L.F("aid.downloadingMb", (int)(got / 1048576)));
+                }
             }),
             sent => Dispatcher.Invoke(() =>
             {
@@ -69,7 +91,7 @@ public partial class AppleIdWindow : Window
             DialogResult = true;
             return;
         }
-        Say(failure, true);
+        Say(Explain(failure), true);
         Credentials.IsEnabled = true;
         Credentials.Visibility = Visibility.Visible;
         CodePanel.Visibility = Visibility.Collapsed;

@@ -24,14 +24,26 @@ public sealed class App : Application
         if (!first && !args.Contains("--snapshot"))
         {
             // Hand the arguments (files to send, a notification's answer) to the running copy.
-            try
+            // Explorer or the notification gave this short-lived process the right to
+            // come to the front; pass it on, or the running copy's window opens behind
+            // Explorer and the click looks like it did nothing (#45).
+            AllowSetForegroundWindow(-1 /* ASFW_ANY */);
+            Exception? why = null;
+            // A copy that is just starting (signed in a moment ago, or busy) gets a
+            // few tries instead of losing the files or the answer silently.
+            for (var attempt = 0; attempt < 3; attempt++)
             {
-                using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.Out);
-                client.Connect(3000);
-                using var w = new StreamWriter(client, new UTF8Encoding(false));
-                w.WriteLine(string.Join("\u001f", args));
+                try
+                {
+                    using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.Out);
+                    client.Connect(4000);
+                    using var w = new StreamWriter(client, new UTF8Encoding(false));
+                    w.WriteLine(string.Join("\u001f", args));
+                    return 0;
+                }
+                catch (Exception e) { why = e; Thread.Sleep(500); }
             }
-            catch (Exception) { }
+            EngineLog($"ui: could not hand {DescribeArgs(args)} to the running nekodrop: {why?.GetType().Name}: {why?.Message}");
             return 0;
         }
         var app = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
@@ -39,6 +51,15 @@ public sealed class App : Application
         app._startArgs = args;
         return app.Run();
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool AllowSetForegroundWindow(int processId);
+
+    /// <summary>What the arguments ask for, for the log (no file names: they go into reports).</summary>
+    static string DescribeArgs(string[] args) =>
+        args.Length > 0 && args[0].StartsWith("nekodrop:", StringComparison.OrdinalIgnoreCase)
+            ? args[0].Split('?')[0]
+            : args.Contains("--send") ? $"--send ({args.SkipWhile(a => a != "--send").Count() - 1} items)" : string.Join(" ", args);
 
     string _pipeName = "";
     string[] _startArgs = [];
@@ -666,15 +687,24 @@ public sealed class App : Application
         {
             try
             {
-                using var server = new NamedPipeServerStream(_pipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte,
-                                                             PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+                // Only this user, by the user's SID: CurrentUserOnly grants the token's
+                // owner, which is the Administrators group when this copy runs elevated,
+                // and then Explorer's right-click and the notification buttons (run
+                // unelevated) could not reach it (#45).
+                var security = new PipeSecurity();
+                security.AddAccessRule(new PipeAccessRule(WindowsIdentity.GetCurrent().User!,
+                                                          PipeAccessRights.ReadWrite | PipeAccessRights.CreateNewInstance,
+                                                          System.Security.AccessControl.AccessControlType.Allow));
+                using var server = NamedPipeServerStreamAcl.Create(_pipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte,
+                                                                   PipeOptions.Asynchronous, 0, 0, security);
                 await server.WaitForConnectionAsync();
                 using var r = new StreamReader(server, Encoding.UTF8);
                 var line = await r.ReadLineAsync() ?? "";
                 var args = line.Length == 0 ? [] : line.Split('\u001f');
+                EngineLog("ui: got " + DescribeArgs(args));
                 await Dispatcher.BeginInvoke(() => HandleArgs(args, fromStart: false));
             }
-            catch (Exception) { await Task.Delay(500); }
+            catch (Exception e) { EngineLog($"ui: argument pipe: {e.GetType().Name}: {e.Message}"); await Task.Delay(500); }
         }
     }
 
@@ -937,7 +967,16 @@ public sealed class App : Application
                 var model = (string?)o["model"] ?? "";
                 var files = o["files"] as JsonArray;
                 var what = Describe(files);
-                if (Settings.AlwaysAccept.Contains($"{sender}|{model}")) { Engine.Answer(id, true); break; }
+                var key = $"{sender}|{model}";
+                // Remembered for Settings > Always accept from > Add (#45).
+                if (Settings.RecentSenders.FirstOrDefault() != key)
+                {
+                    Settings.RecentSenders.Remove(key);
+                    Settings.RecentSenders.Insert(0, key);
+                    if (Settings.RecentSenders.Count > 8) Settings.RecentSenders.RemoveRange(8, Settings.RecentSenders.Count - 8);
+                    Settings.Save();
+                }
+                if (Settings.AlwaysAccept.Contains(key)) { Engine.Answer(id, true); break; }
                 var r = new Request { Id = id, Sender = sender, Model = model, What = what };
                 _requests[id] = r;
                 Model.Requests.Insert(0, r);
