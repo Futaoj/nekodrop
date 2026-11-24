@@ -43,7 +43,7 @@ $WifiChips = @{
   '8086:2729' = @('intel-fw', 'Intel Ma (Meteor Lake CNVi)')
   '8086:7E40' = @('intel-fw', 'Intel Ma (Meteor Lake CNVi)')
   # Intel Wi-Fi 7 (Linux iwlwifi's Bz/Gl/Sc device IDs): BE200 is experimental
-  # (manual opt-in); CNVi Wi-Fi 7 cards have no driver yet.
+  # (Concurrent and on-demand); CNVi Wi-Fi 7 cards have no driver yet.
   '8086:272B' = @('intel-be-exp', 'Intel BE200 (Wi-Fi 7)')
   '8086:A840' = @('intel-be', 'Intel BE201/BE211 (Wi-Fi 7, CNVi)')
   '8086:7740' = @('intel-be', 'Intel BE201/BE211 (Wi-Fi 7, CNVi)')
@@ -101,7 +101,7 @@ $WifiKinds = @{
   'supported-mtk' = @('supported by nekodrop (5 GHz Wi-Fi beside AirDrop, or on-demand; built-in MediaTek backend)', 'Joins 5 GHz Wi-Fi beside AirDrop, or runs on demand while Windows keeps Wi-Fi.')
   'supported-rtl' = @('supported by nekodrop (on-demand AirDrop, built-in RTL8852CE backend)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers.')
   'intel-fw'      = @('not supported: its firmware is not shipped upstream', 'nekodrop runs the Intel cards whose firmware ForbiddenItlwm ships (API 68); this one has none there.')
-  'intel-be-exp'  = @('supported by nekodrop (experimental, on-demand AirDrop, not yet run on a real card)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers. Please post a diagnostic report in an issue whether it works or not.')
+  'intel-be-exp'  = @('supported by nekodrop (experimental, Concurrent Wi-Fi beside AirDrop or on-demand, not yet run on a real card)', 'Joins Wi-Fi beside AirDrop or runs on demand while Windows keeps Wi-Fi. Please post a diagnostic report in an issue whether it works or not.')
   'intel-be'      = @('not supported: Intel Wi-Fi 7, no upstream driver', 'ForbiddenItlwm, which nekodrop ports, has no driver for Wi-Fi 7 cards yet.')
   'intel-other'   = @('not supported: an Intel device ID nekodrop does not know', 'Please post this report in an issue: if upstream ships firmware for this card, its ID can be added.')
   'rtl'           = @('not supported: Realtek', 'Among Realtek chips, nekodrop currently has built-in support for RTL8852CE (10EC:C852) only.')

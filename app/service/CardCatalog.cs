@@ -86,9 +86,9 @@ public static class CardCatalog
     const string ProxyProvider = "winairdrop project";
     // Killer (Rivet Networks) cards are Intel chips with Intel's driver repackaged.
     static readonly string[] IntelProviders = ["Intel", "Killer", "Rivet Networks"];
-    // Intel BE200 (Bz/Gl, Wi-Fi 7): experimental monitor/inject only (no station,
-    // no A-MPDU, no kernel driver, never taken automatically).
-    static readonly AdapterCapabilities Be200Caps = new(false, false, false, false, 0x2000);
+    // Intel BE200 (Bz/Gl, Wi-Fi 7): experimental MLD station (Concurrent &
+    // on-demand, 2.4/5 GHz), no A-MPDU, no fast-send window, no kernel driver.
+    static readonly AdapterCapabilities Be200Caps = new(true, false, false, false, 0x2000);
 
     /* The card completes no frame that waits for an acknowledgement on 2.4 GHz
      * (mtradio's --test-kinds), and a station's every frame does: 5 GHz only. */
@@ -119,7 +119,7 @@ public static class CardCatalog
         Intel("7F70", "AX210 / AX211 / AX411"),
         // Intel BE200 (Bz/Gl, Wi-Fi 7): experimental, untested on hardware; taken like
         // the other cards (the maintainer's call: restore gives the card back in one
-        // step). On demand, and --family be200 picks the Bz/MLD path in iwxradio.
+        // step). Concurrent & on-demand, and --family be200 picks the Bz/MLD path in iwxradio.
         new AdapterProfile("8086", "272B", "Intel", "BE200 (experimental)", RadioBackendKind.Iwx, Be200Caps,
             ProxyInf, ProxyService, ProxyProvider, IntelProviders, Active: true, RadioFamily: "be200"),
         // Built-in on-demand backend (winawdl's devourer, nekodrop-radio-rtl.exe):
@@ -444,16 +444,25 @@ public static class CardCatalog
         Check(ManualProfile("USB\\VID_0BDA&PID_8812", "rtl8852ce") is null, "a USB device accepted");
         Check(ManualModels.Select(x => x.Key).Distinct().Count() == ManualModels.Count, "duplicate manual model keys");
 
-        // Experimental Intel BE200 (8086:272B): active like the other cards, on demand, --family be200.
+        // Experimental Intel BE200 (8086:272B): active like the other cards, Concurrent & on demand, --family be200.
         const string be200 = "PCI\\VEN_8086&DEV_272B&SUBSYS_00F48086&REV_1A\\4&1";
         var be = MatchActive(be200);
         Check(be is { Active: true, Backend: RadioBackendKind.Iwx, VendorName: "Intel", RadioFamily: "be200" }, "8086:272B active profile");
         if (be is not null)
         {
-            Check(EffectiveMode(NetMode.Concurrent, be.Capabilities) == NetMode.OnDemand, "8086:272B Concurrent not forced to OnDemand");
+            Check(be.Capabilities.SupportsConcurrentWifi && be.Capabilities.StationOn24GHz &&
+                  !be.Capabilities.SupportsFastSend && !be.Capabilities.SupportsAggregate &&
+                  !be.Capabilities.SupportsKernelDriver && be.Capabilities.MinBarBytes == 0x2000,
+                  "8086:272B capabilities");
+            Check(EffectiveMode(NetMode.Concurrent, be.Capabilities) == NetMode.Concurrent, "8086:272B Concurrent changed");
+            Check(EffectiveMode(NetMode.OnDemand, be.Capabilities) == NetMode.OnDemand, "8086:272B OnDemand changed");
             Check(SameLaunch(BuildRadioLaunch(be, 6, false, "", null, true, false),
                              "nekodrop-radio.exe", "6", "--width", "20", "--family", "be200"),
-                  "8086:272B launch args");
+                  "8086:272B on-demand launch args");
+            Check(SameLaunch(BuildRadioLaunch(be, 149, false, "JP", @"C:\run\sta.conf", true, false),
+                             "nekodrop-radio.exe", "149", "--width", "80", "--country", "JP",
+                             "--sta-config", @"C:\run\sta.conf", "--family", "be200"),
+                  "8086:272B concurrent launch args");
         }
         var mbe = ManualProfile(be200, "be200");
         if (mbe is null) fail.Add("manual be200 on 8086:272B refused");
@@ -461,12 +470,14 @@ public static class CardCatalog
         {
             Check(mbe.Active && mbe.Backend == RadioBackendKind.Iwx && mbe.RadioFamily == "be200",
                   $"manual be200 profile {mbe.HardwareId} {mbe.Backend} {mbe.RadioFamily}");
-            Check(!mbe.Capabilities.SupportsConcurrentWifi && !mbe.Capabilities.SupportsFastSend &&
-                  !mbe.Capabilities.SupportsAggregate && !mbe.Capabilities.SupportsKernelDriver &&
-                  mbe.Capabilities.MinBarBytes == 0x2000, "manual be200 capabilities");
-            Check(EffectiveMode(NetMode.Concurrent, mbe.Capabilities) == NetMode.OnDemand, "be200 Concurrent not forced to OnDemand");
-            Check(SameLaunch(BuildRadioLaunch(mbe, 149, false, "JP", null, true, true, true, true),
+            Check(mbe.Capabilities.SupportsConcurrentWifi && mbe.Capabilities.StationOn24GHz &&
+                  !mbe.Capabilities.SupportsFastSend && !mbe.Capabilities.SupportsAggregate &&
+                  !mbe.Capabilities.SupportsKernelDriver && mbe.Capabilities.MinBarBytes == 0x2000,
+                  "manual be200 capabilities");
+            Check(EffectiveMode(NetMode.Concurrent, mbe.Capabilities) == NetMode.Concurrent, "be200 Concurrent changed");
+            Check(SameLaunch(BuildRadioLaunch(mbe, 149, false, "JP", @"C:\run\sta.conf", true, true, true, true),
                              "nekodrop-radio.exe", "149", "--width", "80", "--country", "JP",
+                             "--sta-config", @"C:\run\sta.conf", "--fast-unlock", "--coex-plan",
                              "--bt-coex", "1", "--family", "be200"),
                   "manual be200 launch args");
         }
