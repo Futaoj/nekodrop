@@ -41,8 +41,9 @@ $WifiChips = @{
   '8086:2726' = @('intel-fw', 'Intel SnJ')
   '8086:2729' = @('intel-fw', 'Intel Ma (Meteor Lake CNVi)')
   '8086:7E40' = @('intel-fw', 'Intel Ma (Meteor Lake CNVi)')
-  # Intel Wi-Fi 7 (Linux iwlwifi's Bz/Gl/Sc device IDs): no upstream driver.
-  '8086:272B' = @('intel-be', 'Intel BE200 (Wi-Fi 7)')
+  # Intel Wi-Fi 7 (Linux iwlwifi's Bz/Gl/Sc device IDs): BE200 is experimental
+  # (manual opt-in); CNVi Wi-Fi 7 cards have no driver yet.
+  '8086:272B' = @('intel-be-exp', 'Intel BE200 (Wi-Fi 7)')
   '8086:A840' = @('intel-be', 'Intel BE201/BE211 (Wi-Fi 7, CNVi)')
   '8086:7740' = @('intel-be', 'Intel BE201/BE211 (Wi-Fi 7, CNVi)')
   '8086:E440' = @('intel-be', 'Intel Wi-Fi 7 (CNVi)')
@@ -99,6 +100,7 @@ $WifiKinds = @{
   'supported-mtk' = @('supported by nekodrop (on-demand AirDrop, built-in MT7902 backend)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers.')
   'supported-rtl' = @('supported by nekodrop (on-demand AirDrop, built-in RTL8852CE backend)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers.')
   'intel-fw'      = @('not supported: its firmware is not shipped upstream', 'nekodrop runs the Intel cards whose firmware ForbiddenItlwm ships (API 68); this one has none there.')
+  'intel-be-exp'  = @('experimental: pick Intel BE200 by hand in Settings > Wi-Fi card', 'Automatic takeover is off for BE200; pick Intel BE200 (experimental) in Settings > Wi-Fi card for on-demand AirDrop.')
   'intel-be'      = @('not supported: Intel Wi-Fi 7, no upstream driver', 'ForbiddenItlwm, which nekodrop ports, has no driver for Wi-Fi 7 cards yet.')
   'intel-other'   = @('not supported: an Intel device ID nekodrop does not know', 'Please post this report in an issue: if upstream ships firmware for this card, its ID can be added.')
   'rtl'           = @('not supported: Realtek', 'Among Realtek chips, nekodrop currently has built-in support for RTL8852CE (10EC:C852) only.')
@@ -310,8 +312,11 @@ if ($SelfTest) {
   if ($msg.Contains('00E04C000001')) { $fail += 'message shows the USB serial number' }
   if ($msg.Contains('winawdl')) { $fail += 'winawdl offered for a card it does not drive' }
   $msg = Format-UnsupportedCardMessage ($manyPnp | Select-Object -Skip 3)
-  foreach ($want in 'Intel BE200 (Wi-Fi 7)', 'an Intel device ID nekodrop does not know', 'Qualcomm WCN6855', 'Broadcom BCM4360') {
+  foreach ($want in 'Intel BE200 (Wi-Fi 7)', 'experimental: pick Intel BE200 by hand in Settings > Wi-Fi card', 'an Intel device ID nekodrop does not know', 'Qualcomm WCN6855', 'Broadcom BCM4360') {
     if (-not $msg.Contains($want)) { $fail += "message lacks '$want'" }
+  }
+  if ((Classify-WifiCard 'PCI\VEN_8086&DEV_272B&SUBSYS_00F48086').Kind -ne 'intel-be-exp') {
+    $fail += '8086:272B not classified as intel-be-exp'
   }
   $odd = @(Select-WirelessDevices @((Dev 'PCI\VEN_1AE0&DEV_1234&SUBSYS_00001AE0\4&1' 'Contoso Wireless-AC 9000')) @())
   if ($odd.Count -ne 1 -or -not (Format-UnsupportedCardMessage $odd).Contains('unrecognized wireless adapter')) { $fail += 'unknown vendor wireless adapter not reported' }
