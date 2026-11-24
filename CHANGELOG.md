@@ -14,7 +14,7 @@
 - 修复右键「用 nekodrop 发送」和通知里「接受」按钮可能没反应的 bug（[#45](https://github.com/zheznanohana/nekodrop/issues/45)）
 - 修复从资源管理器往面板拖文件时面板自己收起的 bug（[#45](https://github.com/zheznanohana/nekodrop/issues/45)）
 - 新增「总是接受的设备」的「添加」按钮（[#45](https://github.com/zheznanohana/nekodrop/issues/45)）
-- 修复网速较慢时 iCloud 组件下载失败的 bug，下载时显示进度条（[#42](https://github.com/zheznanohana/nekodrop/issues/42)）
+- 修复网速较慢时 iCloud 组件下载失败的 bug，下载时显示进度条，一个下载源不通时自动换下一个（[#42](https://github.com/zheznanohana/nekodrop/issues/42)）
 - 安装最后一步显示滚动进度条，不再像卡住（[#45](https://github.com/zheznanohana/nekodrop/issues/45)）
 - 新增升级后自动删除下载的安装包（[#44](https://github.com/zheznanohana/nekodrop/pull/44)，感谢 @GGBond-cer）
 - RTL8852CE：日志记录 iPhone 的信道序列，排查停在 6 信道的问题（[#32](https://github.com/zheznanohana/nekodrop/issues/32)）
@@ -26,7 +26,7 @@
 - Fix Explorer's "Send with nekodrop" and the notification's Accept button sometimes doing nothing ([#45](https://github.com/zheznanohana/nekodrop/issues/45))
 - Fix the panel closing while files are dragged to it from Explorer ([#45](https://github.com/zheznanohana/nekodrop/issues/45))
 - New: an Add button for "Always accept from" ([#45](https://github.com/zheznanohana/nekodrop/issues/45))
-- Fix the iCloud component download failing on slower connections, with a progress bar ([#42](https://github.com/zheznanohana/nekodrop/issues/42))
+- Fix the iCloud component download failing on slower connections, with a progress bar and more download sources ([#42](https://github.com/zheznanohana/nekodrop/issues/42))
 - The installer's last step shows a moving bar instead of looking stuck ([#45](https://github.com/zheznanohana/nekodrop/issues/45))
 - New: delete the downloaded installer after an update ([#44](https://github.com/zheznanohana/nekodrop/pull/44), thanks @GGBond-cer)
 - RTL8852CE: the log records the iPhone's channel sequence, to find why it stays on channel 6 ([#32](https://github.com/zheznanohana/nekodrop/issues/32))
