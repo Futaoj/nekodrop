@@ -58,14 +58,34 @@ class MtkDevice {
 public:
   struct Options {
     std::string firmware_dir;
+    std::string country = "US";
     bool verbose = false;
   };
 
+  struct PeerCaps {
+    uint16_t ht_cap = 0x01ef;    /* LDPC, 40 MHz, SGI 20/40, RX STBC */
+    uint8_t ampdu_params = 0x03; /* 64 KiB A-MPDU, no spacing rule */
+    uint8_t rx_mcs[2] = {0xff, 0xff};
+    bool vht = true;
+    uint32_t vht_cap = 0x038001b2; /* MPDU 11454, RX LDPC, SGI80, TX/RX STBC, A-MPDU exp 7 */
+    uint16_t vht_mcs = 0xfffa;     /* MCS 0-9 on two streams */
+    uint8_t bw = 2;                /* 80 MHz */
+    uint8_t nss = 2;
+  };
+
+  /* Own MAC 1 / BSS 1 and reserved WTBL slot 18 for the Wi-Fi station's AP
+   * (AWDL peer slots occupy 1..17, below MT792X_WTBL_RESERVED = 19). */
+  static constexpr uint8_t kStationOmac = 1;
+  static constexpr uint8_t kApWcid = 18;
+
   using Logger = std::function<void(const std::string &)>;
   using RxHandler = std::function<void(const RxFrame &)>;
+  using TxStatusHandler = std::function<void(unsigned token, bool acked, unsigned tries)>;
 
   explicit MtkDevice(Logger log) : _log(std::move(log)) {}
   ~MtkDevice();
+
+  void set_tx_status_handler(TxStatusHandler h) { _on_tx_status = std::move(h); }
 
   /* Safe hardware probe: opens RegProxy, reads MT_HW_CHIPID/REV, tests driver-own. */
   bool probe(std::string &error);
@@ -81,11 +101,35 @@ public:
   bool set_channel(uint8_t channel, unsigned width_mhz);
   bool set_address(const uint8_t address[6]);
 
+  /* Second own address (own MAC 1, BSS 1) for the concurrent Wi-Fi station. */
+  bool set_station_identity(const uint8_t addr[6], const uint8_t bssid[6]);
+  void clear_station_identity();
+
+  /* Firmware STA record and Block Ack for the Wi-Fi station's AP (or another peer). */
+  bool sta_add(uint8_t wcid, const uint8_t peer[6], const PeerCaps &caps, uint8_t omac = 0);
+  bool sta_remove(uint8_t wcid, const uint8_t peer[6], uint8_t omac = 0);
+  bool sta_ba(uint8_t wcid, const uint8_t peer[6], uint8_t tid, uint16_t ssn, uint16_t win,
+              bool tx, bool enable, uint8_t omac = 0);
+
+  /* MCU timeouts for runtime channel moves and STA/BA commands (ms). */
+  unsigned move_timeout_ms = 3000;
+  unsigned sta_cmd_timeout_ms = 3000;
+
+  /* Connac2 TXD6 TX rate values (matching Mt7902::tx_rate_*). */
+  static uint16_t tx_rate_ofdm(unsigned mbps);
+  static uint16_t tx_rate_cck(unsigned mbps_x2);
+  static uint16_t tx_rate_ht(unsigned mcs);
+
   /* Injects a raw 802.11 frame (no FCS) with explicit TX rate / HT MCS / NO_ACK parameters.
    * Pass kick=false when enqueueing a batch, then call kick_tx() once to ring the WFDMA doorbell. */
   bool transmit(const uint8_t *frame, size_t len, const TxParams &params, bool kick = true);
   /* Convenience overload for fixed legacy OFDM rate (e.g. 6 or 24 Mbps). */
   bool transmit(const uint8_t *frame, size_t len, unsigned rate_mbps = 6, bool kick = true);
+  /* Fixed-rate TX for the Wi-Fi station / scans (no AWDL BA snooping). Returns token or -1. */
+  int transmit_raw(const uint8_t *frame, size_t len, uint16_t rate_val, uint8_t omac = 0,
+                   bool no_ack = false, bool force_altx = false);
+  /* QoS data frame via firmware rate control for `wcid` under `omac`. Returns token or -1. */
+  int transmit_sta(const uint8_t *frame, size_t len, uint8_t wcid, uint8_t omac = 0);
   /* Flushes deferred TX ring CIDX doorbell write (one BAR0 MMIO write per batch). */
   void kick_tx();
 
@@ -149,6 +193,12 @@ private:
   bool mac_init(std::string &error);
   bool mcu_set_eeprom();
   bool mcu_set_chan_cmd(uint8_t ext_cid, uint8_t ch, unsigned width_mhz);
+  bool add_omac(uint8_t omac, const uint8_t addr[6], const uint8_t bssid[6], bool enable);
+  void set_timing();
+  void restore_rx_filter();
+  void handle_tx_free(const uint8_t *data, size_t len);
+  void handle_rx_meta(const uint8_t *buf, size_t len);
+  int queue_tx_frame(const uint8_t *frame, size_t len, const uint32_t txd[8], bool kick);
   bool parse_rx_packet(const uint8_t *buf, size_t len, RxFrame &out);
 
   int find_peer_wcid(const uint8_t mac[6]);
@@ -180,6 +230,7 @@ private:
   };
 
   Logger _log;
+  TxStatusHandler _on_tx_status;
   RegProxy _proxy;
   DmaPool32 _dma;
 
@@ -191,7 +242,11 @@ private:
 
   uint8_t _channel = 149;
   unsigned _width_mhz = 80;
+  std::string _country = "US";
   std::array<uint8_t, 6> _mac{};
+  std::array<uint8_t, 6> _sta_addr{};
+  std::array<uint8_t, 6> _sta_bssid{};
+  bool _sta_iface_up = false;
   bool _verbose = false;
   bool _dma_running = false;
   bool _tx_pending_kick = false;
