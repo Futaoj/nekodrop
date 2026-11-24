@@ -7,8 +7,9 @@ Experimental user-mode PCIe driver for **MediaTek MT7922 (`14C3:0616` / `14C3:79
 - [`../driver/regproxy/winawdl_regproxy.inf`](../driver/regproxy/winawdl_regproxy.inf): updated with MediaTek MT7922/MT7921 PCI IDs (`PCI\VEN_14C3&DEV_0616` etc.).
 - [`src/mtk_regs.h`](src/mtk_regs.h): MT7921/MT7922 fixed register map, L1 remap, WFDMA0 ring/config bits, Connac2 MCU & TXD/RXD/TXP structs (ported from Linux `mt76`).
 - [`src/mtk_dma.h`](src/mtk_dma.h) / [`src/mtk_dma.cpp`](src/mtk_dma.cpp): 32-bit physical-address AWE DMA pool (`pa < 4 GiB`, matching `mt7921/pci.c` `DMA_BIT_MASK(32)`).
-- [`src/mtk_dev.h`](src/mtk_dev.h) / [`src/mtk_dev.cpp`](src/mtk_dev.cpp): interrupt-free polling WFDMA engine, driver-own handshake, ROM patch + RAM firmware loader, channel switch, raw 802.11 TX/RX.
-- [`src/mtk_main.cpp`](src/mtk_main.cpp): `--probe`, `--boot-test`, and full `\\.\pipe\winawdl-radio` daemon mode.
+- [`src/mtk_dev.h`](src/mtk_dev.h) / [`src/mtk_dev.cpp`](src/mtk_dev.cpp): interrupt-free polling WFDMA engine, driver-own handshake, ROM patch + RAM firmware loader, channel switch, raw 802.11 TX/RX, second own MAC (BSS 1), AP STA record / RX BA, and TX-free completion handling.
+- [`src/mtk_station.h`](src/mtk_station.h) / [`src/mtk_station.cpp`](src/mtk_station.cpp): `StaDevice` (`iwxradio/src/sta_device.h`) implementation driving `iwxradio`'s `WifiStation` with host-side CCMP (`../mtradio/src/ccmp.*`), AP STA record, and per-TID RX BA reorder buffer.
+- [`src/mtk_main.cpp`](src/mtk_main.cpp): `--probe`, `--boot-test`, `--sta-config <file>` (experimental 5 GHz Concurrent mode with single-channel time-sharing and Wi-Fi scans), `--country <CC>`, and full `\\.\pipe\winawdl-radio` daemon mode.
 - `firmware/`: `WIFI_MT7922_patch_mcu_1_1_hdr.bin` and `WIFI_RAM_CODE_MT7922_1.bin`.
 
 ## Testing on Windows (Administrator PowerShell)
