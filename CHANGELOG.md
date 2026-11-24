@@ -1,18 +1,22 @@
 # Changelog / 更新日志
 
 > Release channels / 发布通道：
-> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.1.1`**（首个稳定基线为 `v0.1.22`）。
+> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.1.3`**（首个稳定基线为 `v0.1.22`）。
 > - **Hourly（每时预览版 / Pre-release）**：持续迭代的预览版（客户端默认也会收到；取消勾选「包括预览版」就只收稳定版）；GitHub Releases 仅滚动保留最新 4 个每时版 + 稳定版（最多 5 个 Release），历史 Git Tag 全部保留。
 
 ---
 
-## v2.1.3 (Preview / 预览版) — 2026-11-24
+## v2.1.3 (Stable / 稳定版) — 2026-11-24
 
 ### 中文
-- 修复 Apple ID「退出 / 删除身份」后本机状态未清理干净的 bug：一并清理 `WirDrop\device.txt`、`HKCU\Software\WirDrop` 注册表项及 32 位 `appleid-anisette.exe` 在 `VirtualStore` 中留下的 CoreADI 注册缓存（保留已解压的 `WirDrop\icloud` 避免重复下载），同时在卸载注销（`--unregister`）时同步清理；避免残留或时钟失步的旧设备凭据导致重登持续报 `-22421`
+- 修复 Apple ID「退出 / 删除身份」后本机状态未清理干净的 bug：结束可能残留的 `appleid` / `appleid-anisette` 进程，一并清理 `WirDrop\device.txt`、`HKCU\Software\WirDrop` 注册表项及 32 位 `appleid-anisette.exe` 在 `VirtualStore` 中留下的 CoreADI 注册缓存（保留已解压的 `WirDrop\icloud` 避免重复下载 160 MB），并在卸载注销（`--unregister`）时同步清理；避免残留或时钟失步的旧设备凭据导致重登持续报 `-22421`
+- 汇总并稳定化自 `v2.1.1` 以来的更新（含 `v2.1.2`）：MediaTek MT7922 / MT7921（按需 + 5 GHz 同时连 Wi-Fi）、MT7902 同时连 Wi-Fi、Intel BE200 实验性支持、Apple ID `-27952` 自动重试、`Block Ack` 诊断日志
+- 实机验证：Intel AX201（5 GHz 44 信道同卡并发上网，发往 iPhone 846 MB 文件均速 **35.0 MB/s**）与 Apple ID「仅限联系人」登录及证书签发已真机验证可用；BE200、MT7921 及联发科同时连 Wi-Fi 模式仍待真机确认
 
 ### English
-- Fix Apple ID "Sign out / remove" leaving stale per-PC Anisette state behind: now also cleans up `WirDrop\device.txt`, `HKCU\Software\WirDrop`, and the 32-bit `appleid-anisette.exe` CoreADI cache under `VirtualStore` (while keeping the unpacked `WirDrop\icloud` runtime to avoid re-downloading), and runs the same cleanup on `--unregister` during uninstall; prevents stale or clock-skewed provisioning state from causing repeated `-22421` sign-in failures
+- Fix Apple ID "Sign out / remove" leaving stale per-PC Anisette state behind: stops any lingering `appleid` / `appleid-anisette` helpers and also cleans up `WirDrop\device.txt`, `HKCU\Software\WirDrop`, and the 32-bit `appleid-anisette.exe` CoreADI cache under `VirtualStore` (while keeping the unpacked `WirDrop\icloud` runtime to avoid re-downloading 160 MB), with the same cleanup on `--unregister` during uninstall; prevents stale or clock-skewed provisioning state from causing repeated `-22421` sign-in failures
+- Includes all changes since `v2.1.1` (promoted from `v2.1.2`): MediaTek MT7922 / MT7921 (on demand and 5 GHz Concurrent), Concurrent mode on MT7902, experimental Intel BE200, Apple ID `-27952` retry, and `Block Ack` notification diagnostics
+- Verified on hardware: Intel AX201 (Concurrent on 5 GHz channel 44, **35.0 MB/s** average sending an 846 MB file to iPhone) and Apple ID Contacts Only sign-in / certificate issuance confirmed working; BE200, MT7921 and MediaTek Concurrent mode still await hardware confirmation
 
 ---
 
