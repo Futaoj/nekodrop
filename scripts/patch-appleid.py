@@ -6,6 +6,10 @@
 #   so the country code comes from APPLEID_CC (the client sets it from the
 #   Windows region), +86 when unset, and an 11-digit mainland mobile number
 #   (1xxxxxxxxxx) is always +86.
+# - iCloudSetup.exe download: try three sources in turn, streamed with progress.
+# - GSA -27952 retry: keep iCloud/7.21 by default; if Apple refuses sign-in with
+#   -27952, switch X-MMe-Client-Info to iCloud/15.10, retry once, and persist the
+#   choice to client.txt in APPLEID_OUT so --refresh and --contacts reuse it.
 import pathlib
 import sys
 
@@ -168,3 +172,131 @@ async fn unpack_icloud(home: &Path) -> Result<(), String> {"""
     text = text.replace(old, new, 1)
     path.write_text(text, encoding='utf-8')
     print('appleid: iCloud download from three sources, streamed with progress, SHA-256 checked')
+
+# -27952 retry: some accounts refuse iCloud/7.21 with GSA error -27952. Keep
+# 7.21 by default so accounts that never see -27952 send the exact same headers
+# as before; on -27952, switch to iCloud/15.10, retry once, and remember the
+# choice in APPLEID_OUT\client.txt for --refresh and --contacts.
+# (aidc.rs uses its own sharingd/2.0 CLIENT_INFO, not gsa::CLIENT_INFO, so it is
+# left untouched.)
+CLIENT_MARK = 'nekodrop: -27952 client info'
+
+path = pathlib.Path(sys.argv[1]) / 'crates' / 'appleid' / 'src' / 'gsa.rs'
+text = path.read_text(encoding='utf-8')
+if CLIENT_MARK not in text:
+    old = 'pub const CLIENT_INFO: &str = "<PC> <Windows;10.0.26100;> <com.apple.AuthKit/1 (com.apple.iCloud/7.21)>";'
+    new = '''pub const CLIENT_INFO: &str = "<PC> <Windows;10.0.26100;> <com.apple.AuthKit/1 (com.apple.iCloud/7.21)>";
+/// nekodrop: -27952 client info. Newer iCloud for Windows client info used only
+/// after Apple refuses 7.21 with -27952.
+const CLIENT_INFO_NEWER: &str = "<PC> <Windows;10.0.26100;> <com.apple.AuthKit/1 (com.apple.iCloud/15.10)>";
+static USE_NEWER_CLIENT_INFO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn use_newer_client_info() -> bool {
+    USE_NEWER_CLIENT_INFO.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_newer_client_info(newer: bool) {
+    USE_NEWER_CLIENT_INFO.store(newer, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn client_info() -> &'static str {
+    if use_newer_client_info() { CLIENT_INFO_NEWER } else { CLIENT_INFO }
+}'''
+    if text.count(old) != 1:
+        sys.exit('gsa.rs: CLIENT_INFO moved; update patch-appleid.py')
+    text = text.replace(old, new, 1)
+
+    old = '        .header("X-MMe-Client-Info", CLIENT_INFO)'
+    new = '        .header("X-MMe-Client-Info", client_info())'
+    if text.count(old) != 1:
+        sys.exit('gsa.rs: call CLIENT_INFO header moved; update patch-appleid.py')
+    text = text.replace(old, new, 1)
+
+    old = '        ("X-MMe-Client-Info".into(), CLIENT_INFO.into()),'
+    new = '        ("X-MMe-Client-Info".into(), client_info().into()),'
+    if text.count(old) != 1:
+        sys.exit('gsa.rs: code_headers CLIENT_INFO moved; update patch-appleid.py')
+    text = text.replace(old, new, 1)
+
+    path.write_text(text, encoding='utf-8')
+    print('appleid: gsa.rs runtime-switchable client_info()')
+
+path = pathlib.Path(sys.argv[1]) / 'crates' / 'appleid' / 'src' / 'anisette.rs'
+text = path.read_text(encoding='utf-8')
+if CLIENT_MARK not in text:
+    old = '            ("X-MMe-Client-Info", crate::gsa::CLIENT_INFO.to_string()),'
+    new = '            ("X-MMe-Client-Info", crate::gsa::client_info().to_string()), // nekodrop: -27952 client info'
+    if text.count(old) != 1:
+        sys.exit('anisette.rs: CLIENT_INFO header moved; update patch-appleid.py')
+    text = text.replace(old, new, 1)
+    path.write_text(text, encoding='utf-8')
+    print('appleid: anisette.rs uses gsa::client_info()')
+
+path = pathlib.Path(sys.argv[1]) / 'crates' / 'appleid' / 'src' / 'contacts.rs'
+text = path.read_text(encoding='utf-8')
+if CLIENT_MARK not in text:
+    old = '            .header("X-MMe-Client-Info", crate::gsa::CLIENT_INFO)'
+    new = '            .header("X-MMe-Client-Info", crate::gsa::client_info()) // nekodrop: -27952 client info'
+    if text.count(old) != 1:
+        sys.exit('contacts.rs: delegates CLIENT_INFO header moved; update patch-appleid.py')
+    text = text.replace(old, new, 1)
+
+    old = '        .header("X-MMe-Client-Info", crate::gsa::CLIENT_INFO)'
+    new = '        .header("X-MMe-Client-Info", crate::gsa::client_info())'
+    if text.count(old) != 1:
+        sys.exit('contacts.rs: dav CLIENT_INFO header moved; update patch-appleid.py')
+    text = text.replace(old, new, 1)
+
+    path.write_text(text, encoding='utf-8')
+    print('appleid: contacts.rs uses gsa::client_info()')
+
+path = pathlib.Path(sys.argv[1]) / 'crates' / 'appleid' / 'src' / 'main.rs'
+text = path.read_text(encoding='utf-8')
+if CLIENT_MARK not in text:
+    old = 'const APP_TOKEN: &str = "gs-token.txt";'
+    new = '''const APP_TOKEN: &str = "gs-token.txt";
+/// nekodrop: -27952 client info. Persists the newer client info choice for --refresh/--contacts.
+const CLIENT_FILE: &str = "client.txt";
+
+fn load_client_info(out: &Path) {
+    if let Ok(text) = std::fs::read_to_string(out.join(CLIENT_FILE))
+        && text.trim() == "15.10"
+    {
+        gsa::set_newer_client_info(true);
+    }
+}
+
+fn save_client_info(out: &Path) {
+    let _ = std::fs::write(out.join(CLIENT_FILE), "15.10\\n");
+}'''
+    if text.count(old) != 1:
+        sys.exit('main.rs: APP_TOKEN moved; update patch-appleid.py')
+    text = text.replace(old, new, 1)
+
+    old = '''    let _ = std::fs::create_dir_all(&out);
+    let code = match std::env::args().nth(1).as_deref() {'''
+    new = '''    let _ = std::fs::create_dir_all(&out);
+    load_client_info(&out);
+    let code = match std::env::args().nth(1).as_deref() {'''
+    if text.count(old) != 1:
+        sys.exit('main.rs: main() setup moved; update patch-appleid.py')
+    text = text.replace(old, new, 1)
+
+    old = '    let session = gsa::sign_in(&account, &password, &mut anisette, &mut ask_code).await?;'
+    new = '''    let session = match gsa::sign_in(&account, &password, &mut anisette, &mut ask_code).await {
+        Ok(session) => session,
+        Err(e) if e.contains("-27952") && !gsa::use_newer_client_info() => {
+            gsa::set_newer_client_info(true);
+            say!("Apple refused iCloud 7.21 (-27952); retrying with iCloud 15.10");
+            let session = gsa::sign_in(&account, &password, &mut anisette, &mut ask_code).await?;
+            save_client_info(out);
+            session
+        }
+        Err(e) => return Err(e),
+    };'''
+    if text.count(old) != 1:
+        sys.exit('main.rs: gsa::sign_in call moved; update patch-appleid.py')
+    text = text.replace(old, new, 1)
+
+    path.write_text(text, encoding='utf-8')
+    print('appleid: main.rs retries -27952 with iCloud 15.10 and persists to client.txt')
