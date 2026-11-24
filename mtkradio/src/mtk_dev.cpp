@@ -736,7 +736,7 @@ void MtkDevice::rx_ring_commit(Ring &r) {
 bool MtkDevice::mcu_wait_response(uint8_t seq, std::vector<uint8_t> &out, unsigned timeout_ms) {
   const uint64_t deadline = now_ms() + timeout_ms;
   std::vector<uint8_t> pkt;
-  for (;;) {
+  do {
     /* MCU responses arrive on RX Ring 0 before FW runs, and on RX Ring 4 after FW runs. */
     if (rx_ring_pop(_rx_mcu, pkt) || rx_ring_pop(_rx_mcu_wa, pkt)) {
       if (pkt.size() >= sizeof(MtkMcuRxd) - 4) {
@@ -749,13 +749,23 @@ bool MtkDevice::mcu_wait_response(uint8_t seq, std::vector<uint8_t> &out, unsign
           return true;
         }
       }
-      /* Preserve TX-free completions and coredump notices that arrive while waiting. */
-      handle_rx_meta(pkt.data(), pkt.size());
+      /* The MCU/mgmt ring also carries 802.11 frames. In particular, a scan
+       * can hear a beacon while waiting for the channel switch reply (#54).
+       * Keep frames in arrival order for poll(); do not run callbacks inside
+       * an MCU command. Bound memory and record the channel before it changes. */
+      RxFrame frame;
+      if (parse_rx_packet(pkt.data(), pkt.size(), frame)) {
+        constexpr size_t kDeferredRxLimit = 64;
+        if (_deferred_rx.size() == kDeferredRxLimit) _deferred_rx.pop_front();
+        _deferred_rx.push_back({{frame.data, frame.data + frame.len}, frame.dbm, frame.channel});
+      } else {
+        handle_rx_meta(pkt.data(), pkt.size());
+      }
       continue;
     }
-    if (now_ms() >= deadline) return false;
     plat::sleep_ms(1);
-  }
+  } while (now_ms() < deadline);
+  return false;
 }
 
 bool MtkDevice::mcu_send(uint8_t cid, uint8_t ext_cid, uint8_t set_query,
@@ -2695,18 +2705,19 @@ void MtkDevice::handle_rx_meta(const uint8_t *buf, size_t len) {
 size_t MtkDevice::poll(const RxHandler &on_rx) {
   if (!_dma_running) return 0;
 
-  /* Drain async MCU events / TX-free reports on ring 0 and reclaim completed TX descriptors. */
-  {
-    int mcu_drained = 0;
-    while (rx_ring_pop(_rx_mcu, _rx_pkt_buf, false)) {
-      handle_rx_meta(_rx_pkt_buf.data(), _rx_pkt_buf.size());
-      mcu_drained++;
-    }
-    if (mcu_drained > 0) rx_ring_commit(_rx_mcu);
-  }
-  tx_ring_reclaim(_tx_data);
-
   size_t count = 0;
+  auto deliver = [&](const RxFrame &f) {
+    snoop_rx_ba(f.data, f.len);
+    if (on_rx) on_rx(f);
+    count++;
+  };
+  // A callback may start another MCU command and enqueue more frames. Leave
+  // those for the next poll rather than iterating an expanding queue.
+  if (!_deferred_rx.empty()) {
+    std::deque<DeferredRx> deferred;
+    deferred.swap(_deferred_rx);
+    for (const auto &f : deferred) deliver({f.frame.data(), f.frame.size(), f.dbm, f.channel});
+  }
   auto drain_rx = [&](Ring &ring) {
     int uncommited = 0;
     for (int budget = 0; budget < 256; budget++) {
@@ -2718,15 +2729,16 @@ size_t MtkDevice::poll(const RxHandler &on_rx) {
       }
       RxFrame f;
       if (parse_rx_packet(_rx_pkt_buf.data(), _rx_pkt_buf.size(), f)) {
-        snoop_rx_ba(f.data, f.len);
-        if (on_rx) on_rx(f);
-        count++;
+        deliver(f);
       } else {
         handle_rx_meta(_rx_pkt_buf.data(), _rx_pkt_buf.size());
       }
     }
     if (uncommited > 0) rx_ring_commit(ring);
   };
+  /* Ring 0 usually carries async events and TX-free reports. */
+  drain_rx(_rx_mcu);
+  tx_ring_reclaim(_tx_data);
   /* MT7921/MT7922 delivers 802.11 frames on both RX ring 2 (data) and ring 4 (MCU/mgmt). */
   drain_rx(_rx_data);
   drain_rx(_rx_mcu_wa);
@@ -2756,6 +2768,7 @@ void MtkDevice::close() {
   _fw_loaded = false;
   _rx_path_set = false;
   _sta_iface_up = false;
+  _deferred_rx.clear();
   _peers.fill(PeerEntry{});
   _pending_addba.fill(PendingAddba{});
   _pending_tx_addba.fill(PendingAddba{});

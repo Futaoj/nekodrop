@@ -194,7 +194,8 @@ public partial class RadarView : UserControl
 
     void OnModel(object? s, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(AppModel.Air) or nameof(AppModel.Detail)) Update();
+        if (e.PropertyName is nameof(AppModel.Air) or nameof(AppModel.Detail) or
+            nameof(AppModel.DiscoveryBeaconUnavailable)) Update();
     }
 
     void View_Checked(object sender, RoutedEventArgs e)
@@ -227,7 +228,11 @@ public partial class RadarView : UserControl
 
         // Below the hub: looking (no device yet), standby, starting.
         string title = "", text = "", button = "";
-        if (air == "ready" && none) { title = L.T("radar.looking"); text = L.T("radar.lookingHint"); }
+        if (air == "ready" && none)
+        {
+            title = L.T("radar.looking");
+            text = L.T(A.Model.DiscoveryBeaconUnavailable ? "radar.noBeacon" : "radar.lookingHint");
+        }
         else if (air == "standby") { text = L.T("radar.standby"); button = L.T("radar.wake"); }
         else if (air == "starting") { text = L.T("status.starting"); }
         HintTitle.Text = title;

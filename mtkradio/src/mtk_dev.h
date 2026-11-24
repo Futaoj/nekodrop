@@ -10,6 +10,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <string>
 #include <vector>
@@ -228,6 +229,11 @@ private:
     bool amsdu = true;
     uint64_t ts_ms = 0;
   };
+  struct DeferredRx {
+    std::vector<uint8_t> frame;
+    int8_t dbm;
+    uint8_t channel;
+  };
 
   Logger _log;
   TxStatusHandler _on_tx_status;
@@ -264,6 +270,7 @@ private:
   std::array<PendingAddba, 32> _pending_addba{};
   std::array<PendingAddba, 32> _pending_tx_addba{};
   std::vector<uint8_t> _rx_pkt_buf;
+  std::deque<DeferredRx> _deferred_rx;
 };
 
 } // namespace mtk

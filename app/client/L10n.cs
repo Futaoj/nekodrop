@@ -102,6 +102,8 @@ public static class L
         ["status.noService"] = ("服务未运行", "Service not running"),
         ["radar.looking"] = ("正在寻找附近的 Apple 设备…", "Looking for Apple devices nearby…"),
         ["radar.lookingHint"] = ("请确保对方已开启 AirDrop 并亮屏", "Make sure AirDrop is on and the screen is awake"),
+        ["radar.noBeacon"] = ("Windows 未能启动蓝牙广播。检查蓝牙是否开启，或在对方打开 AirDrop 分享面板。",
+                             "Windows did not start Bluetooth advertising. Check Bluetooth, or open AirDrop on the other device."),
         ["radar.standby"] = ("按需待命中，发送时会短暂接管无线网卡", "On standby: the card is taken briefly when you send"),
         ["radar.wake"] = ("立即开始寻找", "Start looking"),
         ["radar.offHint"] = ("开启后可与附近的 iPhone / Mac 互传文件。", "Turn it on to share files with iPhones and Macs nearby."),

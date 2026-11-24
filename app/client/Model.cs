@@ -90,12 +90,17 @@ public sealed class AppModel : Observable
     public event EventHandler? Stored;
     public void RaiseStored() => Stored?.Invoke(this, EventArgs.Empty);
     string _status = L.T("status.connecting"), _detail = "";
-    bool _looking, _radioOn, _allow = true, _updatePreview;
+    bool _looking, _discoveryBeaconUnavailable, _radioOn, _allow = true, _updatePreview;
     string _air = "service_stopped", _mode = "", _ssid = "", _update = "";
     int _channel;
     public string Status { get => _status; set => Set(ref _status, value); }
     public string Detail { get => _detail; set => Set(ref _detail, value); }
     public bool Looking { get => _looking; set => Set(ref _looking, value); }
+    public bool DiscoveryBeaconUnavailable
+    {
+        get => _discoveryBeaconUnavailable;
+        set => Set(ref _discoveryBeaconUnavailable, value);
+    }
     /// <summary>The radio is on and AirDrop listens (the radar's ripples run).</summary>
     public bool RadioOn { get => _radioOn; set => Set(ref _radioOn, value); }
     /// <summary>

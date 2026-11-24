@@ -942,6 +942,7 @@ public sealed class App : Application
                  * looking: the old one's devices go, and an open window looks
                  * again (#9: the send window stayed empty after a move to 149). */
                 foreach (var stale in Model.Devices.Where(x => !x.Busy).ToList()) Model.Devices.Remove(stale);
+                Model.DiscoveryBeaconUnavailable = false;
                 if (_send is not null || _window is { IsVisible: true }) Engine.Look(true);
                 break;
             case "receiving":
@@ -1056,6 +1057,7 @@ public sealed class App : Application
             }
             case "looking":
                 Model.Looking = (bool?)o["on"] ?? false;
+                Model.DiscoveryBeaconUnavailable = Model.Looking && (bool?)o["beacon"] == false;
                 break;
             case "link":
                 if ((bool?)o["up"] == true) Model.Detail = Model.Detail.Replace(L.T("err.engine"), "");
