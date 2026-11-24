@@ -14,7 +14,8 @@
   - 导入 Windows 已保存网络时读取 `connectionMode` 与 `nonBroadcast`，保留 Windows「手动连接」偏好并记录隐藏网络标记
   - Wi-Fi 窗口「已保存的网络」每行新增「连接」按钮，可直接定向扫描并连接已保存的隐藏网络，无需重复输入名称和密码；对开启自动连接的已保存隐藏网络在重启后也会自动发起定向探测连接
 - 修复 Apple ID 二次验证码提交（`/validate`）遇到 Apple 服务端临时返回 HTTP 502/503/504 时直接失败的问题（[#42](https://github.com/zheznanohana/nekodrop/issues/42)）：改为携带新 OTP 自动退避重试最多 3 次
-- 以上改动中 BE200 与 `appleid.exe` 仅在 CI 上编译，待对应硬件/账号环境验证
+- MT7922 / MT7921 并发模式：推迟 AirDrop 活跃期间的后台 Wi-Fi 扫描，断网时逐步延长扫描间隔，调频失败时跳过该信道（[#54](https://github.com/zheznanohana/nekodrop/issues/54)、[#56](https://github.com/zheznanohana/nekodrop/issues/56)）。两种传输方向和扫描结果仍需真机复测。
+- BE200 与 Apple ID 登录改动仍待对应硬件和账号复测。
 
 ### English
 - Fix Intel BE200 / Killer BE1750x (`8086:272B`, MLD API 100) hanging on legacy `MAC_PM_POWER_TABLE` (`0xa9`) during monitor bring-up (`error 138`) ([#53](https://github.com/zheznanohana/nekodrop/issues/53)): skip `MAC_PM_POWER_TABLE` on MLD listener MACs (device-wide `POWER_TABLE` already disables power save); needs hardware confirmation
@@ -22,7 +23,8 @@
   - Preserve Windows' manual-connect (`connectionMode = manual`) and hidden (`nonBroadcast`) flags when importing saved profiles
   - Add a **Connect** button to each row in Saved networks to run a directed scan and join with saved credentials, and probe auto-connect hidden profiles after reboot
 - Retry transient HTTP 502/503/504 errors (up to 3 times with fresh Anisette OTP headers) when submitting the Apple ID 2FA verification code to `/validate` ([#42](https://github.com/zheznanohana/nekodrop/issues/42))
-- BE200 and `appleid.exe` changes are built on CI and await reporter verification
+- MT7922 / MT7921 Concurrent mode: defer background Wi-Fi scans while AirDrop is active, back off repeated scans while disconnected, and skip channels that fail to tune ([#54](https://github.com/zheznanohana/nekodrop/issues/54), [#56](https://github.com/zheznanohana/nekodrop/issues/56)). Both transfer directions and scan results still need hardware testing.
+- The BE200 and Apple ID sign-in changes still need testing on the affected hardware and accounts.
 
 ---
 

@@ -246,12 +246,15 @@ pub fn client_info() -> &'static str {
             .await
             .map_err(|e| e.to_string())?;
         let status = res.status();
-        let bytes = res.bytes().await.map_err(|e| e.to_string())?;
-        if matches!(status.as_u16(), 502 | 503 | 504) && wait > 0 {
+        if matches!(status.as_u16(), 502 | 503 | 504) {
+            if wait == 0 {
+                return Err(format!("Apple's verification server is still unavailable (HTTP {status})"));
+            }
             say!("Apple's verification server is busy (HTTP {status}); retrying in {wait} s ({}/3)", attempt + 1);
             tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
             continue;
         }
+        let bytes = res.bytes().await.map_err(|e| e.to_string())?;
         return match plist::from_bytes::<Value>(&bytes) {
             Ok(Value::Dictionary(reply)) => check(&reply).map_err(|e| format!("the verification code was refused: {e}")),
             _ => Err(format!("the verification code was refused (HTTP {status})")),

@@ -639,7 +639,10 @@ int main(int argc, char **argv) {
     }
     const uint8_t ch = scan.channels[scan.next++];
     dev.kick_tx();
-    (void)dev.set_channel(ch, 20);
+    if (!dev.set_channel(ch, 20)) {
+      log_fmt("scan: could not tune to channel %u; skipping dwell", ch);
+      return true;
+    }
     const bool radar = ch >= 52 && ch <= 144;
     if (!radar) send_probe(ch);
     scan.until = Clock::now() + std::chrono::milliseconds(radar ? 250 : 150);

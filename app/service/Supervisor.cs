@@ -37,6 +37,7 @@ public sealed class Supervisor : IDisposable
     string _staSsid = "", _wifiError = "";
     (string Ssid, string? Password, bool? Auto)? _pendingConnect;
     int _pendingScans; // scans that missed the pending network so far
+    int _mtkBackgroundScans; // repeated MT792x off-channel scans while Wi-Fi is down
     readonly HashSet<string> _hiddenProbed = [];
     static readonly TimeSpan StaleScan = TimeSpan.FromSeconds(20);
     string _detail = "";
@@ -588,7 +589,12 @@ public sealed class Supervisor : IDisposable
             case "wifi":
                 lock (_lock)
                 {
-                    if (value == "connected") { _wifiDownSince = DateTime.MaxValue; _wifiError = ""; }
+                    if (value == "connected")
+                    {
+                        _wifiDownSince = DateTime.MaxValue;
+                        _wifiError = "";
+                        _mtkBackgroundScans = 0;
+                    }
                     else if (_wifi == "connected" || _wifiDownSince == DateTime.MaxValue) _wifiDownSince = DateTime.UtcNow;
                     _wifi = value;
                 }
@@ -736,10 +742,23 @@ public sealed class Supervisor : IDisposable
                 _restarts = 0;
             }
             // Wi-Fi down for a while: look for a known network to join.
+            var now = DateTime.UtcNow;
+            var mtk = _profile.Backend == RadioBackendKind.MtkRadio;
+            // A full MT792x scan takes the radio away from AWDL for ~10 seconds
+            // (#54, #56). Don't start automatic retries during a transfer; if
+            // no network joins, back off instead of breaking sync every 40 s.
+            // An explicit Wi-Fi scan or connect is still available in the UI.
+            var scanDelay = mtk ? Math.Min(300, 30 << Math.Min(_mtkBackgroundScans, 4)) : 30;
             if (EffectiveMode() == NetMode.Concurrent && State == RadioState.On && !_userOff && _wifi != "connected" &&
-                !_scanBusy && DateTime.UtcNow - _wifiDownSince > TimeSpan.FromSeconds(20) &&
-                DateTime.UtcNow - _scanAt > TimeSpan.FromSeconds(30) && !Wlan.WiredUp())
+                !_scanBusy && now - _wifiDownSince > TimeSpan.FromSeconds(20) &&
+                now - _scanAt > TimeSpan.FromSeconds(scanDelay) &&
+                (!mtk || (now - _lastUse > TimeSpan.FromSeconds(10) &&
+                          _known.All().Any(k => k is { HasKey: true, AutoConnect: true }))) &&
+                !Wlan.WiredUp())
+            {
+                if (mtk && _mtkBackgroundScans < 4) _mtkBackgroundScans++;
                 WifiScan();
+            }
             if (EffectiveMode() == NetMode.OnDemand && State == RadioState.On &&
                 DateTime.UtcNow - _lastUse > TimeSpan.FromSeconds(_cfg.IdleSeconds))
                 Stop("idle", giveBack: true);
