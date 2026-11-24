@@ -12,8 +12,7 @@ import sys
 path = pathlib.Path(sys.argv[1]) / 'crates' / 'appleid' / 'src' / 'contacts.rs'
 text = path.read_text(encoding='utf-8')
 MARK = 'nekodrop: APPLEID_CC'
-if MARK in text:
-    sys.exit(0)
+done = MARK in text
 
 old = '''    } else if let Some(rest) = digits.strip_prefix('0') {
         format!("+82{rest}")
@@ -28,7 +27,7 @@ new = '''    } else if digits.len() == 11 && digits.starts_with('1') {
     } else {
         format!("+{digits}")
     };'''
-if text.count(old) != 1:
+if not done and text.count(old) != 1:
     sys.exit('contacts.rs: phone_spellings moved; update patch-appleid.py')
 text = text.replace(old, new, 1)
 
@@ -42,7 +41,7 @@ new = '''    let cc = format!("+{}", country_code());
     if let Some(rest) = e164.strip_prefix("+86") {
         out.push(("national", rest.to_string()));
     }'''
-if text.count(old) != 1:
+if not done and text.count(old) != 1:
     sys.exit('contacts.rs: the national spelling moved; update patch-appleid.py')
 text = text.replace(old, new, 1)
 
@@ -56,9 +55,73 @@ fn country_code() -> String {
 }
 
 fn email_spellings('''
-text = text.replace(old, new, 1)
+if not done:
+    text = text.replace(old, new, 1)
+    # WirDrop's own test pins the Korean default; nekodrop's default differs.
+    text = text.replace('fn spells_phone_numbers_every_way() {', '#[ignore = "nekodrop: default country is not Korea"]\n    fn spells_phone_numbers_every_way() {', 1)
+    path.write_text(text, encoding='utf-8')
+    print('appleid: phone numbers without a country code follow APPLEID_CC (default +86)')
 
-# WirDrop's own test pins the Korean default; nekodrop's default differs.
-text = text.replace('fn spells_phone_numbers_every_way() {', '#[ignore = "nekodrop: default country is not Korea"]\n    fn spells_phone_numbers_every_way() {', 1)
-path.write_text(text, encoding='utf-8')
-print('appleid: phone numbers without a country code follow APPLEID_CC (default +86)')
+# anisette.rs: the first sign-in downloads iCloud for Windows 7.21 (about 160 MB)
+# in one piece through the sign-in client, whose 120 s limit covers the whole
+# request: below about 1.3 MB/s the download always failed, and nothing showed
+# how far it had got (#42).  Stream it with a 60 s limit between reads instead,
+# and report the progress ("progress" events with --json, a line otherwise).
+path = pathlib.Path(sys.argv[1]) / 'crates' / 'appleid' / 'src' / 'anisette.rs'
+text = path.read_text(encoding='utf-8')
+MARK = 'nekodrop: download progress'
+if MARK not in text:
+    old = '''    let setup = crate::http::client()
+        .get(ICLOUD_SETUP)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| e.to_string())?
+        .bytes()
+        .await
+        .map_err(|e| e.to_string())?;
+'''
+    new = '''    // nekodrop: download progress (#42)
+    let mut response = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?
+        .get(ICLOUD_SETUP)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| e.to_string())?;
+    let total = response.content_length().unwrap_or(0);
+    let mut setup: Vec<u8> = Vec::with_capacity(total as usize);
+    let mut shown = u64::MAX;
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        setup.extend_from_slice(&chunk);
+        let got = setup.len() as u64;
+        let step = if total > 0 { got * 100 / total } else { got >> 23 };
+        if step != shown {
+            shown = step;
+            download_progress(got, total);
+        }
+    }
+'''
+    if text.count(old) != 1:
+        sys.exit('anisette.rs: the iCloudSetup download moved; update patch-appleid.py')
+    text = text.replace(old, new, 1)
+    old = 'async fn unpack_icloud(home: &Path) -> Result<(), String> {'
+    new = '''/// How much of iCloudSetup.exe has arrived (nekodrop, #42).
+fn download_progress(got: u64, total: u64) {
+    const MB: u64 = 1024 * 1024;
+    if crate::JSON.load(std::sync::atomic::Ordering::Relaxed) {
+        crate::event(serde_json::json!({ "ev": "progress", "done": got, "total": total }));
+    } else if total > 0 {
+        println!("  {}% ({} of {} MB)", got * 100 / total, got / MB, total / MB);
+    }
+}
+
+async fn unpack_icloud(home: &Path) -> Result<(), String> {'''
+    if text.count(old) != 1:
+        sys.exit('anisette.rs: unpack_icloud moved; update patch-appleid.py')
+    text = text.replace(old, new, 1)
+    path.write_text(text, encoding='utf-8')
+    print('appleid: the iCloud download streams with progress, no 120 s limit on the whole')
