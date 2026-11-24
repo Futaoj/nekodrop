@@ -1,8 +1,36 @@
 # Changelog / 更新日志
 
 > Release channels / 发布通道：
-> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.1.0`**（首个稳定基线为 `v0.1.22`）。
+> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.1.1`**（首个稳定基线为 `v0.1.22`）。
 > - **Hourly（每时预览版 / Pre-release）**：持续迭代的预览版（客户端默认也会收到；取消勾选「包括预览版」就只收稳定版）；GitHub Releases 仅滚动保留最新 4 个每时版 + 稳定版（最多 5 个 Release），历史 Git Tag 全部保留。
+
+---
+
+## v2.1.1 (Stable / 稳定版) — 2026-11-24
+
+### 中文
+- 修复删掉用户目录的 Downloads 文件夹后 AirDrop 引擎反复崩溃的 bug（[#45](https://github.com/zheznanohana/nekodrop/issues/45)）
+- 修复 Explorer 占用右键菜单组件时升级安装失败的 bug；修复安装失败提示是乱码的 bug
+- 修复右键「用 nekodrop 发送」和通知里「接受」按钮可能没反应的 bug（[#45](https://github.com/zheznanohana/nekodrop/issues/45)）
+- 修复从资源管理器往面板拖文件时面板自己收起的 bug（[#45](https://github.com/zheznanohana/nekodrop/issues/45)）
+- 新增「总是接受的设备」的「添加」按钮（[#45](https://github.com/zheznanohana/nekodrop/issues/45)）
+- 修复网速较慢时 iCloud 组件下载失败的 bug，下载时显示进度条（[#42](https://github.com/zheznanohana/nekodrop/issues/42)）
+- 安装最后一步显示滚动进度条，不再像卡住（[#45](https://github.com/zheznanohana/nekodrop/issues/45)）
+- 新增升级后自动删除下载的安装包（[#44](https://github.com/zheznanohana/nekodrop/pull/44)，感谢 @GGBond-cer）
+- RTL8852CE：日志记录 iPhone 的信道序列，排查停在 6 信道的问题（[#32](https://github.com/zheznanohana/nekodrop/issues/32)）
+- 以上修复只在 CI 上编译测试，还没有真机验证
+
+### English
+- Fix the AirDrop engine crashing over and over when the profile has no Downloads folder ([#45](https://github.com/zheznanohana/nekodrop/issues/45))
+- Fix updates failing when Explorer holds the right-click menu component; fix the garbled text of the install error
+- Fix Explorer's "Send with nekodrop" and the notification's Accept button sometimes doing nothing ([#45](https://github.com/zheznanohana/nekodrop/issues/45))
+- Fix the panel closing while files are dragged to it from Explorer ([#45](https://github.com/zheznanohana/nekodrop/issues/45))
+- New: an Add button for "Always accept from" ([#45](https://github.com/zheznanohana/nekodrop/issues/45))
+- Fix the iCloud component download failing on slower connections, with a progress bar ([#42](https://github.com/zheznanohana/nekodrop/issues/42))
+- The installer's last step shows a moving bar instead of looking stuck ([#45](https://github.com/zheznanohana/nekodrop/issues/45))
+- New: delete the downloaded installer after an update ([#44](https://github.com/zheznanohana/nekodrop/pull/44), thanks @GGBond-cer)
+- RTL8852CE: the log records the iPhone's channel sequence, to find why it stays on channel 6 ([#32](https://github.com/zheznanohana/nekodrop/issues/32))
+- Built and tested on CI only; not yet verified on real hardware
 
 ---
 
