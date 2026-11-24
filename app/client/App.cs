@@ -16,7 +16,7 @@ public sealed class App : Application
     [STAThread]
     public static int Main(string[] args)
     {
-        if (args.Contains("--unregister")) { Shell.Unregister(); return 0; }
+        if (args.Contains("--unregister")) { Shell.Unregister(); try { AppleId.SignOut(); } catch (Exception) { } return 0; }
         // Chosen in the Share sheet: send what was shared, like Explorer's verb.
         if (args.Length == 0 && Shell.SharedFiles() is { Length: > 0 } shared) args = ["--send", .. shared];
         var pipeName = "nekodrop-ui-" + WindowsIdentity.GetCurrent().User?.Value;

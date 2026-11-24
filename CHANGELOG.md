@@ -6,6 +6,16 @@
 
 ---
 
+## v2.1.3 (Preview / 预览版) — 2026-11-24
+
+### 中文
+- 修复 Apple ID「退出 / 删除身份」后本机状态未清理干净的 bug：一并清理 `WirDrop\device.txt`、`HKCU\Software\WirDrop` 注册表项及 32 位 `appleid-anisette.exe` 在 `VirtualStore` 中留下的 CoreADI 注册缓存（保留已解压的 `WirDrop\icloud` 避免重复下载），同时在卸载注销（`--unregister`）时同步清理；避免残留或时钟失步的旧设备凭据导致重登持续报 `-22421`
+
+### English
+- Fix Apple ID "Sign out / remove" leaving stale per-PC Anisette state behind: now also cleans up `WirDrop\device.txt`, `HKCU\Software\WirDrop`, and the 32-bit `appleid-anisette.exe` CoreADI cache under `VirtualStore` (while keeping the unpacked `WirDrop\icloud` runtime to avoid re-downloading), and runs the same cleanup on `--unregister` during uninstall; prevents stale or clock-skewed provisioning state from causing repeated `-22421` sign-in failures
+
+---
+
 ## v2.1.2 (Preview / 预览版) — 2026-11-24
 
 ### 中文

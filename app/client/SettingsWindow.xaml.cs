@@ -358,7 +358,7 @@ public partial class SettingsWindow : Window
         if (!present) ReceiveEveryone.IsChecked = true;
         SignInButton.IsEnabled = AppleId.CanSignIn;
         SignInButton.ToolTip = AppleId.CanSignIn ? null : L.T("aid.noTool");
-        SignOutButton.Visibility = present || System.IO.Directory.Exists(AppleId.Out) ? Visibility.Visible : Visibility.Collapsed;
+        SignOutButton.Visibility = present || AppleId.HasLocalState ? Visibility.Visible : Visibility.Collapsed;
         ContactsButton.Visibility = AppleId.Source == "appleid" ? Visibility.Collapsed : Visibility.Visible;
         if (!present) { IdentityText.Text = L.T("aid.none"); return; }
         var until = AppleId.CertificateUntil is { } d ? d.ToString("yyyy-MM-dd") : "?";

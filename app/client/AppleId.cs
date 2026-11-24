@@ -26,12 +26,19 @@ namespace NekoDrop;
 /// </summary>
 public static partial class AppleId
 {
-    public static string Out => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "nekodrop", "appleid");
+    static string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+    public static string Out => Path.Combine(LocalAppData, "nekodrop", "appleid");
     public static string Dir => Path.Combine(Out, "identity");
+    static string WirDropDevice => Path.Combine(LocalAppData, "WirDrop", "device.txt");
+    static string VirtualStoreAdi => Path.Combine(LocalAppData, "VirtualStore", "ProgramData", "Apple Computer", "iTunes", "adi");
+    const string WirDropRegistryKey = @"Software\WirDrop";
     static string Exe => Path.Combine(AppContext.BaseDirectory, "appleid", "appleid.exe");
 
     /// <summary>appleid.exe is installed (it needs Rust at build time).</summary>
     public static bool CanSignIn => File.Exists(Exe);
+
+    /// <summary>True when either nekodrop's Apple ID folder or WirDrop's per-PC device file is on disk.</summary>
+    public static bool HasLocalState => Directory.Exists(Out) || File.Exists(WirDropDevice);
 
     /// <summary>The experimental switch is on and there is an identity: the engine uses it.</summary>
     public static bool InUse => App.Instance.Settings.AppleIdOn && Present;
@@ -71,10 +78,41 @@ public static partial class AppleId
 
     static void Write(string name, string text) => File.WriteAllText(Path.Combine(Dir, name), text, new UTF8Encoding(false));
 
-    /// <summary>Forgets the identity and the sign-in session.</summary>
+    /// <summary>
+    /// Forgets the identity, the sign-in session, and the per-PC Anisette
+    /// registration (device.txt, HKCU\Software\WirDrop, and CoreADI's
+    /// VirtualStore adi folder) so the next sign-in provisions a fresh device
+    /// identity. Keeps %LocalAppData%\WirDrop\icloud so it is not re-downloaded.
+    /// </summary>
     public static void SignOut()
     {
+        StopHelpers();
         if (Directory.Exists(Out)) Directory.Delete(Out, true);
+        if (File.Exists(WirDropDevice)) File.Delete(WirDropDevice);
+        if (Directory.Exists(VirtualStoreAdi)) Directory.Delete(VirtualStoreAdi, true);
+        Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(WirDropRegistryKey, throwOnMissingSubKey: false);
+    }
+
+    static void StopHelpers()
+    {
+        var toolDir = Path.GetDirectoryName(Exe);
+        if (string.IsNullOrEmpty(toolDir)) return;
+        foreach (var name in new[] { "appleid", "appleid-anisette" })
+        {
+            foreach (var p in Process.GetProcessesByName(name))
+            {
+                try
+                {
+                    if (p.MainModule?.FileName is { } path && path.StartsWith(toolDir, StringComparison.OrdinalIgnoreCase))
+                    {
+                        p.Kill(entireProcessTree: true);
+                        p.WaitForExit(3000);
+                    }
+                }
+                catch (Exception) { }
+                finally { p.Dispose(); }
+            }
+        }
     }
 
     /// <summary>The country of phone numbers written without one, for the contact hashes.</summary>
