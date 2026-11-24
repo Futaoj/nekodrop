@@ -1,4 +1,4 @@
-﻿# Applies nekodrop's changes to the staged copy of winawdl's AirDrop engine.
+# Applies nekodrop's changes to the staged copy of winawdl's AirDrop engine.
 # Usage: python patch-engine.py <staged airdrop folder>
 #
 # - A stable mDNS instance name (NEKODROP_SERVICE_ID, kept by the client), so
