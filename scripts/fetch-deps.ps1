@@ -2,7 +2,7 @@
 #   winawdl         radio pipe, RTL8852CE radio, awdld (OWL), Wintun, AirDrop engine (MIT/GPL-2.0/GPL-3.0)
 #   devourer        winawdl's Realtek RTL8852CE user-mode radio library (GPL-2.0)
 #   ForbiddenItlwm  iwlwifi firmware and its licence (GPL-2.0 / Intel redistribution)
-#   linux-firmware  the MediaTek MT7902/MT7921/MT7922 firmware and its licence (MediaTek redistribution)
+#   linux-firmware  the MediaTek MT7902/MT7921/MT7922 and Intel BE200 firmware and their licences
 #   WirDrop         its Apple ID sign-in (appleid.exe, appleid-anisette.exe) for Contacts Only (MIT)
 #   winlibs MinGW   GCC for awdld
 #   WDK (NuGet)     UMDF headers and tools, only when no WDK is installed
@@ -56,6 +56,16 @@ foreach ($f in @(@('mediatek/WIFI_MT7922_patch_mcu_1_1_hdr.bin', '5356256C3A361C
            (Join-Path $mtkFw (Split-Path $f[0] -Leaf)) $f[1]
 }
 "linux-firmware (MT7922/MT7921) @ $($lfw.Substring(0, 7))"
+
+# Experimental Intel BE200 (GL/FM) API 100 firmware (embeds PNVM in TLV 74).
+$be200Fw = Join-Path $tp 'linux-firmware-iwlwifi-be200'
+New-Item -ItemType Directory -Force $be200Fw | Out-Null
+foreach ($f in @(@('intel/iwlwifi/iwlwifi-gl-c0-fm-c0-100.ucode', 'F8CC54927AE551025A7550CF2117BDDA30DC1F392EE925E5C60D80A9CDB0179B'),
+                 @('LICENSES/LICENCE.iwlwifi_firmware', '16D5040C7CF851FC693B7542E20870935B99802533EA1BFD231C377A2305E5C5'))) {
+  Get-File "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/$lfw/$($f[0])" `
+           (Join-Path $be200Fw (Split-Path $f[0] -Leaf)) $f[1]
+}
+"linux-firmware (Intel BE200) @ $($lfw.Substring(0, 7))"
 
 # Wintun for awdld: winawdl's script checks its SHA-256 and WireGuard's signature.
 if (-not (Test-Path "$tp\winawdl\deps\wintun\wintun.dll")) {

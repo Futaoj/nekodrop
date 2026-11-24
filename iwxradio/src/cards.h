@@ -15,6 +15,7 @@ struct CardInfo {
   std::string firmware;   /* iwlwifi-*.ucode */
   std::string pnvm;       /* iwlwifi-*.pnvm, AX210 family with a GF radio; else empty */
   bool ax210 = false;     /* AX210 family: gen3 context info, PNVM, gen3 TX/RX formats */
+  bool bz = false;        /* Bz family (BE200): BZ CSR bits, 4B RX completion, 8 KiB BC table, MLD API */
   bool integrated = true; /* CNVi (MAC in the chipset) or discrete */
   uint32_t xtal_latency = 0;
   uint32_t ltr_delay = 0; /* IWX_SOC_FLAGS_LTR_APPLY_DELAY_* */
@@ -45,6 +46,7 @@ inline uint16_t family_device(const std::string &name) {
   if (name == "ax200") return 0x2723; /* discrete 22000 */
   if (name == "ax210") return 0x2725; /* discrete Ty */
   if (name == "so") return 0x51F0;    /* So CNVi, long-latency (the safe one) */
+  if (name == "be200") return 0x272B; /* discrete Bz/Gl (experimental) */
   return 0;
 }
 
@@ -70,6 +72,9 @@ inline CardInfo select(uint16_t device, uint32_t hw_rev, uint32_t rf_id) {
   case 0x7A70: case 0x51F1: /* iwl_so_long_latency_imr_trans_cfg (OpenBSD: sc_imr_enabled) */
     c.ax210 = true; c.xtal_latency = 12000; c.ltr_delay = kLtr2500; c.low_latency_xtal = true;
     c.imr = true; break;
+  case 0x272B: /* iwl_gl_mac_cfg: discrete BE200 (Bz family, experimental) */
+    c.ax210 = true; c.bz = true; c.integrated = false;
+    c.xtal_latency = 12000; c.low_latency_xtal = true; break;
   case 0x2720: c.why = "Intel QnJ (8086:2720): its firmware (QuQnj, API 48) is not shipped upstream"; return c;
   case 0x2726: c.why = "Intel SnJ (8086:2726): its firmware (SoSnj, API 63) is not shipped upstream"; return c;
   case 0x2729: case 0x7E40: c.why = "Intel Ma (Meteor Lake CNVi): its firmware (ma, API 63) is not shipped upstream"; return c;
@@ -80,6 +85,7 @@ inline CardInfo select(uint16_t device, uint32_t hw_rev, uint32_t rf_id) {
   const bool jf = rf == 0x105 || rf == 0x108; /* JF2, JF1: Wireless-AC 9560 class radio */
   const bool hr = rf == 0x10A || rf == 0x10C; /* HR2, HR1: Wi-Fi 6 */
   const bool gf = rf == 0x10D;                /* GF: Wi-Fi 6E */
+  const bool fm = rf == 0x112;                /* FM: Wi-Fi 7 (BE200) */
   if (device == 0x2723) {
     c.firmware = "iwlwifi-cc-a0-68.ucode";
     c.name = "Intel(R) Wi-Fi 6 AX200 160MHz";
@@ -97,7 +103,7 @@ inline CardInfo select(uint16_t device, uint32_t hw_rev, uint32_t rf_id) {
       c.why = "unknown radio type " + std::to_string(rf) + " on a Qu MAC"; return c;
     }
   } else if (mac == 0x37 || mac == 0x43) { /* So, SoF */
-    if (!c.ax210) { c.why = "an So MAC on a 22000-family device ID"; return c; }
+    if (!c.ax210 || c.bz) { c.why = "an So MAC on a non-AX210 device ID"; return c; }
     if (gf && rf_cdb(rf_id)) {
       c.firmware = "iwlwifi-so-a0-gf4-a0-68.ucode"; c.pnvm = "iwlwifi-so-a0-gf4-a0.pnvm";
       c.name = "Intel(R) Wi-Fi 6E AX411 160MHz";
@@ -116,6 +122,13 @@ inline CardInfo select(uint16_t device, uint32_t hw_rev, uint32_t rf_id) {
   } else if (mac == 0x42 && device == 0x2725) { /* Ty: the discrete AX210 */
     c.firmware = "iwlwifi-ty-a0-gf-a0-68.ucode"; c.pnvm = "iwlwifi-ty-a0-gf-a0.pnvm";
     c.name = "Intel(R) Wi-Fi 6E AX210 160MHz";
+  } else if (mac == 0x47 && device == 0x272B) { /* Gl: the discrete BE200 (Bz family, experimental) */
+    if (fm) {
+      c.firmware = "iwlwifi-gl-c0-fm-c0-100.ucode";
+      c.name = "Intel(R) Wi-Fi 7 BE200 320MHz";
+    } else {
+      c.why = "unknown radio type " + std::to_string(rf) + " on a Gl MAC"; return c;
+    }
   } else {
     c.why = "MAC type " + std::to_string(mac) + " on device " + std::to_string(device) +
             " has no firmware upstream";

@@ -77,6 +77,10 @@ int IwxDevice::sta_mac_cmd(uint32_t action, bool assoc) {
 }
 
 bool IwxDevice::sta_join(const StaParams &p) {
+  if (use_mld()) {
+    _log("station: MLD station mode is not implemented (BE200 is monitor/inject only)");
+    return false;
+  }
   if (!_queue_enabled) return false; /* the listener comes first */
   sta_leave();
   _sta = p;
