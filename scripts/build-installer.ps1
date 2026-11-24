@@ -1,7 +1,7 @@
 # Builds every part of nekodrop, stages it in build\stage, and makes
 # build\nekodrop-<version>-setup.exe with Inno Setup 6 (or a zip without it).
 #   radio\    nekodrop-radio.exe (Intel) + Intel firmware, nekodrop-radio-rtl.exe (RTL8852CE),
-#             nekodrop-radio-mt.exe (MT7902) + MediaTek firmware
+#             nekodrop-radio-mt.exe (MT7902) + nekodrop-radio-mtk.exe (MT7922/MT7921) + MediaTek firmware
 #   awdl\     awdld.exe (winawdl's AWDL daemon, OWL) + wintun.dll
 #   airdrop\  winawdl's AirDrop engine (Python, MIT)
 #   python\   the Python embeddable distribution
@@ -36,6 +36,13 @@ Copy-Item $rtlRadio "$stage\radio\nekodrop-radio-rtl.exe"
 $mtBuild = "$repo\build\mtradio"
 Copy-Item "$mtBuild\nekodrop-radio-mt.exe" "$stage\radio\"
 Copy-Item "$mtBuild\firmware\WIFI_RAM_CODE_MT7902_1.bin", "$mtBuild\firmware\WIFI_MT7902_patch_mcu_1_1_hdr.bin" "$stage\radio\firmware\"
+
+'radio (MediaTek MT7922/MT7921)'
+& "$PSScriptRoot\build-radio-mtk.ps1" | Out-Null
+$mtkBuild = "$repo\build\mtkradio"
+Copy-Item "$mtkBuild\nekodrop-radio-mtk.exe" "$stage\radio\"
+Copy-Item "$mtkBuild\firmware\WIFI_MT7922_patch_mcu_1_1_hdr.bin", "$mtkBuild\firmware\WIFI_RAM_CODE_MT7922_1.bin",
+          "$mtkBuild\firmware\WIFI_MT7961_patch_mcu_1_2_hdr.bin", "$mtkBuild\firmware\WIFI_RAM_CODE_MT7961_1.bin" "$stage\radio\firmware\"
 
 'awdl'
 & "$PSScriptRoot\build-awdl.ps1" -MinGW "$repo\third_party\winlibs\mingw64\bin" | Out-Null

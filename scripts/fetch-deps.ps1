@@ -2,7 +2,7 @@
 #   winawdl         radio pipe, RTL8852CE radio, awdld (OWL), Wintun, AirDrop engine (MIT/GPL-2.0/GPL-3.0)
 #   devourer        winawdl's Realtek RTL8852CE user-mode radio library (GPL-2.0)
 #   ForbiddenItlwm  iwlwifi firmware and its licence (GPL-2.0 / Intel redistribution)
-#   linux-firmware  the MediaTek MT7902 firmware and its licence (MediaTek redistribution)
+#   linux-firmware  the MediaTek MT7902/MT7921/MT7922 firmware and its licence (MediaTek redistribution)
 #   WirDrop         its Apple ID sign-in (appleid.exe, appleid-anisette.exe) for Contacts Only (MIT)
 #   winlibs MinGW   GCC for awdld
 #   WDK (NuGet)     UMDF headers and tools, only when no WDK is installed
@@ -43,6 +43,19 @@ foreach ($f in @(@('mediatek/WIFI_RAM_CODE_MT7902_1.bin', 'B5958AC72C71FB8405E08
            (Join-Path $mtFw (Split-Path $f[0] -Leaf)) $f[1]
 }
 "linux-firmware (MT7902) @ $($lfw.Substring(0, 7))"
+
+# MT7922/MT7921 firmware from the same pinned linux-firmware commit.
+$mtkFw = Join-Path $tp 'linux-firmware-mt7922'
+New-Item -ItemType Directory -Force $mtkFw | Out-Null
+foreach ($f in @(@('mediatek/WIFI_MT7922_patch_mcu_1_1_hdr.bin', '5356256C3A361CE6A06165F67CB01B55AECAAC0E2F8D2D9CBDE6312C4CF1A91C'),
+                 @('mediatek/WIFI_RAM_CODE_MT7922_1.bin', 'AE4DAB06CC1849682E254FE97183ED093C51382BACA9B3F8A00FD6809AB71884'),
+                 @('mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin', 'A276C06C2B772ADB50B86639D33C82824FF4C21D617FEB78CAEA74C040B873F6'),
+                 @('mediatek/WIFI_RAM_CODE_MT7961_1.bin', 'B94217A951518A9C14095765F367BC5DD7698F2DC033941D6F18FC2EBD6A2AB9'),
+                 @('LICENSES/LICENCE.mediatek', 'A90D3F66704D85889945FEC5525EA77622549DA83ACED1AAC99828383F8F1805'))) {
+  Get-File "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/$lfw/$($f[0])" `
+           (Join-Path $mtkFw (Split-Path $f[0] -Leaf)) $f[1]
+}
+"linux-firmware (MT7922/MT7921) @ $($lfw.Substring(0, 7))"
 
 # Wintun for awdld: winawdl's script checks its SHA-256 and WireGuard's signature.
 if (-not (Test-Path "$tp\winawdl\deps\wintun\wintun.dll")) {
