@@ -218,8 +218,53 @@ pub fn client_info() -> &'static str {
         sys.exit('gsa.rs: code_headers CLIENT_INFO moved; update patch-appleid.py')
     text = text.replace(old, new, 1)
 
+    old = '''async fn validate_code(session: &Session, anisette: &mut Anisette, code: &str) -> Result<(), String> {
+    let headers = code_headers(session, anisette)?;
+    let res = request(reqwest::Method::GET, &format!("{SERVICE}/validate"), &headers)
+        .header("Content-Type", "text/x-xml-plist")
+        .header("Accept", "text/x-xml-plist")
+        .header("security-code", code.trim())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = res.status();
+    let bytes = res.bytes().await.map_err(|e| e.to_string())?;
+    match plist::from_bytes::<Value>(&bytes) {
+        Ok(Value::Dictionary(reply)) => check(&reply).map_err(|e| format!("the verification code was refused: {e}")),
+        _ => Err(format!("the verification code was refused (HTTP {status})")),
+    }
+}'''
+    new = '''async fn validate_code(session: &Session, anisette: &mut Anisette, code: &str) -> Result<(), String> {
+    // nekodrop: retry transient 502/503/504 from /validate (#42).
+    for (attempt, wait) in [5u64, 10, 15, 0].into_iter().enumerate() {
+        let headers = code_headers(session, anisette)?;
+        let res = request(reqwest::Method::GET, &format!("{SERVICE}/validate"), &headers)
+            .header("Content-Type", "text/x-xml-plist")
+            .header("Accept", "text/x-xml-plist")
+            .header("security-code", code.trim())
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = res.status();
+        let bytes = res.bytes().await.map_err(|e| e.to_string())?;
+        if matches!(status.as_u16(), 502 | 503 | 504) && wait > 0 {
+            say!("Apple's verification server is busy (HTTP {status}); retrying in {wait} s ({}/3)", attempt + 1);
+            tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+            continue;
+        }
+        return match plist::from_bytes::<Value>(&bytes) {
+            Ok(Value::Dictionary(reply)) => check(&reply).map_err(|e| format!("the verification code was refused: {e}")),
+            _ => Err(format!("the verification code was refused (HTTP {status})")),
+        };
+    }
+    unreachable!()
+}'''
+    if text.count(old) != 1:
+        sys.exit('gsa.rs: validate_code moved; update patch-appleid.py')
+    text = text.replace(old, new, 1)
+
     path.write_text(text, encoding='utf-8')
-    print('appleid: gsa.rs runtime-switchable client_info()')
+    print('appleid: gsa.rs runtime-switchable client_info() and 503 retry in validate_code')
 
 path = pathlib.Path(sys.argv[1]) / 'crates' / 'appleid' / 'src' / 'anisette.rs'
 text = path.read_text(encoding='utf-8')

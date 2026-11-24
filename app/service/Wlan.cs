@@ -96,7 +96,8 @@ public static class Wlan
 
     static readonly string[] NotWired = ["TAP-Windows", "Wintun", "WireGuard", "Remote NDIS", "Apple Mobile Device", "Bluetooth"];
 
-    public sealed record SavedProfile(string Ssid, string? Passphrase, string? PskHex, bool Open);
+    public sealed record SavedProfile(string Ssid, string? Passphrase, string? PskHex, bool Open,
+                                      bool AutoConnect = true, bool Hidden = false);
 
     /// <summary>
     /// Every saved Wi-Fi profile Windows has that nekodrop's station can use
@@ -151,15 +152,17 @@ public static class Wlan
             var ssid = doc.Descendants(ns + "SSID").FirstOrDefault()?.Element(ns + "name")?.Value;
             var auth = doc.Descendants(ns + "authentication").FirstOrDefault()?.Value ?? "";
             if (string.IsNullOrEmpty(ssid)) return null;
+            var autoConnect = doc.Descendants(ns + "connectionMode").FirstOrDefault()?.Value != "manual";
+            var hidden = doc.Descendants(ns + "nonBroadcast").FirstOrDefault()?.Value == "true";
             if ((auth == "open" && doc.Descendants(ns + "encryption").FirstOrDefault()?.Value == "none") || auth == "OWE")
-                return new SavedProfile(ssid, null, null, true);
+                return new SavedProfile(ssid, null, null, true, autoConnect, hidden);
             if (auth is not ("WPA2PSK" or "WPAPSK" or "WPA3SAE")) return null; // enterprise: not yet
             var shared = doc.Descendants(ns + "sharedKey").FirstOrDefault();
             var key = shared?.Element(ns + "keyMaterial")?.Value;
             if (key is null || shared?.Element(ns + "protected")?.Value == "true") return null;
             return shared?.Element(ns + "keyType")?.Value == "networkKey" && key.Length == 64
-                ? new SavedProfile(ssid, null, key, false)
-                : new SavedProfile(ssid, key, null, false);
+                ? new SavedProfile(ssid, null, key, false, autoConnect, hidden)
+                : new SavedProfile(ssid, key, null, false, autoConnect, hidden);
         }
         catch (Exception) { return null; }
     }

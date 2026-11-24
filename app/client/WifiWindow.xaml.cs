@@ -155,7 +155,12 @@ public partial class WifiWindow : Window
         var known = (o["known"] as JsonArray)?.OfType<JsonObject>().ToList() ?? [];
         SavedTitle.Text = L.F("wifi.savedCount", known.Count);
         for (var i = 0; i < known.Count; i++)
-            SavedList.Children.Add(SavedRow((string?)known[i]["ssid"] ?? "", (bool?)known[i]["auto"] ?? true, i > 0));
+        {
+            var k = known[i];
+            var kSsid = (string?)k["ssid"] ?? "";
+            SavedList.Children.Add(SavedRow(kSsid, (bool?)k["auto"] ?? true, (bool?)k["hidden"] ?? false,
+                                            kSsid == ssid && connected, i > 0));
+        }
     }
 
     /// <summary>A rule above a row of a card list, after the first.</summary>
@@ -256,24 +261,44 @@ public partial class WifiWindow : Window
         return box;
     }
 
-    UIElement SavedRow(string ssid, bool auto, bool ruled)
+    UIElement SavedRow(string ssid, bool auto, bool hidden, bool isConnected, bool ruled)
     {
         var box = RowBox(ruled, new Thickness(12, 10, 12, 10));
+        if (isConnected) box.SetResourceReference(Border.BackgroundProperty, "AccentSubtle");
         var row = new DockPanel();
-        var forget = new Button { Content = L.T("wifi.forget"), Style = (Style)FindResource("LinkButton"), Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        var forget = new Button { Content = L.T("wifi.forget"), Style = (Style)FindResource("LinkButton"), Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         forget.SetResourceReference(ForegroundProperty, "Error");
         forget.Click += (_, _) => A.Service.Send(new JsonObject { ["do"] = "wifi-forget", ["ssid"] = ssid });
         DockPanel.SetDock(forget, Dock.Right);
         row.Children.Add(forget);
+
+        FrameworkElement connectSlot;
+        if (isConnected)
+        {
+            var done = new TextBlock { Text = L.T("wifi.connected"), FontSize = 11, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
+            done.SetResourceReference(TextBlock.ForegroundProperty, "Accent");
+            connectSlot = done;
+        }
+        else
+        {
+            var connect = new Button { Content = L.T("wifi.connect"), Style = (Style)FindResource("Small"), Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            connect.Click += (_, _) => Connect(ssid, null, null, hidden: true);
+            connectSlot = connect;
+        }
+        DockPanel.SetDock(connectSlot, Dock.Right);
+        row.Children.Add(connectSlot);
+
         var check = new CheckBox { Style = (Style)FindResource("WinToggle"), IsChecked = auto, ToolTip = L.T("wifi.autoConnect") };
         check.Click += (_, _) => A.Service.Send(new JsonObject { ["do"] = "wifi-auto", ["ssid"] = ssid, ["on"] = check.IsChecked == true });
         DockPanel.SetDock(check, Dock.Right);
         row.Children.Add(check);
-        var autoText = new TextBlock { Text = L.T("wifi.autoConnect"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
+        var autoText = new TextBlock { Text = L.T("wifi.auto"), FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0), ToolTip = L.T("wifi.autoConnect") };
         autoText.SetResourceReference(TextBlock.ForegroundProperty, "Text2");
         DockPanel.SetDock(autoText, Dock.Right);
         row.Children.Add(autoText);
-        row.Children.Add(new TextBlock { Text = ssid, FontSize = 12, FontWeight = FontWeights.Medium, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
+        var label = new TextBlock { Text = ssid, FontSize = 12, FontWeight = FontWeights.Medium, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+        if (hidden) label.ToolTip = L.T("wifi.hiddenShort");
+        row.Children.Add(label);
         box.Child = row;
         return box;
     }

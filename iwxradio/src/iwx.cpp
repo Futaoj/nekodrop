@@ -2113,7 +2113,10 @@ bool IwxDevice::start_monitor(uint8_t channel, unsigned width_mhz, const uint8_t
     err = send_cmd(IWX_MCAST_FILTER_CMD, buf, sizeof(buf), false, nullptr);
     if (err) _log("multicast filter failed (" + std::to_string(err) + ")");
   }
-  if (!err) {
+  if (!err && !use_mld()) {
+    /* MLD listener MACs have no BSS power context and gl-c0-fm-c0-100 hangs on
+     * legacy MAC_PM_POWER_TABLE (0xa9); device-wide POWER_TABLE_CMD already
+     * disabled power save during init. */
     iwx_mac_power_cmd pm{};
     pm.id_and_color = htole32(IWX_FW_CMD_ID_AND_COLOR(0, 0));
     pm.keep_alive_seconds = htole16(25);

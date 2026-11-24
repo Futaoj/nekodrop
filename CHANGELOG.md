@@ -6,6 +6,26 @@
 
 ---
 
+## v2.1.4 (Preview / 预览版) — 2026-11-25
+
+### 中文
+- 修复 Intel BE200 / Killer BE1750x（`8086:272B`，MLD API 100）启动监听时发送旧版 `MAC_PM_POWER_TABLE`（`0xa9`）导致固件卡死超时（`error 138`）并退出（[#53](https://github.com/zheznanohana/nekodrop/issues/53)）：MLD 监听 MAC 不再发送该命令（设备级 `POWER_TABLE` 已禁用省电），待真机验证后续链路
+- 修复并发模式下已保存的隐藏 Wi-Fi 重启后仍需重输 SSID 的问题（[#50](https://github.com/zheznanohana/nekodrop/issues/50)）：
+  - 导入 Windows 已保存网络时读取 `connectionMode` 与 `nonBroadcast`，保留 Windows「手动连接」偏好并记录隐藏网络标记
+  - Wi-Fi 窗口「已保存的网络」每行新增「连接」按钮，可直接定向扫描并连接已保存的隐藏网络，无需重复输入名称和密码；对开启自动连接的已保存隐藏网络在重启后也会自动发起定向探测连接
+- 修复 Apple ID 二次验证码提交（`/validate`）遇到 Apple 服务端临时返回 HTTP 502/503/504 时直接失败的问题（[#42](https://github.com/zheznanohana/nekodrop/issues/42)）：改为携带新 OTP 自动退避重试最多 3 次
+- 以上改动中 BE200 与 `appleid.exe` 仅在 CI 上编译，待对应硬件/账号环境验证
+
+### English
+- Fix Intel BE200 / Killer BE1750x (`8086:272B`, MLD API 100) hanging on legacy `MAC_PM_POWER_TABLE` (`0xa9`) during monitor bring-up (`error 138`) ([#53](https://github.com/zheznanohana/nekodrop/issues/53)): skip `MAC_PM_POWER_TABLE` on MLD listener MACs (device-wide `POWER_TABLE` already disables power save); needs hardware confirmation
+- Fix saved hidden Wi-Fi requiring re-entry of the SSID after reboot in Concurrent mode ([#50](https://github.com/zheznanohana/nekodrop/issues/50)):
+  - Preserve Windows' manual-connect (`connectionMode = manual`) and hidden (`nonBroadcast`) flags when importing saved profiles
+  - Add a **Connect** button to each row in Saved networks to run a directed scan and join with saved credentials, and probe auto-connect hidden profiles after reboot
+- Retry transient HTTP 502/503/504 errors (up to 3 times with fresh Anisette OTP headers) when submitting the Apple ID 2FA verification code to `/validate` ([#42](https://github.com/zheznanohana/nekodrop/issues/42))
+- BE200 and `appleid.exe` changes are built on CI and await reporter verification
+
+---
+
 ## v2.1.3 (Stable / 稳定版) — 2026-11-24
 
 ### 中文

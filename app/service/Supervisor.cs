@@ -37,6 +37,7 @@ public sealed class Supervisor : IDisposable
     string _staSsid = "", _wifiError = "";
     (string Ssid, string? Password, bool? Auto)? _pendingConnect;
     int _pendingScans; // scans that missed the pending network so far
+    readonly HashSet<string> _hiddenProbed = [];
     static readonly TimeSpan StaleScan = TimeSpan.FromSeconds(20);
     string _detail = "";
     bool _wanted;
@@ -103,7 +104,7 @@ public sealed class Supervisor : IDisposable
                     return (JsonNode)c;
                 }).ToArray()),
                 ["known"] = new JsonArray(_known.All().Select(k =>
-                    (JsonNode)new JsonObject { ["ssid"] = k.Ssid, ["auto"] = k.AutoConnect }).ToArray()),
+                    (JsonNode)new JsonObject { ["ssid"] = k.Ssid, ["auto"] = k.AutoConnect, ["hidden"] = k.Hidden }).ToArray()),
             };
         }
     }
@@ -336,6 +337,7 @@ public sealed class Supervisor : IDisposable
             _scanBusy = false;
             _wantBootScan = false;
             _channelOpen = false;
+            _hiddenProbed.Clear();
             _launchGen++;
             _scanPending = [];
         }
@@ -960,6 +962,7 @@ public sealed class Supervisor : IDisposable
         // An iPhone hotspot comes back with a new BSSID: joining the address
         // from an old scan sent every authentication into the void until a later
         // scan happened to catch the new one (#27). Look by name again first.
+        var isHidden = hidden || _known.Find(ssid)?.Hidden == true;
         if (target is not null && stale && !_scanBusy && State == RadioState.On)
         {
             lock (_lock) _pendingConnect = (ssid, password, autoConnect);
@@ -968,7 +971,13 @@ public sealed class Supervisor : IDisposable
         }
         if (target is null)
         {
-            if (!hidden && _scanBusy) return "still scanning; try again in a moment";
+            if (_scanBusy)
+            {
+                if (!isHidden) return "still scanning; try again in a moment";
+                // Queue directed scan after the active wildcard scan finishes (#50).
+                lock (_lock) _pendingConnect = (ssid, password, autoConnect);
+                return "";
+            }
             // Not in the list (hidden, or out of the last scan): look for it by name first.
             lock (_lock) _pendingConnect = (ssid, password, autoConnect);
             WifiScan(ssid);
@@ -1002,7 +1011,7 @@ public sealed class Supervisor : IDisposable
             // SAE works from the password itself; a stored 64-digit key cannot do WPA3.
             if (security == "wpa3-sae" && pass is null) return "WPA3 needs the Wi-Fi password itself, not a 64-digit key";
         }
-        _known.Remember(ssid, pass, psk, open, autoConnect);
+        _known.Remember(ssid, pass, psk, open, autoConnect, hidden: hidden ? true : null);
         var net = new Wlan.Network(ssid, (string?)target["bssid"] ?? "", (int?)target["channel"] ?? 0, security, pass, psk, open);
         lock (_lock)
         {
@@ -1042,6 +1051,7 @@ public sealed class Supervisor : IDisposable
     public void WifiAuto(string ssid, bool on)
     {
         _known.SetAutoConnect(ssid, on);
+        if (on) lock (_lock) _hiddenProbed.Remove(ssid);
         Publish();
     }
 
@@ -1082,7 +1092,19 @@ public sealed class Supervisor : IDisposable
             best = _scan.Where(n => Joinable.Contains((string?)n["security"] ?? "") &&
                                     _known.Find((string?)n["ssid"] ?? "") is { HasKey: true, AutoConnect: true })
                         .OrderByDescending(n => (int?)n["dbm"] ?? -127).FirstOrDefault();
-        if (best is null) return;
+        if (best is null)
+        {
+            string? nextHidden = null;
+            lock (_lock)
+            {
+                nextHidden = _known.All()
+                    .FirstOrDefault(k => k is { HasKey: true, AutoConnect: true, Hidden: true } && !_hiddenProbed.Contains(k.Ssid))
+                    ?.Ssid;
+                if (nextHidden is not null) _hiddenProbed.Add(nextHidden);
+            }
+            if (nextHidden is not null) WifiScan(nextHidden);
+            return;
+        }
         var ssid = (string?)best["ssid"] ?? "";
         Say($"Wi-Fi: auto-connecting to \"{ssid}\"");
         WifiConnect(ssid, null, null, false);
