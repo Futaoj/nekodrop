@@ -82,6 +82,9 @@ public static class CardCatalog
     const string ProxyProvider = "winairdrop project";
     // Killer (Rivet Networks) cards are Intel chips with Intel's driver repackaged.
     static readonly string[] IntelProviders = ["Intel", "Killer", "Rivet Networks"];
+    // Intel BE200 (Bz/Gl, Wi-Fi 7): experimental monitor/inject only (no station,
+    // no A-MPDU, no kernel driver, never taken automatically).
+    static readonly AdapterCapabilities Be200Caps = new(false, false, false, false, 0x2000);
 
     /* The card completes no frame that waits for an acknowledgement on 2.4 GHz
      * (mtradio's --test-kinds), and a station's every frame does: 5 GHz only. */
@@ -106,6 +109,10 @@ public static class CardCatalog
         Intel("7AF0", "AX210 / AX211 / AX411"), Intel("51F0", "AX210 / AX211 / AX411"),
         Intel("51F1", "AX210 / AX211 / AX411"), Intel("54F0", "AX210 / AX211 / AX411"),
         Intel("7F70", "AX210 / AX211 / AX411"),
+        // Intel BE200 (Bz/Gl, Wi-Fi 7): listed with Active: false so it is never
+        // taken automatically; pick "Intel BE200 (experimental)" in Settings.
+        new AdapterProfile("8086", "272B", "Intel", "BE200 (experimental)", RadioBackendKind.Iwx, Be200Caps,
+            ProxyInf, ProxyService, ProxyProvider, IntelProviders, Active: false, RadioFamily: "be200"),
         // Built-in on-demand backend (winawdl's devourer, nekodrop-radio-rtl.exe):
         // monitor and inject only (no station, so Concurrent runs OnDemand), and
         // its registers sit in a 1 MiB BAR (>= 64 KiB).
@@ -198,6 +205,7 @@ public static class CardCatalog
         new("ax200", "Intel AX200", "8086", RadioBackendKind.Iwx, AdapterCapabilities.IntelDefault, IntelProviders),
         new("ax210", "Intel AX210 (discrete)", "8086", RadioBackendKind.Iwx, AdapterCapabilities.IntelDefault, IntelProviders),
         new("so", "Intel AX211 / AX411 (So, CNVi)", "8086", RadioBackendKind.Iwx, AdapterCapabilities.IntelDefault, IntelProviders),
+        new("be200", "Intel BE200 (experimental)", "8086", RadioBackendKind.Iwx, Be200Caps, IntelProviders),
         new("rtl8852ce", "Realtek RTL8852CE", "10EC", RadioBackendKind.Devourer, RealtekCaps, ["Realtek"]),
         new("mt7902", "MediaTek MT7902", "14C3", RadioBackendKind.Mt76, MediaTekCaps, MediaTekProviders),
     ];
@@ -238,6 +246,7 @@ public static class CardCatalog
         string[] intel = ["43F0", "A0F0", "02F0", "06F0", "34F0", "3DF0", "4DF0",
                           "2723", "2725", "7A70", "7AF0", "51F0", "51F1", "54F0", "7F70"];
         Check(ActiveProfiles.Count == intel.Length + 2, $"{ActiveProfiles.Count} active profiles, expected {intel.Length + 2}");
+        Check(AllProfiles.Count == ActiveProfiles.Count + 1, $"{AllProfiles.Count} total profiles, expected {ActiveProfiles.Count + 1}");
         foreach (var dev in intel)
         {
             var id = $"PCI\\VEN_8086&DEV_{dev}&SUBSYS_00748086&REV_00\\3&11583659&0&A3";
@@ -367,9 +376,31 @@ public static class CardCatalog
         var mr = ManualProfile("PCI\\VEN_10EC&DEV_C852", "rtl8852ce");
         Check(mr is { Backend: RadioBackendKind.Devourer, RadioFamily: null }, "manual rtl8852ce profile");
         Check(ManualProfile("PCI\\VEN_10EC&DEV_C852", "qu") is null, "an Intel model accepted for a Realtek card");
+        Check(ManualProfile("PCI\\VEN_10EC&DEV_C852", "be200") is null, "be200 model accepted for a Realtek card");
         Check(ManualProfile("PCI\\VEN_8086&DEV_2723", "nope") is null, "an unknown model accepted");
         Check(ManualProfile("USB\\VID_0BDA&PID_8812", "rtl8852ce") is null, "a USB device accepted");
         Check(ManualModels.Select(x => x.Key).Distinct().Count() == ManualModels.Count, "duplicate manual model keys");
+
+        // Experimental Intel BE200 (8086:272B): inactive (never auto-taken), selectable by hand.
+        const string be200 = "PCI\\VEN_8086&DEV_272B&SUBSYS_00F48086&REV_1A\\4&1";
+        Check(MatchActive(be200) is null, "8086:272B must never be taken automatically");
+        var be = Classify(be200);
+        Check(be is { Active: false, Backend: RadioBackendKind.Iwx, VendorName: "Intel" }, "8086:272B inactive profile");
+        var mbe = ManualProfile(be200, "be200");
+        if (mbe is null) fail.Add("manual be200 on 8086:272B refused");
+        else
+        {
+            Check(mbe.Active && mbe.Backend == RadioBackendKind.Iwx && mbe.RadioFamily == "be200",
+                  $"manual be200 profile {mbe.HardwareId} {mbe.Backend} {mbe.RadioFamily}");
+            Check(!mbe.Capabilities.SupportsConcurrentWifi && !mbe.Capabilities.SupportsFastSend &&
+                  !mbe.Capabilities.SupportsAggregate && !mbe.Capabilities.SupportsKernelDriver &&
+                  mbe.Capabilities.MinBarBytes == 0x2000, "manual be200 capabilities");
+            Check(EffectiveMode(NetMode.Concurrent, mbe.Capabilities) == NetMode.OnDemand, "be200 Concurrent not forced to OnDemand");
+            Check(SameLaunch(BuildRadioLaunch(mbe, 149, false, "JP", null, true, true, true, true),
+                             "nekodrop-radio.exe", "149", "--width", "80", "--country", "JP",
+                             "--bt-coex", "1", "--family", "be200"),
+                  "manual be200 launch args");
+        }
 
         // Ethernet chips from the same vendors and Wi-Fi cards nekodrop does not know.
         foreach (var other in new[] { "PCI\\VEN_8086&DEV_15F3&SUBSYS_00008086\\1", "PCI\\VEN_10EC&DEV_8168&SUBSYS_00000000\\1",
