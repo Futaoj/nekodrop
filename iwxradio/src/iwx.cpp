@@ -1662,6 +1662,19 @@ void IwxDevice::handle_ba_notif(const uint8_t *payload, size_t len) {
   const auto *r = reinterpret_cast<const iwx_compressed_ba_notif *>(payload);
   const unsigned n = le16toh(r->tfd_cnt);
   if (len < offsetof(iwx_compressed_ba_notif, tfd) + n * sizeof(iwx_compressed_ba_tfd)) return;
+  /* #39/#43: AX210 and AX201 logged "0 Block Acks" for every burst. Say
+   * which queue, station and TID a notification names when none is ours,
+   * so a report tells a queue mismatch from notifications never arriving. */
+  bool ours = false;
+  for (unsigned i = 0; i < n; i++) ours = ours || le16toh(r->tfd[i].q_num) == _aggq.qid;
+  if (!ours && _ba_foreign_logged < 8) {
+    _ba_foreign_logged++;
+    std::string queues;
+    for (unsigned i = 0; i < n && i < 4; i++) queues += (i ? "," : "") + std::to_string(le16toh(r->tfd[i].q_num));
+    _log("Block Ack notice for queue(s) [" + queues + "] (ours " + std::to_string(_aggq.qid) + "), station " +
+         std::to_string(r->sta_id) + ", flags " + hex(le32toh(r->flags)) + ", " + std::to_string(n) +
+         " TFD entries, txed " + std::to_string(le16toh(r->txed)) + ", done " + std::to_string(le16toh(r->done)));
+  }
   for (unsigned i = 0; i < n; i++) {
     const iwx_compressed_ba_tfd &t = r->tfd[i];
     if (le16toh(t.q_num) != _aggq.qid) continue;
@@ -2448,6 +2461,15 @@ void IwxDevice::handle_packet(const uint8_t *raw, size_t len) {
     break;
   }
   default:
+    /* #39/#43: a notification nothing here handles, once per ID, so a
+     * Block Ack notification arriving under another group shows up. */
+    if ((qid & 0x80) && _unhandled_notifs.size() < 32) {
+      const uint32_t wide = IWX_WIDE_ID(pkt->hdr.group_id, pkt->hdr.cmd);
+      if (std::find(_unhandled_notifs.begin(), _unhandled_notifs.end(), wide) == _unhandled_notifs.end()) {
+        _unhandled_notifs.push_back(wide);
+        _log("notification " + hex(wide) + " (" + std::to_string(plen) + " bytes) not handled");
+      }
+    }
     break;
   }
 
