@@ -100,6 +100,8 @@ Quick summary of currently active cards:
 | Intel SnJ `2726`, QnJ `2720`, Meteor Lake `7E40`/`2729` | `8086:` | not shipped upstream | ❌ |
 | Intel BE200 / BE201 (Wi-Fi 7) | `8086:` | no upstream driver | ❌ |
 | **MediaTek MT7902** | `14C3:7902` | linux-firmware `WIFI_RAM_CODE_MT7902_1` (`mt76` port, Concurrent (5 GHz Wi-Fi) & On-Demand) | ⚠️ built in; AirDrop both ways on one card (~15 MB/s receive, ~5 MB/s send); Concurrent tested on one card (Wi-Fi beside AirDrop ~3.5 MB/s down, ~1.3 MB/s up) |
+| **MediaTek MT7922 / AMD RZ616** | `14C3:0616` `14C3:7922` | linux-firmware `WIFI_RAM_CODE_MT7922_1` (`mtkradio`, On-Demand only) | 🧪 experimental, built in; two-way AirDrop tested on an MT7922 / AMD RZ616 ([#40](../../pull/40), [docs/MT7922.md](docs/MT7922.md)) |
+| **MediaTek MT7921 / AMD RZ608** | `14C3:7961` `14C3:0608` | linux-firmware `WIFI_RAM_CODE_MT7961_1` (`mtkradio`, On-Demand only) | ⚠️ experimental, built in; untested on hardware |
 | Other Realtek, MediaTek, Qualcomm, Broadcom | | | ❌ |
 
 To check your card: *Device Manager → Network adapters*. On a PC without a supported Wi-Fi card, the installer refuses and lists each detected wireless card, its PCI/USB ID, why nekodrop does not run on it, and how to run `installer/report.ps1`. On an untested card (including the built-in Realtek RTL8852CE backend), nekodrop may fail to start the radio; if it does, the card stays usable: run **restore** (below) and please report the log in an [issue](../../issues).
@@ -336,6 +338,7 @@ Thanks to everyone who sent code and careful test reports:
 - [@GGBond-cer](https://github.com/GGBond-cer): many detailed AX200 test reports that pinned down the A-MPDU and speed problems ([#4](../../issues/4)), the root cause of the uninstaller leftovers ([#22](../../issues/22)), the throughput testing guide ([#28](../../pull/28)), and the uninstaller fix that keeps Setup from being killed by its own cleanup step ([#38](../../pull/38)), and deleting the downloaded installer after an update ([#44](../../pull/44)).
 - [@DaiJiequn](https://github.com/DaiJiequn): MediaTek MT7902 support, a user-mode port of Linux mt76 that runs AirDrop both ways on demand ([#34](../../pull/34)).
 - [@sh17632](https://github.com/sh17632): the AirDrop-style radar and Share sheet design that became the 2.0 interface ([#36](../../issues/36)), and AX211 test reports ([#35](../../issues/35)).
+- [@YiHoooong](https://github.com/YiHoooong): MediaTek MT7922/MT7921 user-mode radio (mtkradio), tested on an MT7922 / AMD RZ616 ([#40](../../pull/40)).
 
 ## License
 

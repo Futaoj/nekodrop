@@ -98,6 +98,8 @@ nekodrop 通过模块化底层驱动后端（`CardCatalog` + `radio_backend.h`�
 | So 平台上的 Intel Wi-Fi 6 AX203 / 9560 | 与 AX211 相同 | `so-a0-hr/jf-b0-68`（`iwx`，同时连 Wi-Fi / 按需） | ⚠️ 未测试 |
 | **Realtek RTL8852CE** | `10EC:C852` | 内嵌固件（`devourer`，仅按需接管） | ⚠️ 已内置，还没有用户反馈 |
 | **MediaTek MT7902** | `14C3:7902` | linux-firmware `WIFI_RAM_CODE_MT7902_1`（移植自 `mt76`，同时连 Wi-Fi（仅 5 GHz）与按需接管） | ⚠️ 已内置；一张卡上双向 AirDrop 实测可用（接收约 15 MB/s，发送约 5 MB/s）；同时连 Wi-Fi 已在一张卡上实测（AirDrop 待命时下载约 3.5 MB/s、上传约 1.3 MB/s） |
+| **MediaTek MT7922 / AMD RZ616** | `14C3:0616` `14C3:7922` | linux-firmware `WIFI_RAM_CODE_MT7922_1`（`mtkradio`，仅按需接管） | 🧪 实验性，已内置；已在 MT7922 / AMD RZ616 上实测双向 AirDrop 可用（[#40](../../pull/40)，[docs/MT7922.md](docs/MT7922.md)） |
+| **MediaTek MT7921 / AMD RZ608** | `14C3:7961` `14C3:0608` | linux-firmware `WIFI_RAM_CODE_MT7961_1`（`mtkradio`，仅按需接管） | ⚠️ 实验性，已内置；尚未在真机上测试 |
 | Intel SnJ `2726`、QnJ `2720`、Meteor Lake `7E40`/`2729` | `8086:` | 上游没有固件 | ❌ |
 | Intel BE200 / BE201（Wi-Fi 7） | `8086:` | 上游没有驱动 | ❌ |
 | 其他 Realtek、MediaTek、高通、博通 | | | ❌ |
@@ -336,6 +338,7 @@ nekodrop 是在其他开源项目的基础上做的。这里写清楚哪些是**
 - [@GGBond-cer](https://github.com/GGBond-cer)：大量详细的 AX200 实测报告，帮我们定位了 A-MPDU 和速度问题（[#4](../../issues/4)），找到了卸载残留的根因（[#22](../../issues/22)），写了传输速度测试指南（[#28](../../pull/28)），并修好了卸载程序被自己的清理步骤结束、留下快捷方式和安装目录的问题（[#38](../../pull/38)），以及升级后自动删除下载的安装包（[#44](../../pull/44)）。
 - [@DaiJiequn](https://github.com/DaiJiequn)：MediaTek MT7902 支持，从 Linux mt76 移植的用户态驱动，按需模式下双向 AirDrop 可用（[#34](../../pull/34)）。
 - [@sh17632](https://github.com/sh17632)：提出 AirDrop 风格的雷达界面和「共享」菜单方案，成为 2.0 新界面的基础（[#36](../../issues/36)），以及 AX211 实测反馈（[#35](../../issues/35)）。
+- [@YiHoooong](https://github.com/YiHoooong)：MediaTek MT7922/MT7921 用户态无线电驱动（mtkradio），已在 MT7922 / AMD RZ616 上实测可用（[#40](../../pull/40)）。
 
 ## 许可
 
