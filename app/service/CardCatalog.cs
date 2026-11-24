@@ -12,7 +12,8 @@ public enum RadioBackendKind
     /// AWDL peer stations, and a 5 GHz Wi-Fi station on the host (the card moves between the router and AWDL).</summary>
     Mt76,
     /// <summary>nekodrop-radio-mtk: the MediaTek MT7922 / MT7921 user-mode driver (mtkradio/):
-    /// on-demand AWDL monitor and inject, no Wi-Fi station.</summary>
+    /// AWDL monitor/inject and a 5 GHz Wi-Fi station on the host (experimental Concurrent mode,
+    /// time-sharing the card's single channel with AWDL).</summary>
     MtkRadio,
 }
 
@@ -90,7 +91,9 @@ public static class CardCatalog
      * (mtradio's --test-kinds), and a station's every frame does: 5 GHz only. */
     static readonly AdapterCapabilities MediaTekCaps = new(true, false, false, false, 0x10000, StationOn24GHz: false);
     static readonly string[] MediaTekProviders = ["MediaTek"];
-    static readonly AdapterCapabilities MtkRadioCaps = new(false, false, false, false, 0x100000);
+    /* Same Connac2 / mt7921 family as MT7902: 2.4 GHz ACKed TX is unverified on
+     * MT7922/MT7921, so Concurrent Wi-Fi stays 5 GHz only until tested on hardware. */
+    static readonly AdapterCapabilities MtkRadioCaps = new(true, false, false, false, 0x100000, StationOn24GHz: false);
     static readonly string[] MtkRadioProviders = ["MediaTek", "AMD"];
 
     static AdapterProfile Intel(string device, string family) =>
@@ -123,7 +126,8 @@ public static class CardCatalog
         new AdapterProfile("14C3", "7902", "MediaTek", "MT7902", RadioBackendKind.Mt76, MediaTekCaps,
             ProxyInf, ProxyService, ProxyProvider, MediaTekProviders, Active: true),
         // MediaTek MT7922 / MT7921 (nekodrop-radio-mtk.exe, mtkradio/):
-        // monitor and inject only (no station, so Concurrent runs OnDemand); 1 MiB BAR0.
+        // Concurrent with a 5 GHz network (experimental, host-side station shares
+        // the card's one channel with AWDL) & On-Demand; 1 MiB BAR0.
         new AdapterProfile("14C3", "0616", "MediaTek", "MT7922 (RZ616)", RadioBackendKind.MtkRadio, MtkRadioCaps,
             ProxyInf, ProxyService, ProxyProvider, MtkRadioProviders, Active: true),
         new AdapterProfile("14C3", "7922", "MediaTek", "MT7922", RadioBackendKind.MtkRadio, MtkRadioCaps,
@@ -364,7 +368,8 @@ public static class CardCatalog
                   "Mt76 ch 6 default launch args");
         }
 
-        // Built-in MediaTek MT7922 / MT7921: active, MtkRadio backend, 1 MiB BAR, forced to OnDemand.
+        // Built-in MediaTek MT7922 / MT7921: active, MtkRadio backend, 1 MiB BAR, Concurrent
+        // kept (5 GHz only); --country and --sta-config go to the radio, no Intel option does.
         foreach (var (dev, family) in new[] { ("0616", "MT7922 (RZ616)"), ("7922", "MT7922"),
                                               ("7961", "MT7921"), ("0608", "MT7921 (RZ608)") })
         {
@@ -377,12 +382,13 @@ public static class CardCatalog
             Check(mtk.HardwareId == $"PCI\\VEN_14C3&DEV_{dev}", $"14C3:{dev} hardware ID {mtk.HardwareId}");
             Check(mtk.VendorName == "MediaTek" && mtk.FamilyName == family && mtk.Backend == RadioBackendKind.MtkRadio,
                   $"14C3:{dev} vendor {mtk.VendorName} family {mtk.FamilyName} backend {mtk.Backend}");
-            Check(!mtk.Capabilities.SupportsConcurrentWifi && !mtk.Capabilities.SupportsFastSend &&
-                  !mtk.Capabilities.SupportsAggregate && !mtk.Capabilities.SupportsKernelDriver,
+            Check(mtk.Capabilities.SupportsConcurrentWifi && !mtk.Capabilities.SupportsFastSend &&
+                  !mtk.Capabilities.SupportsAggregate && !mtk.Capabilities.SupportsKernelDriver &&
+                  !mtk.Capabilities.StationOn24GHz,
                   $"14C3:{dev} capabilities");
             Check(mtk.Capabilities.MinBarBytes == 0x100000, $"14C3:{dev} BAR {mtk.Capabilities.MinBarBytes:x}");
-            Check(EffectiveMode(NetMode.Concurrent, mtk.Capabilities) == NetMode.OnDemand,
-                  $"14C3:{dev} Concurrent not forced to OnDemand");
+            Check(EffectiveMode(NetMode.Concurrent, mtk.Capabilities) == NetMode.Concurrent,
+                  $"14C3:{dev} Concurrent changed");
             Check(EffectiveMode(NetMode.OnDemand, mtk.Capabilities) == NetMode.OnDemand, $"14C3:{dev} OnDemand changed");
             Check(EffectiveMode(NetMode.Off, mtk.Capabilities) == NetMode.Off, $"14C3:{dev} Off changed");
             Check(IsVendorProviderMatch(mtk, "MediaTek, Inc."), $"14C3:{dev} MediaTek provider not matched");
@@ -390,8 +396,9 @@ public static class CardCatalog
             Check(!IsVendorProviderMatch(mtk, "Intel"), $"14C3:{dev} Intel provider matched as MediaTek's");
             Check(!IsVendorProviderMatch(mtk, "winairdrop project"), $"14C3:{dev} proxy provider matched as MediaTek's");
             Check(SameLaunch(BuildRadioLaunch(mtk, 149, true, "JP", @"C:\run\sta.conf", true, true, true, true),
-                             "nekodrop-radio-mtk.exe", "149", "--width", "80", "--country", "JP"),
-                  $"MtkRadio 14C3:{dev} ch 149 launch args");
+                             "nekodrop-radio-mtk.exe", "149", "--width", "80", "--country", "JP",
+                             "--sta-config", @"C:\run\sta.conf"),
+                  $"MtkRadio 14C3:{dev} ch 149 launch args with a station");
             Check(SameLaunch(BuildRadioLaunch(mtk, 6, false, "ZZ", null, false, false),
                              "nekodrop-radio-mtk.exe", "6", "--width", "20"),
                   $"MtkRadio 14C3:{dev} ch 6 launch args (ZZ omitted)");

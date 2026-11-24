@@ -120,8 +120,9 @@ public sealed class Mt76RadioBackend : IRadioBackend
 
 /// <summary>
 /// MediaTek MT7922 / MT7921: nekodrop-radio-mtk.exe (mtkradio/).
-/// Monitor and inject only, no station: CardCatalog runs it on demand.
-/// Takes --country when known; none of the Intel-only or station options.
+/// Takes --country when known and, in Concurrent mode, --sta-config: its
+/// host-side station joins 5 GHz networks and time-shares the card's single
+/// channel with AWDL. None of the Intel-only options.
 /// </summary>
 public sealed class MtkRadioBackend : IRadioBackend
 {
@@ -132,6 +133,7 @@ public sealed class MtkRadioBackend : IRadioBackend
     {
         var args = new List<string> { s.Channel.ToString(), "--width", s.Width.ToString() };
         if (s.Country is { Length: 2 } c && c != "ZZ" && c != "00") args.AddRange(["--country", c]);
+        if (s.StaConf is not null) args.AddRange(["--sta-config", s.StaConf]);
         return args;
     }
 }
