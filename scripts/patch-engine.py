@@ -1,4 +1,4 @@
-# Applies nekodrop's changes to the staged copy of winawdl's AirDrop engine.
+﻿# Applies nekodrop's changes to the staged copy of winawdl's AirDrop engine.
 # Usage: python patch-engine.py <staged airdrop folder>
 #
 # - A stable mDNS instance name (NEKODROP_SERVICE_ID, kept by the client), so
@@ -54,6 +54,19 @@ if new not in text:
         sys.exit('engine.py: the receiver bind line moved; update patch-engine.py')
     text = text.replace(old, new, 1)
     text = text.replace(NL + 'class ', NL + HELPER + 'class ', 1)
+    changed = True
+
+# #45: the --outdir default called valid_dir('~/Downloads') while the parser was
+# built, so with no Downloads folder in the profile (deleted after choosing
+# another receive folder) the engine died at start every few seconds, even
+# though the client always passes --outdir.  A string default goes through
+# `type` only when --outdir is missing, so standalone runs behave as before.
+old = "default=receiver.valid_dir('~/Downloads'))"
+new = "default='~/Downloads')  # nekodrop: checked only when --outdir is missing (#45)"
+if new not in text:
+    if text.count(old) != 1:
+        sys.exit('engine.py: the --outdir default moved; update patch-engine.py')
+    text = text.replace(old, new, 1)
     changed = True
 
 if changed:
@@ -353,11 +366,85 @@ if new_r not in text:
     receiver_path.write_text(text, encoding='utf-8')
     print('receiver: 2 MiB socket buffers + TCP_NODELAY')
 
+
+# Contacts Only: nekodrop_identity.py (copied beside the engine by
+# build-installer.ps1) gives the receiver and the sender an Apple ID identity
+# when the client set NEKODROP_IDENTITY: the Apple-signed certificate on TLS,
+# the validation record in /Discover and /Ask, and a Contacts Only filter on
+# the receiver (NEKODROP_RECEIVE=contacts). Without one nothing changes.
+# The hooks below import it, so the patch brings it along: engine-test ran the
+# patched engine without it and every test module of receiver/sender/engine
+# failed to import (ModuleNotFoundError) from 2.1.0 on.
+_identity = pathlib.Path(__file__).resolve().parent.parent / 'installer' / 'nekodrop_identity.py'
+(pathlib.Path(sys.argv[1]) / 'nekodrop_identity.py').write_bytes(_identity.read_bytes())
+
+
+def _hook(name, pairs, mark):
+    path = pathlib.Path(sys.argv[1]) / name
+    text = path.read_text(encoding='utf-8')
+    if mark in text:
+        return
+    for old, new in pairs:
+        if text.count(old) != 1:
+            sys.exit(f'{name}: {old[:60]!r} moved; update patch-engine.py')
+        text = text.replace(old, new, 1)
+    path.write_text(text, encoding='utf-8')
+    print(f'{name}: Apple ID identity (Contacts Only)')
+
+
+_hook('receiver.py', [
+    (NL + 'import mdns' + NL, NL + 'import mdns' + NL + 'import nekodrop_identity' + NL),
+    (NL.join([
+        "        if self.path == '/Discover':",
+        '            self.answer(self.identity_plist())',
+        '        else:',
+        '            self.handle_ask(body)',
+    ]), NL.join([
+        '        try:',
+        "            sender_record = plistlib.loads(body).get('SenderRecordData') if body else None",
+        '        except Exception:',
+        '            sender_record = None',
+        '        if not nekodrop_identity.allowed(sender_record):',
+        "            self.reject(401, 'not one of the contacts (Contacts Only)')",
+        '            return',
+        "        if self.path == '/Discover':",
+        '            self.answer(self.identity_plist())',
+        '        else:',
+        '            self.handle_ask(body)',
+    ])),
+    ("            'ReceiverModelName': settings.model," + NL,
+     "            'ReceiverModelName': settings.model," + NL + '            **nekodrop_identity.receiver_extra(),' + NL),
+    (NL.join([
+        '    context.load_cert_chain(certificate, key)',
+        '    # Senders present self-signed certificates, so none is asked for.',
+    ]), NL.join([
+        '    if not nekodrop_identity.load_into(context):',
+        '        context.load_cert_chain(certificate, key)',
+        '    # Senders present self-signed certificates, so none is asked for.',
+    ])),
+], 'import nekodrop_identity')
+
+_hook('sender.py', [
+    (NL + 'import mdns' + NL, NL + 'import mdns' + NL + 'import nekodrop_identity' + NL),
+    (NL.join([
+        '    context.verify_mode = ssl.CERT_NONE',
+        '    return context',
+    ]), NL.join([
+        '    context.verify_mode = ssl.CERT_NONE',
+        '    # With an Apple ID identity the Apple-signed certificate goes on: an',
+        '    # iPhone takes that one (a self-signed one it refuses, see above).',
+        '    nekodrop_identity.load_into(context)',
+        '    return context',
+    ])),
+    ("post_plist(connection, '/Discover', {})", "post_plist(connection, '/Discover', nekodrop_identity.sender_body({}))"),
+    ("        'SenderModelName': DEFAULT_MODEL," + NL,
+     "        'SenderModelName': DEFAULT_MODEL," + NL + '        **nekodrop_identity.sender_extra(),' + NL),
+], 'import nekodrop_identity')
+
 # mdns.py: answer the A record macOS keeps asking for.  macOS 15.8.1 asks
 # `A <host>.local` for the receiver's host name and ignores the NSEC record
-# that says there is no A record, so the name never resolves and the PC never
-# appears in its AirDrop list.  Publish awdl0's IPv4 link-local address next
-# to the AAAA record.
+# that says there is no A record, so the name never resolves.  Publish
+# awdl0's IPv4 link-local address next to the AAAA record.
 mdns = pathlib.Path(sys.argv[1]) / 'mdns.py'
 text = mdns.read_text(encoding='utf-8')
 changed = False
@@ -405,23 +492,21 @@ if changed:
     mdns.write_text(text, encoding='utf-8')
 print('mdns patched')
 
-# engine.py: give the Service above the address the A record needs.  awdl0
+# engine.py: give the Service the address the A record above needs.  awdl0
 # carries an IPv4 link-local address next to its IPv6 one; reading it here
 # keeps mdns.py free of Windows calls.
 V4 = NL.join([
     'def _address4():',
-    '    """awak0\'s IPv4 link-local address, for the A record macOS asks for."""',
+    '    """awdl0\'s IPv4 link-local address, for the A record macOS asks for."""',
+    '    import re',
     '    import subprocess',
     '    try:',
     '        out = subprocess.run(["netsh", "interface", "ipv4", "show", "addresses", "awdl0"],',
     '                             capture_output=True, text=True, timeout=5).stdout',
-    '        for line in out.splitlines():',
-    '            low = line.lower()',
-    '            if "ip address" in low or "ip 鍦板潃" in line:',
-    '                return line.split(":")[-1].strip()',
     '    except Exception:',
     '        return None',
-    '    return None',
+    '    found = re.search(r"(\\d{1,3}(?:\\.\\d{1,3}){3})", out)',
+    '    return found.group(1) if found else None',
     '',
     '',
 ])
@@ -435,4 +520,3 @@ if new not in text:
     text = text.replace(NL + 'class ', NL + V4 + 'class ', 1)
     engine.write_text(text, encoding='utf-8')
     print('engine patched (A record address)')
-
