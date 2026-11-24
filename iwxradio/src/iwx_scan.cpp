@@ -129,7 +129,7 @@ bool IwxDevice::umac_scan(const uint8_t *channels, size_t count, const uint8_t *
   for (size_t i = 0; i < count && used < IWX_SCAN_MAX_NUM_CHANS_V3; i++) {
     const uint8_t ch = channels[i];
     auto &c = cp.channel_config[used];
-    uint32_t flags = active ? 1u : 0u; /* probe for SSID 0 */
+    uint32_t chan_flags = active ? 1u : 0u; /* probe for SSID 0 */
     if (use_mld() && ver >= 17) {
       /* SCAN_REQ_UMAC v17 (same struct size as v14): band moves to flags[31:30]
        * and v2.band becomes v5.psd_20 (0 for 2.4/5 GHz). */
@@ -138,7 +138,7 @@ bool IwxDevice::umac_scan(const uint8_t *channels, size_t count, const uint8_t *
       c.v2.band = 0;
       c.v2.iter_count = 1;
       c.v2.iter_interval = 0;
-      flags |= band << IWX_CHAN_CFG_FLAGS_BAND_POS;
+      chan_flags |= band << IWX_CHAN_CFG_FLAGS_BAND_POS;
     } else if (extChan) {
       c.v2.channel_num = ch;
       c.v2.band = ch <= 14 ? IWX_PHY_BAND_24 : IWX_PHY_BAND_5;
@@ -149,7 +149,7 @@ bool IwxDevice::umac_scan(const uint8_t *channels, size_t count, const uint8_t *
       c.v1.iter_count = 1;
       c.v1.iter_interval = 0;
     }
-    c.flags = htole32(flags);
+    c.flags = htole32(chan_flags);
     used++;
   }
   cp.count = used;
