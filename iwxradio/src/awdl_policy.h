@@ -313,9 +313,30 @@ struct BaFilter {
  * another channel for a few slots), with a growing gap. */
 constexpr uint64_t kResendWindowUS = 400000;
 constexpr unsigned kResendMaxAttempts = 100;
+constexpr uint64_t kTxStatusTimeoutUS = 1000000;
 constexpr uint64_t resend_backoff_us(unsigned attempts) {
   return attempts <= 1U ? 0U : attempts == 2U ? 2000U : 5000U;
 }
+
+/* A completion can arrive out of order. An already finished entry may still
+ * sit behind an older frame until the queue front advances. */
+struct UnicastRetry {
+  int slot = -1;
+  bool acked = false, abandon = false;
+  uint64_t first_us = 0, sent_us = 0, next_us = 0;
+  unsigned attempts = 0;
+
+  constexpr bool finished() const { return acked || abandon; }
+  constexpr bool ready(uint64_t now) const {
+    return !finished() && slot < 0 && now >= next_us;
+  }
+  constexpr bool expired(uint64_t now) const {
+    return attempts && (now - first_us >= kResendWindowUS || attempts >= kResendMaxAttempts);
+  }
+  constexpr bool status_missing(uint64_t now) const {
+    return slot >= 0 && now - sent_us >= kTxStatusTimeoutUS;
+  }
+};
 
 /* Unicast data rate ladder: legacy 24, HT MCS 4, 5, 7 (20 MHz, 1 stream),
  * then VHT 80 MHz 2 streams MCS 4, 7 and 8 (with LDPC + SGI) while on 80 MHz.

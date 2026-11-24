@@ -442,6 +442,31 @@ int main(int argc, char **argv) {
    * station-less backend meeting the contract without stubs. */
   failures += radio_backend_test::run();
 
+  /* Out-of-order completion: entries behind an older frame must not go back
+   * into the hardware window, regardless of their previous retry deadline. */
+  {
+    awdl::UnicastRetry head, acked, failed;
+    head.slot = 4;
+    head.attempts = 1;
+    head.first_us = head.sent_us = 100;
+    acked.acked = true;
+    failed.abandon = true;
+    CHECK(!head.ready(101) && !acked.ready(101) && !failed.ready(101),
+          "out-of-order completions stay out of the TX window");
+    CHECK(!head.status_missing(100 + awdl::kTxStatusTimeoutUS - 1) &&
+              head.status_missing(100 + awdl::kTxStatusTimeoutUS) &&
+              head.expired(100 + awdl::kTxStatusTimeoutUS),
+          "missing TX completion is recognized after the retry window");
+    head.slot = -1;
+    head.next_us = 2100;
+    CHECK(!head.ready(2099) && head.ready(2100) && !head.expired(2100),
+          "an unconfirmed frame still retries within its backoff and window");
+    CHECK(head.expired(100 + awdl::kResendWindowUS),
+          "expired retries cannot be resubmitted after a long pause");
+    head.attempts = awdl::kResendMaxAttempts;
+    CHECK(head.expired(2100), "unicast also bounds the number of retries");
+  }
+
   /* Experimental A-MPDU send fallback (#4): trip only after two full windows
    * with zero Block Acks and >= 64 single-frame completions. */
   CHECK(!awdl::ba_tx_stalled_as_singles(127, 0, 127), "no-BA fallback waits for 128 frames");

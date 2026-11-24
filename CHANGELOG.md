@@ -17,6 +17,7 @@
 - MT7922 / MT7921 并发模式：扫描每三个信道回到 AWDL，后台扫描遇到传输主动让路，断网时逐步延长重扫间隔；同时保留等待固件应答期间收到的 Wi-Fi 帧（[#54](https://github.com/zheznanohana/nekodrop/issues/54)、[#56](https://github.com/zheznanohana/nekodrop/issues/56)）。两种传输方向和扫描结果仍需真机复测。
 - MT7902 遇到 4 GiB 以下可锁定 DMA 页不足时，不再连续立即重启（[#52](https://github.com/zheznanohana/nekodrop/issues/52)）；这不等同于修复报告中的并发断网。
 - Windows 拒绝启动蓝牙广播时，在雷达和发送窗口提示检查蓝牙或打开对方的 AirDrop 分享面板，而不是只显示「正在寻找」（[#37](https://github.com/zheznanohana/nekodrop/issues/37)、[#46](https://github.com/zheznanohana/nekodrop/issues/46)）。
+- 修正 Intel 单播队列把乱序完成的帧重复提交、或在重试期限过后继续占窗口的问题（[#39](https://github.com/zheznanohana/nekodrop/issues/39)）；AX210 的发现和第二次接收仍需用新版本复测。
 - 修正 IPv6-only AWDL 对 macOS 的 A / AAAA 查询响应及 NSEC 位图（[#55](https://github.com/zheznanohana/nekodrop/pull/55)，感谢 @sh17632）；旧版 iOS/macOS 能否看到 PC 仍需真机验证（[#51](https://github.com/zheznanohana/nekodrop/issues/51)）。
 - BE200 与 Apple ID 登录改动仍待对应硬件和账号复测。
 
@@ -29,6 +30,7 @@
 - MT7922 / MT7921 Concurrent mode: return to AWDL every three scan channels, yield background scans to AirDrop transfers, back off repeated scans while disconnected, and preserve Wi-Fi frames received while waiting for a firmware reply ([#54](https://github.com/zheznanohana/nekodrop/issues/54), [#56](https://github.com/zheznanohana/nekodrop/issues/56)). Both transfer directions and scan results still need hardware testing.
 - MT7902 now backs off before restarting if it runs short of lockable DMA pages below 4 GiB ([#52](https://github.com/zheznanohana/nekodrop/issues/52)); this does not establish a fix for the reported Internet outage.
 - If Windows will not start Bluetooth advertising, the radar and send window suggest checking Bluetooth or opening AirDrop on the other device ([#37](https://github.com/zheznanohana/nekodrop/issues/37), [#46](https://github.com/zheznanohana/nekodrop/issues/46)).
+- Fix Intel's unicast queue resubmitting completed entries after out-of-order status or holding its transmit window beyond the retry deadline ([#39](https://github.com/zheznanohana/nekodrop/issues/39)). AX210 discovery and successive receives still need hardware testing.
 - Correct IPv6-only AWDL's A / AAAA query replies and NSEC bitmap for macOS ([#55](https://github.com/zheznanohana/nekodrop/pull/55), thanks @sh17632). Visibility on older iOS/macOS still needs hardware testing ([#51](https://github.com/zheznanohana/nekodrop/issues/51)).
 - The BE200 and Apple ID sign-in changes still need testing on the affected hardware and accounts.
 

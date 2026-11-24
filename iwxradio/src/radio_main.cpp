@@ -825,13 +825,7 @@ int main(int argc, char **argv) {
       std::vector<uint8_t> frame;
       TxRate rate;
       bool data;
-      int slot = -1;            /* firmware TX ring slot while in flight */
-      bool acked = false;       /* TX status said the peer got it */
-      bool abandon = false;     /* retry window/attempts exhausted */
-      uint64_t first_us = 0;    /* first transmission, for the retry window */
-      uint64_t sent_us = 0;     /* last transmission, for the stall escape */
-      uint64_t next_us = 0;     /* backoff before a resend */
-      unsigned attempts = 0;
+      awdl::UnicastRetry tx{};
     };
     std::deque<Unicast> uq;
     /* The firmware data ring holds 128 (AX210) / 256 entries. Sending one
@@ -854,7 +848,7 @@ int main(int argc, char **argv) {
     const bool batch_kick = txc.batch_kick;
     constexpr size_t kQueueLimit = 4096; /* large uploads must not overflow at 1024 */
     unsigned inflight = 0;
-    uint64_t resent = 0, gave_up = 0, uq_dropped = 0;
+    uint64_t resent = 0, gave_up = 0, uq_dropped = 0, missing_status = 0;
     awdl::RateLadder ladder;
     ladder.step = txc.initial_rate_step;
     const bool wide80 = opt.channel > 14 && opt.width >= 80;
@@ -880,23 +874,23 @@ int main(int argc, char **argv) {
       /* Find the frame this slot belongs to. With a window several frames are
        * outstanding; only their own status may retire or retry them. */
       for (auto &f : uq) {
-        if (f.slot < 0 || slot != static_cast<unsigned>(f.slot)) continue;
+        auto &tx = f.tx;
+        if (tx.slot < 0 || slot != static_cast<unsigned>(tx.slot)) continue;
         if (inflight) --inflight;
-        f.slot = -1;
+        tx.slot = -1;
         const uint64_t now = now_us();
-        if (f.data && f.attempts == 1) ladder.note(acked, wide80);
+        if (f.data && tx.attempts == 1) ladder.note(acked, wide80);
         if (acked) {
-          f.acked = true; /* the pump pops completed frames from the front */
+          tx.acked = true; /* the pump pops completed frames from the front */
           return;
         }
-        if (now - f.first_us >= awdl::kResendWindowUS ||
-            f.attempts >= awdl::kResendMaxAttempts) {
-          f.abandon = true;
+        if (tx.expired(now)) {
+          tx.abandon = true;
           gave_up++;
           return;
         }
         f.frame[1] |= 0x08; /* retry */
-        f.next_us = now + awdl::resend_backoff_us(f.attempts);
+        tx.next_us = now + awdl::resend_backoff_us(tx.attempts);
         resent++;
         return;
       }
@@ -906,19 +900,21 @@ int main(int argc, char **argv) {
       /* Retire completed/abandoned frames strictly from the front so the peer
        * sees sequence numbers in order. */
       bool removed = false;
-      while (!uq.empty() && (uq.front().acked || uq.front().abandon)) {
+      while (!uq.empty() && uq.front().tx.finished()) {
         uq.pop_front();
         removed = true;
       }
-      /* A frame whose TX status never came back must not hold a slot
-       * forever (some firmware replies are dropped). Release it so the
-       * retry path can send it again. */
+      /* A missing completion outlives the resend window. Retire the frame
+       * and release the host window; recycling it can block new TCP ACKs. */
       for (auto &f : uq) {
-        if (f.slot >= 0 && now - f.sent_us >= 1000000) {
+        auto &tx = f.tx;
+        if (tx.status_missing(now)) {
           if (inflight) --inflight;
-          f.slot = -1;
-          f.next_us = now;
-          resent++;
+          tx.slot = -1;
+          tx.abandon = true;
+          missing_status++;
+          gave_up++;
+          removed = true;
         }
       }
       /* Upstream's send gate (A-MPDU sending only, once an aggregation session
@@ -954,20 +950,27 @@ int main(int argc, char **argv) {
        * or on their retry backoff. */
       bool sent = false;
       for (auto &f : uq) {
+        auto &tx = f.tx;
+        if (!tx.ready(now)) continue;
+        if (tx.expired(now)) {
+          tx.abandon = true;
+          gave_up++;
+          removed = true;
+          continue;
+        }
         if (inflight >= kTxWindow) break;
-        if (f.slot >= 0 || now < f.next_us) continue;
         if (gate_closed && f.data && f.frame.size() >= 10 &&
             std::memcmp(f.frame.data() + 4, agg.sched_peer, 6) == 0)
           continue;
-        if (!f.attempts) {
-          f.first_us = now;
+        if (!tx.attempts) {
+          tx.first_us = now;
           if (f.data) f.rate = data_rate();
         }
         const int slot = dev.transmit_slot(f.frame.data(), f.frame.size(), f.rate, !batch_kick);
         if (slot < 0) break; /* ring full: try again next tick */
-        f.slot = slot;
-        f.attempts++;
-        f.sent_us = now;
+        tx.slot = slot;
+        tx.attempts++;
+        tx.sent_us = now;
         inflight++;
         sent = true;
       }
@@ -1569,7 +1572,8 @@ int main(int argc, char **argv) {
         log_line("tx: " + std::to_string(s.submitted) + " submitted, " + std::to_string(s.acked) +
                  " done, " + std::to_string(s.failed) + " failed; unicast: " + std::to_string(resent) +
                  " resent, " + std::to_string(gave_up) + " given up, " + std::to_string(uq.size()) +
-                 " waiting, " + std::to_string(uq_dropped) + " dropped; rate step " +
+                 " waiting, " + std::to_string(uq_dropped) + " dropped, " +
+                 std::to_string(missing_status) + " missing TX status; rate step " +
                  std::to_string(ladder.step) + " (" + std::to_string(ladder.ups) + " up, " +
                  std::to_string(ladder.downs) + " down); BA answers " + std::to_string(ba_answers) +
                  (promiscuous ? "" : ", promiscuous off") +
