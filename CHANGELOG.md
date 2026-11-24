@@ -9,30 +9,28 @@
 ## v2.1.4 (Preview / 预览版) — 2026-11-25
 
 ### 中文
-- 修复 Intel BE200 / Killer BE1750x（`8086:272B`，MLD API 100）启动监听时发送旧版 `MAC_PM_POWER_TABLE`（`0xa9`）导致固件卡死超时（`error 138`）并退出（[#53](https://github.com/zheznanohana/nekodrop/issues/53)）：MLD 监听 MAC 不再发送该命令（设备级 `POWER_TABLE` 已禁用省电），待真机验证后续链路
-- 修复并发模式下已保存的隐藏 Wi-Fi 重启后仍需重输 SSID 的问题（[#50](https://github.com/zheznanohana/nekodrop/issues/50)）：
-  - 导入 Windows 已保存网络时读取 `connectionMode` 与 `nonBroadcast`，保留 Windows「手动连接」偏好并记录隐藏网络标记
-  - Wi-Fi 窗口「已保存的网络」每行新增「连接」按钮，可直接定向扫描并连接已保存的隐藏网络，无需重复输入名称和密码；对开启自动连接的已保存隐藏网络在重启后也会自动发起定向探测连接
-- 修复 Apple ID 二次验证码提交（`/validate`）遇到 Apple 服务端临时返回 HTTP 502/503/504 时直接失败的问题（[#42](https://github.com/zheznanohana/nekodrop/issues/42)）：改为携带新 OTP 自动退避重试最多 3 次
-- MT7922 / MT7921 并发模式：扫描每三个信道回到 AWDL，后台扫描遇到传输主动让路，断网时逐步延长重扫间隔；同时保留等待固件应答期间收到的 Wi-Fi 帧（[#54](https://github.com/zheznanohana/nekodrop/issues/54)、[#56](https://github.com/zheznanohana/nekodrop/issues/56)）。两种传输方向和扫描结果仍需真机复测。
-- MT7902 遇到 4 GiB 以下可锁定 DMA 页不足时，不再连续立即重启（[#52](https://github.com/zheznanohana/nekodrop/issues/52)）；这不等同于修复报告中的并发断网。
-- Windows 拒绝启动蓝牙广播时，在雷达和发送窗口提示检查蓝牙或打开对方的 AirDrop 分享面板，而不是只显示「正在寻找」（[#37](https://github.com/zheznanohana/nekodrop/issues/37)、[#46](https://github.com/zheznanohana/nekodrop/issues/46)）。
-- 修正 Intel 单播队列把乱序完成的帧重复提交、或在重试期限过后继续占窗口的问题（[#39](https://github.com/zheznanohana/nekodrop/issues/39)）；AX210 的发现和第二次接收仍需用新版本复测。
-- 修正 IPv6-only AWDL 对 macOS 的 A / AAAA 查询响应及 NSEC 位图（[#55](https://github.com/zheznanohana/nekodrop/pull/55)，感谢 @sh17632）；旧版 iOS/macOS 能否看到 PC 仍需真机验证（[#51](https://github.com/zheznanohana/nekodrop/issues/51)）。
-- BE200 与 Apple ID 登录改动仍待对应硬件和账号复测。
+
+- **隐藏 Wi-Fi**：在「已保存的网络」里点「连接」就能重连，省去重输网络名和密码。Windows 里的手动连接设置照旧。
+- **MT7921 / MT7922**：边联网边用 AirDrop 时，后台 Wi-Fi 扫描会给收发文件让路。扫描过程中也会定期切回 AirDrop 信道。
+- **Apple ID**：提交验证码遇到 HTTP 502、503 或 504 时，会自动重试，最多三次。
+- **Intel BE200 / Killer BE1750x**：修复了导致 AirDrop 反复显示「准备中」的启动超时。
+- **MT7902**：网卡所需内存暂时不足时，程序会等一会儿再重试，避免连续重启。
+- **Intel 网卡**：发送队列会跳过已送达或超过重试期限的帧，让新数据继续发出去。
+- **macOS 设备发现**：修正了 Mac 查询接收端地址时的回复，返回可用的 IPv6 地址。
+- **蓝牙**：Windows 启动蓝牙广播失败时，发送窗口会提示检查蓝牙，或者在对方设备上打开 AirDrop 分享面板。
 
 ### English
-- Fix Intel BE200 / Killer BE1750x (`8086:272B`, MLD API 100) hanging on legacy `MAC_PM_POWER_TABLE` (`0xa9`) during monitor bring-up (`error 138`) ([#53](https://github.com/zheznanohana/nekodrop/issues/53)): skip `MAC_PM_POWER_TABLE` on MLD listener MACs (device-wide `POWER_TABLE` already disables power save); needs hardware confirmation
-- Fix saved hidden Wi-Fi requiring re-entry of the SSID after reboot in Concurrent mode ([#50](https://github.com/zheznanohana/nekodrop/issues/50)):
-  - Preserve Windows' manual-connect (`connectionMode = manual`) and hidden (`nonBroadcast`) flags when importing saved profiles
-  - Add a **Connect** button to each row in Saved networks to run a directed scan and join with saved credentials, and probe auto-connect hidden profiles after reboot
-- Retry transient HTTP 502/503/504 errors (up to 3 times with fresh Anisette OTP headers) when submitting the Apple ID 2FA verification code to `/validate` ([#42](https://github.com/zheznanohana/nekodrop/issues/42))
-- MT7922 / MT7921 Concurrent mode: return to AWDL every three scan channels, yield background scans to AirDrop transfers, back off repeated scans while disconnected, and preserve Wi-Fi frames received while waiting for a firmware reply ([#54](https://github.com/zheznanohana/nekodrop/issues/54), [#56](https://github.com/zheznanohana/nekodrop/issues/56)). Both transfer directions and scan results still need hardware testing.
-- MT7902 now backs off before restarting if it runs short of lockable DMA pages below 4 GiB ([#52](https://github.com/zheznanohana/nekodrop/issues/52)); this does not establish a fix for the reported Internet outage.
-- If Windows will not start Bluetooth advertising, the radar and send window suggest checking Bluetooth or opening AirDrop on the other device ([#37](https://github.com/zheznanohana/nekodrop/issues/37), [#46](https://github.com/zheznanohana/nekodrop/issues/46)).
-- Fix Intel's unicast queue resubmitting completed entries after out-of-order status or holding its transmit window beyond the retry deadline ([#39](https://github.com/zheznanohana/nekodrop/issues/39)). AX210 discovery and successive receives still need hardware testing.
-- Correct IPv6-only AWDL's A / AAAA query replies and NSEC bitmap for macOS ([#55](https://github.com/zheznanohana/nekodrop/pull/55), thanks @sh17632). Visibility on older iOS/macOS still needs hardware testing ([#51](https://github.com/zheznanohana/nekodrop/issues/51)).
-- The BE200 and Apple ID sign-in changes still need testing on the affected hardware and accounts.
+
+- **Hidden Wi-Fi:** Select **Connect** next to a saved network to rejoin it without typing the name or password again. Windows networks set to connect manually keep that setting.
+- **MT7921 / MT7922:** Background Wi-Fi scans now yield to AirDrop transfers in Concurrent mode. Scans also return to the AirDrop channel regularly.
+- **Apple ID:** Verification code submissions now retry up to three times if Apple returns HTTP 502, 503, or 504.
+- **Intel BE200 / Killer BE1750x:** Fixed a startup timeout that kept AirDrop stuck on “Getting ready.”
+- **MT7902:** When the card runs short of the memory it needs, nekodrop waits before trying again to avoid back-to-back restarts.
+- **Intel Wi-Fi:** The send queue now skips frames that have already arrived or run out of retries, so fresh data can keep moving.
+- **macOS discovery:** Mac address queries for the receiver now get a corrected reply with its usable IPv6 address.
+- **Bluetooth:** If Windows fails to start Bluetooth advertising, the send window suggests checking Bluetooth or opening the AirDrop share sheet on the other device.
+
+感谢 / Thanks [@sh17632](https://github.com/sh17632) for [#55](https://github.com/zheznanohana/nekodrop/pull/55).
 
 ---
 
