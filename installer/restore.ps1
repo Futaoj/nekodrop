@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Continue'
 # in step with iwxradio/src/cards.h, app/service/CardCatalog.cs,
 # driver/regproxy/winawdl_regproxy.inf, installer/report.ps1 and install.ps1.
 $SupportedIntelIds = @('43F0', 'A0F0', '02F0', '06F0', '34F0', '3DF0', '4DF0', '2723', '2725', '7A70', '7AF0', '51F0', '51F1', '54F0', '7F70')
-$KnownCatalogIds = @($SupportedIntelIds | ForEach-Object { "8086:$_" }) + @('10EC:C852')
+$KnownCatalogIds = @($SupportedIntelIds | ForEach-Object { "8086:$_" }) + @('8086:272B', '10EC:C852')
 $ProxyInfNames = @('winawdl_regproxy.inf', 'nekodrop-wlan.inf')
 $ProxyServices = @('WUDFRd', 'nekodrop-wlan')
 $ProxyProvider = 'winairdrop project'
