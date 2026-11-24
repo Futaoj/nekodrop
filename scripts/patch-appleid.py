@@ -63,15 +63,18 @@ if not done:
     print('appleid: phone numbers without a country code follow APPLEID_CC (default +86)')
 
 # anisette.rs: the first sign-in downloads iCloud for Windows 7.21 (about 160 MB)
-# in one piece through the sign-in client, whose 120 s limit covers the whole
-# request: below about 1.3 MB/s the download always failed, and nothing showed
-# how far it had got (#42).  Stream it with a 60 s limit between reads instead,
-# and report the progress ("progress" events with --json, a line otherwise).
+# from one Apple URL, in one piece, through the sign-in client, whose 120 s
+# limit covers the whole request: below about 1.3 MB/s the download always
+# failed, and nothing showed how far it had got (#42).  Instead: try several
+# sources in turn (Apple's two CDNs, then the Internet Archive's copy), each
+# streamed with a 60 s limit between reads, each checked against the same
+# SHA-256, and report the progress ("progress" events with --json).  The file
+# is still downloaded from these sources on first sign-in, never shipped.
 path = pathlib.Path(sys.argv[1]) / 'crates' / 'appleid' / 'src' / 'anisette.rs'
 text = path.read_text(encoding='utf-8')
-MARK = 'nekodrop: download progress'
+MARK = 'nekodrop: download sources'
 if MARK not in text:
-    old = '''    let setup = crate::http::client()
+    old = """    let setup = crate::http::client()
         .get(ICLOUD_SETUP)
         .send()
         .await
@@ -80,14 +83,43 @@ if MARK not in text:
         .bytes()
         .await
         .map_err(|e| e.to_string())?;
-'''
-    new = '''    // nekodrop: download progress (#42)
+    let digest: String = Sha256::digest(&setup).iter().map(|b| format!("{b:02x}")).collect();
+    if digest != ICLOUD_SETUP_SHA256 {
+        return Err("iCloudSetup.exe isn't the one expected".into());
+    }
+"""
+    new = """    let setup = fetch_icloud_setup().await?; // nekodrop: download sources (#42)
+"""
+    if text.count(old) != 1:
+        sys.exit('anisette.rs: the iCloudSetup download moved; update patch-appleid.py')
+    text = text.replace(old, new, 1)
+    old = 'async fn unpack_icloud(home: &Path) -> Result<(), String> {'
+    new = """/// nekodrop (#42): where iCloudSetup.exe 7.21 can be had, tried in order.
+/// Every copy must match ICLOUD_SETUP_SHA256, so a source cannot change it.
+const ICLOUD_SETUP_SOURCES: [&str; 3] = [
+    ICLOUD_SETUP,
+    "http://appldnld.apple.com/windows/061-91601-20200323-974a39d0-41fc-4761-b571-318b7d9205ed/iCloudSetup.exe",
+    "https://web.archive.org/web/20210228113943id_/https://secure-appldnld.apple.com/windows/061-91601-20200323-974a39d0-41fc-4761-b571-318b7d9205ed/iCloudSetup.exe",
+];
+
+/// How much of iCloudSetup.exe has arrived (nekodrop, #42).
+fn download_progress(got: u64, total: u64) {
+    const MB: u64 = 1024 * 1024;
+    if crate::JSON.load(std::sync::atomic::Ordering::Relaxed) {
+        crate::event(serde_json::json!({ "ev": "progress", "done": got, "total": total }));
+    } else if total > 0 {
+        println!("  {}% ({} of {} MB)", got * 100 / total, got / MB, total / MB);
+    }
+}
+
+/// One source, streamed: no limit on the whole download, 60 s between reads.
+async fn fetch_from(url: &str) -> Result<Vec<u8>, String> {
     let mut response = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(30))
         .read_timeout(Duration::from_secs(60))
         .build()
         .map_err(|e| e.to_string())?
-        .get(ICLOUD_SETUP)
+        .get(url)
         .send()
         .await
         .and_then(|r| r.error_for_status())
@@ -104,24 +136,35 @@ if MARK not in text:
             download_progress(got, total);
         }
     }
-'''
-    if text.count(old) != 1:
-        sys.exit('anisette.rs: the iCloudSetup download moved; update patch-appleid.py')
-    text = text.replace(old, new, 1)
-    old = 'async fn unpack_icloud(home: &Path) -> Result<(), String> {'
-    new = '''/// How much of iCloudSetup.exe has arrived (nekodrop, #42).
-fn download_progress(got: u64, total: u64) {
-    const MB: u64 = 1024 * 1024;
-    if crate::JSON.load(std::sync::atomic::Ordering::Relaxed) {
-        crate::event(serde_json::json!({ "ev": "progress", "done": got, "total": total }));
-    } else if total > 0 {
-        println!("  {}% ({} of {} MB)", got * 100 / total, got / MB, total / MB);
+    let digest: String = Sha256::digest(&setup).iter().map(|b| format!("{b:02x}")).collect();
+    if digest != ICLOUD_SETUP_SHA256 {
+        return Err("the download isn't the iCloudSetup.exe expected".into());
     }
+    Ok(setup)
 }
 
-async fn unpack_icloud(home: &Path) -> Result<(), String> {'''
+/// The first source that delivers the expected file.
+async fn fetch_icloud_setup() -> Result<Vec<u8>, String> {
+    let mut why = Vec::new();
+    for (n, url) in ICLOUD_SETUP_SOURCES.iter().enumerate() {
+        let host = url.split('/').nth(2).unwrap_or(url);
+        if n > 0 {
+            say!("trying another source for iCloud for Windows 7.21 ({host})");
+        }
+        match fetch_from(url).await {
+            Ok(setup) => return Ok(setup),
+            Err(e) => {
+                crate::log_line(&format!("iCloudSetup.exe from {host}: {e}"));
+                why.push(format!("{host}: {e}"));
+            }
+        }
+    }
+    Err(format!("iCloud for Windows 7.21 could not be downloaded ({})", why.join("; ")))
+}
+
+async fn unpack_icloud(home: &Path) -> Result<(), String> {"""
     if text.count(old) != 1:
         sys.exit('anisette.rs: unpack_icloud moved; update patch-appleid.py')
     text = text.replace(old, new, 1)
     path.write_text(text, encoding='utf-8')
-    print('appleid: the iCloud download streams with progress, no 120 s limit on the whole')
+    print('appleid: iCloud download from three sources, streamed with progress, SHA-256 checked')
