@@ -44,9 +44,7 @@ std::string hex32(uint32_t v) {
 uint8_t center_channel_for(uint8_t ch, unsigned width_mhz) {
   if (width_mhz <= 20 || ch <= 14) return ch;
   if (width_mhz == 40) {
-    if (ch == 36 || ch == 40) return 38;
-    if (ch == 44 || ch == 48) return 46;
-    if (ch == 132 || ch == 136) return 134;
+    if (ch >= 36 && ch <= 144) return static_cast<uint8_t>(((ch - 36) / 8) * 8 + 38);
     if (ch == 149 || ch == 153) return 151;
     if (ch == 157 || ch == 161) return 159;
     return ch;
@@ -59,6 +57,13 @@ uint8_t center_channel_for(uint8_t ch, unsigned width_mhz) {
   if (ch >= 132 && ch <= 144) return 138;
   if (ch >= 149 && ch <= 161) return 155;
   return ch;
+}
+
+/* Map CCK rate (in 500 kbps units: 2, 4, 11, 22) to Connac2 TX rate encoding. */
+uint16_t cck_rate_val(unsigned mbps_x2) {
+  const uint8_t idx = mbps_x2 >= 22 ? 3 : mbps_x2 >= 11 ? 2 : mbps_x2 >= 4 ? 1 : 0;
+  return static_cast<uint16_t>(field_prep(MT_TX_RATE_MODE, MT_PHY_TYPE_CCK) |
+                               field_prep(MT_TX_RATE_IDX, idx));
 }
 
 /* Map OFDM Mbps to MT76 Connac2 OFDM rate index (mt76_connac_mac.c). */
@@ -129,6 +134,63 @@ size_t ieee80211_hdrlen(uint16_t fc) {
     return len;
   }
   return 16; /* Control */
+}
+
+/* Helper to build Connac2 MCU_UNI_CMD_STA_REC_UPDATE TLV payloads
+ * (matching mtradio/src/mt7902_sta.cpp and mt76_connac_mcu.c). */
+class StaReq {
+public:
+  StaReq(uint8_t wcid, uint8_t omac) {
+    _b = {omac /* bss_idx */, wcid, 0, 0 /* tlv_num */, 1 /* is_tlv_append */,
+          omac /* muar_idx */, 0 /* wlan_idx_hi */, 0};
+  }
+  uint8_t *add(uint16_t tag, uint16_t len) {
+    const size_t at = put(tag, len);
+    bump(2);
+    return _b.data() + at;
+  }
+  void wtbl(uint8_t op, uint8_t wcid) {
+    _wtbl = put(STA_REC_WTBL, 4);
+    bump(2);
+    _wtbl_hdr = _b.size();
+    const uint8_t hdr[8] = {wcid, op, 0, 0, 0, 0, 0, 0};
+    _b.insert(_b.end(), hdr, hdr + 8);
+    grow_wtbl(8);
+  }
+  uint8_t *wadd(uint16_t tag, uint16_t len) {
+    const size_t at = put(tag, len);
+    bump(_wtbl_hdr + 2);
+    grow_wtbl(len);
+    return _b.data() + at;
+  }
+  const std::vector<uint8_t> &bytes() const { return _b; }
+
+private:
+  size_t put(uint16_t tag, uint16_t len) {
+    const size_t at = _b.size();
+    _b.resize(at + len, 0);
+    std::memcpy(&_b[at], &tag, 2);
+    std::memcpy(&_b[at + 2], &len, 2);
+    return at;
+  }
+  void bump(size_t at) {
+    uint16_t n = 0;
+    std::memcpy(&n, &_b[at], 2);
+    n++;
+    std::memcpy(&_b[at], &n, 2);
+  }
+  void grow_wtbl(uint16_t by) {
+    uint16_t len = 0;
+    std::memcpy(&len, &_b[_wtbl + 2], 2);
+    len = static_cast<uint16_t>(len + by);
+    std::memcpy(&_b[_wtbl + 2], &len, 2);
+  }
+  std::vector<uint8_t> _b;
+  size_t _wtbl = 0, _wtbl_hdr = 0;
+};
+
+template <class T> void put_le(uint8_t *at, size_t off, T v) {
+  std::memcpy(at + off, &v, sizeof(v));
 }
 
 } // namespace
@@ -679,11 +741,16 @@ bool MtkDevice::mcu_wait_response(uint8_t seq, std::vector<uint8_t> &out, unsign
     if (rx_ring_pop(_rx_mcu, pkt) || rx_ring_pop(_rx_mcu_wa, pkt)) {
       if (pkt.size() >= sizeof(MtkMcuRxd) - 4) {
         const auto *rxd = reinterpret_cast<const MtkMcuRxd *>(pkt.data());
-        if (rxd->seq == seq) {
+        const uint32_t pkt_type = field_get(MT_RXD0_PKT_TYPE, rxd->rxd[0]);
+        const uint32_t pkt_flag = field_get(MT_RXD0_PKT_FLAG, rxd->rxd[0]);
+        /* PKT_TYPE_RX_EVENT with pkt_flag == 1 is an 802.11 frame (NORMAL_MCU), not an MCU reply. */
+        if (pkt_type == PKT_TYPE_RX_EVENT && pkt_flag != 0x1 && rxd->seq == seq) {
           out = std::move(pkt);
           return true;
         }
       }
+      /* Preserve TX-free completions and coredump notices that arrive while waiting. */
+      handle_rx_meta(pkt.data(), pkt.size());
       continue;
     }
     if (now_ms() >= deadline) return false;
@@ -1079,8 +1146,8 @@ bool MtkDevice::mac_init(std::string &error) {
                              (sizeof(k2gChans) + sizeof(k5gChans)) * sizeof(ChanEntry),
                              0);
     auto *hdr = reinterpret_cast<ChanDomainHdr *>(dom.data());
-    hdr->alpha2[0] = 'U';
-    hdr->alpha2[1] = 'S';
+    hdr->alpha2[0] = static_cast<uint8_t>(_country.size() >= 2 ? _country[0] : 'U');
+    hdr->alpha2[1] = static_cast<uint8_t>(_country.size() >= 2 ? _country[1] : 'S');
     hdr->bw_2g = 0; /* BW_20_40M */
     hdr->bw_5g = 3; /* BW_20_40_80_160M */
     hdr->bw_6g = 3;
@@ -1140,6 +1207,11 @@ bool MtkDevice::hard_reset(std::string &error) {
 
 bool MtkDevice::open(const Options &options, std::string &error) {
   _verbose = options.verbose;
+  if (options.country.size() == 2 && options.country != "ZZ" && options.country != "00") {
+    _country = options.country;
+  } else {
+    _country = "US";
+  }
   if (!probe(error)) return false;
   /* Reset WF subsystem out of any previous OS driver firmware state into clean ROM boot. */
   if (!wfsys_reset(error)) return false;
@@ -1300,6 +1372,147 @@ bool MtkDevice::set_address(const uint8_t address[6]) {
   return true;
 }
 
+bool MtkDevice::add_omac(uint8_t omac, const uint8_t addr[6], const uint8_t bssid[6], bool enable) {
+#pragma pack(push, 1)
+  struct {
+    uint8_t omac_idx;
+    uint8_t band_idx;
+    uint16_t pad;
+    uint16_t tag;
+    uint16_t len;
+    uint8_t active;
+    uint8_t link_idx;
+    uint8_t omac_addr[6];
+  } dev_req{};
+  struct {
+    uint8_t bss_idx;
+    uint8_t pad[3];
+    uint16_t tag;
+    uint16_t len;
+    uint8_t active;
+    uint8_t omac_idx;
+    uint8_t hw_bss_idx;
+    uint8_t band_idx;
+    uint32_t conn_type;
+    uint8_t conn_state;
+    uint8_t wmm_idx;
+    uint8_t bssid[6];
+    uint16_t bmc_tx_wlan_idx;
+    uint16_t bcn_interval;
+    uint8_t dtim_period;
+    uint8_t phymode;
+    uint16_t sta_idx;
+    uint16_t nonht_basic_phy;
+    uint8_t phymode_ext;
+    uint8_t link_idx;
+  } bss_req{};
+#pragma pack(pop)
+  dev_req.omac_idx = omac;
+  dev_req.band_idx = 0;
+  dev_req.tag = DEV_INFO_ACTIVE;
+  dev_req.len = 12;
+  dev_req.active = enable ? 1u : 0u;
+  dev_req.link_idx = 0;
+  std::memcpy(dev_req.omac_addr, addr, 6);
+
+  bss_req.bss_idx = omac;
+  bss_req.tag = UNI_BSS_INFO_BASIC;
+  bss_req.len = sizeof(bss_req) - 4;
+  bss_req.active = enable ? 1u : 0u;
+  bss_req.omac_idx = omac;
+  bss_req.hw_bss_idx = omac;
+  bss_req.band_idx = 0;
+  bss_req.conn_type = CONNECTION_INFRA_AP; /* as mt76 for a monitor-like interface */
+  bss_req.conn_state = CONN_STATE_CONNECT;
+  bss_req.wmm_idx = 0;
+  std::memcpy(bss_req.bssid, bssid, 6);
+  bss_req.bmc_tx_wlan_idx = 0;
+  bss_req.bcn_interval = 100;
+  bss_req.dtim_period = 1;
+  bss_req.phymode = 0x3f; /* A, B, G, GN, AN, AC */
+  bss_req.sta_idx = 0;
+  bss_req.nonht_basic_phy = 0x02; /* OFDM */
+
+  bool ok = false;
+  if (enable) {
+    ok = mcu_send_uni(MCU_UNI_CMD_DEV_INFO_UPDATE, &dev_req, sizeof(dev_req), true) &&
+         mcu_send_uni(MCU_UNI_CMD_BSS_INFO_UPDATE, &bss_req, sizeof(bss_req), true);
+  } else {
+    ok = mcu_send_uni(MCU_UNI_CMD_BSS_INFO_UPDATE, &bss_req, sizeof(bss_req), true) &&
+         mcu_send_uni(MCU_UNI_CMD_DEV_INFO_UPDATE, &dev_req, sizeof(dev_req), true);
+  }
+  if (ok && enable) {
+#pragma pack(push, 1)
+    struct EdcaAc {
+      uint16_t cw_min;
+      uint16_t cw_max;
+      uint16_t txop;
+      uint16_t aifs;
+      uint8_t guardtime;
+      uint8_t acm;
+    };
+    struct {
+      EdcaAc edca[4];
+      uint8_t bss_idx;
+      uint8_t qos;
+      uint8_t wmm_idx;
+      uint8_t pad;
+    } edca_req{};
+#pragma pack(pop)
+    for (int ac = 0; ac < 4; ac++) {
+      edca_req.edca[ac].cw_min = 3;
+      edca_req.edca[ac].cw_max = 7;
+      edca_req.edca[ac].txop = 94;
+      edca_req.edca[ac].aifs = 2;
+    }
+    edca_req.bss_idx = omac;
+    edca_req.qos = 1;
+    edca_req.wmm_idx = 0;
+    (void)mcu_send(MCU_CE_CMD_SET_EDCA_PARMS, 0, MCU_Q_SET, &edca_req, sizeof(edca_req), false);
+  }
+  return ok;
+}
+
+bool MtkDevice::set_station_identity(const uint8_t addr[6], const uint8_t bssid[6]) {
+  if (_sta_iface_up) {
+    (void)add_omac(kStationOmac, _sta_addr.data(), _sta_bssid.data(), false);
+  }
+  std::memcpy(_sta_addr.data(), addr, 6);
+  std::memcpy(_sta_bssid.data(), bssid, 6);
+  _sta_iface_up = add_omac(kStationOmac, _sta_addr.data(), _sta_bssid.data(), true);
+  restore_rx_filter();
+  return _sta_iface_up;
+}
+
+void MtkDevice::clear_station_identity() {
+  if (!_sta_iface_up) return;
+  (void)add_omac(kStationOmac, _sta_addr.data(), _sta_bssid.data(), false);
+  _sta_iface_up = false;
+  restore_rx_filter();
+}
+
+void MtkDevice::set_timing() { /* mt792x_mac_set_timeing, coverage class 0, short slot */
+  const bool is_2ghz = _channel <= 14;
+  const uint32_t cck = 231u | (48u << 16);
+  const uint32_t ofdm = 60u | (28u << 16);
+  const uint32_t sifs = is_2ghz ? 10u : 16u;
+  const uint32_t slot = 9u;
+  set(MT_ARB_SCR_BAND0, MT_ARB_SCR_TX_DISABLE | MT_ARB_SCR_RX_DISABLE);
+  wr(MT_TMAC_CDTR_BAND0, cck);
+  wr(MT_TMAC_ODTR_BAND0, ofdm);
+  wr(MT_TMAC_ICR0_BAND0, 360u | (2u << 10) | (sifs << 16) | (slot << 24));
+  rmw(MT_AGG_ACR0_BAND0, 0x3fffu, 0x49u);
+  clear(MT_ARB_SCR_BAND0, MT_ARB_SCR_TX_DISABLE | MT_ARB_SCR_RX_DISABLE);
+}
+
+void MtkDevice::restore_rx_filter() {
+  const uint32_t rfcr = MT_WF_RFCR_DROP_FCSFAIL | MT_WF_RFCR_DROP_VERSION |
+                        MT_WF_RFCR_DROP_CTS | MT_WF_RFCR_DROP_RTS |
+                        MT_WF_RFCR_DROP_CTL_RSV | MT_WF_RFCR_DROP_NDPA |
+                        MT_WF_RFCR_DROP_UNWANTED_CTL;
+  wr(MT_WF_RFCR_BAND0, rfcr);
+}
+
 bool MtkDevice::mcu_set_chan_cmd(uint8_t ext_cid, uint8_t ch, unsigned width_mhz) {
 #pragma pack(push, 1)
   struct {
@@ -1332,7 +1545,9 @@ bool MtkDevice::mcu_set_chan_cmd(uint8_t ext_cid, uint8_t ch, unsigned width_mhz
   req.band_idx = 0;
   req.channel_band = (ch <= 14) ? 0 : 1; /* 0 = 2.4 GHz, 1 = 5 GHz */
 
-  return mcu_send(MCU_CMD_EXT_CID, ext_cid, MCU_Q_SET, &req, sizeof(req), true);
+  const unsigned timeout =
+      (ext_cid == MCU_EXT_CMD_CHANNEL_SWITCH && _rx_path_set) ? move_timeout_ms : 3000u;
+  return mcu_send(MCU_CMD_EXT_CID, ext_cid, MCU_Q_SET, &req, sizeof(req), true, nullptr, timeout);
 }
 
 bool MtkDevice::set_channel(uint8_t channel, unsigned width_mhz) {
@@ -1363,14 +1578,11 @@ bool MtkDevice::set_channel(uint8_t channel, unsigned width_mhz) {
     _rx_path_set = true;
   }
   /* Also clear DROP_OTHER_BEACON / DROP_OTHER_UC / DROP_OTHER_BSS directly in RFCR. */
-  const uint32_t rfcr = MT_WF_RFCR_DROP_FCSFAIL | MT_WF_RFCR_DROP_VERSION |
-                        MT_WF_RFCR_DROP_CTS | MT_WF_RFCR_DROP_RTS |
-                        MT_WF_RFCR_DROP_CTL_RSV | MT_WF_RFCR_DROP_NDPA |
-                        MT_WF_RFCR_DROP_UNWANTED_CTL;
-  wr(MT_WF_RFCR_BAND0, rfcr);
+  restore_rx_filter();
 
   _channel = channel;
   _width_mhz = width_mhz;
+  set_timing();
   if (_verbose) {
     log("tuned to ch " + std::to_string(channel) + " (" + std::to_string(width_mhz) +
         " MHz) RFCR=" + hex32(rr(MT_WF_RFCR_BAND0)) +
@@ -1389,7 +1601,7 @@ bool MtkDevice::start_monitor(uint8_t channel, unsigned width_mhz, const uint8_t
  * Hardware RX Block Ack & Peer WTBL Management (Connac2 MCU_UNI_CMD_STA_REC_UPDATE)
  * -------------------------------------------------------------------------- */
 int MtkDevice::find_peer_wcid(const uint8_t mac[6]) {
-  for (uint8_t wcid = 1; wcid < MT792X_WTBL_RESERVED; wcid++) {
+  for (uint8_t wcid = 1; wcid < kApWcid; wcid++) {
     if (_peers[wcid].in_use && std::memcmp(_peers[wcid].mac.data(), mac, 6) == 0) {
       _peers[wcid].last_used_ms = now_ms();
       return wcid;
@@ -1399,7 +1611,7 @@ int MtkDevice::find_peer_wcid(const uint8_t mac[6]) {
 }
 
 bool MtkDevice::mcu_register_peer(uint8_t wcid, const uint8_t mac[6]) {
-  if (wcid == 0 || wcid >= MT792X_WTBL_RESERVED) return false;
+  if (wcid == 0 || wcid >= kApWcid) return false;
 
   /* Clear WTBL admission counter before programming/reusing wcid. */
   rmw(MT_WTBL_UPDATE, MT_WTBL_UPDATE_WLAN_IDX,
@@ -1579,7 +1791,7 @@ int MtkDevice::get_or_add_peer_wcid(const uint8_t mac[6]) {
 
   uint8_t chosen = 0;
   uint64_t oldest_ts = ~0ULL;
-  for (uint8_t wcid = 1; wcid < MT792X_WTBL_RESERVED; wcid++) {
+  for (uint8_t wcid = 1; wcid < kApWcid; wcid++) {
     if (!_peers[wcid].in_use) {
       chosen = wcid;
       break;
@@ -1589,7 +1801,7 @@ int MtkDevice::get_or_add_peer_wcid(const uint8_t mac[6]) {
       chosen = wcid;
     }
   }
-  if (chosen == 0 || chosen >= MT792X_WTBL_RESERVED) return -1;
+  if (chosen == 0 || chosen >= kApWcid) return -1;
 
   if (!mcu_register_peer(chosen, mac)) return -1;
 
@@ -2031,9 +2243,252 @@ void MtkDevice::snoop_tx_ba(const uint8_t *frame, size_t len) {
   }
 }
 
+bool MtkDevice::sta_add(uint8_t wcid, const uint8_t peer[6], const PeerCaps &caps, uint8_t omac) {
+  if (wcid == 0 || wcid >= MT792X_WTBL_RESERVED) return false;
+
+  rmw(MT_WTBL_UPDATE, MT_WTBL_UPDATE_WLAN_IDX,
+      field_prep(MT_WTBL_UPDATE_WLAN_IDX, wcid) | MT_WTBL_UPDATE_ADM_COUNT_CLEAR);
+  (void)poll_reg(MT_WTBL_UPDATE, MT_WTBL_UPDATE_BUSY, 0, 100);
+
+  StaReq r(wcid, omac);
+  { /* mt76_connac_mcu_sta_basic_tlv */
+    uint8_t *t = r.add(STA_REC_BASIC, 20);
+    put_le<uint32_t>(t, 4, CONNECTION_INFRA_STA);
+    t[8] = CONN_STATE_PORT_SECURE;
+    t[9] = 1; /* qos */
+    std::memcpy(t + 12, peer, 6);
+    put_le<uint16_t>(t, 18, EXTRA_INFO_VER | EXTRA_INFO_NEW);
+  }
+  { /* mt76_connac_mcu_sta_tlv */
+    uint8_t *ht = r.add(STA_REC_HT, 8);
+    put_le<uint16_t>(ht, 4, caps.ht_cap);
+    if (caps.vht) {
+      uint8_t *vht = r.add(STA_REC_VHT, 16);
+      put_le<uint32_t>(vht, 4, caps.vht_cap);
+      put_le<uint16_t>(vht, 8, caps.vht_mcs);
+      put_le<uint16_t>(vht, 10, caps.vht_mcs);
+    }
+    uint8_t *phy = r.add(STA_REC_PHY, 12);
+    put_le<uint16_t>(phy, 4, _channel > 14 ? 0x15u : 0x0fu);
+    phy[6] = static_cast<uint8_t>(_channel > 14 ? (bit(3) | bit(4) | (caps.vht ? bit(5) : 0u))
+                                                : (bit(0) | bit(1) | bit(4)));
+    phy[7] = static_cast<uint8_t>((caps.ampdu_params & 0x3u) | (caps.ampdu_params & 0x1cu));
+    uint8_t *ra = r.add(STA_REC_RA, 16);
+    put_le<uint16_t>(ra, 4, static_cast<uint16_t>(_channel > 14 ? (0xffu << 6) : ((0xffu << 6) | 0xfu)));
+    ra[6] = caps.rx_mcs[0];
+    ra[7] = caps.rx_mcs[1];
+    uint8_t *st = r.add(STA_REC_STATE, 12);
+    st[8] = STA_STATE_ASSOC;
+    if (caps.vht || omac) {
+      st[9] = static_cast<uint8_t>(caps.bw | ((caps.nss > 0 ? caps.nss - 1 : 0) << 4));
+    }
+  }
+  r.wtbl(WTBL_RESET_AND_SET, wcid);
+  { /* mt76_connac_mcu_wtbl_generic_tlv, _hdr_trans_tlv, _ht_tlv */
+    uint8_t *g = r.wadd(WTBL_GENERIC, 20);
+    std::memcpy(g + 4, peer, 6);
+    g[10] = omac; /* muar_idx */
+    g[13] = 1;    /* qos */
+    uint8_t *rx = r.wadd(WTBL_RX, 12);
+    rx[5] = 0; /* rca1: 0 under CONNECTION_INFRA_AP */
+    rx[6] = 1; /* rca2 */
+    rx[7] = 1; /* rv */
+    uint8_t *h = r.wadd(WTBL_HDR_TRANS, 8);
+    h[5] = 1; /* from_ds */
+    h[6] = 1; /* no_rx_trans: raw 802.11 */
+    uint8_t af = caps.ampdu_params & 0x3u;
+    uint8_t *ht = r.wadd(WTBL_HT, 12);
+    ht[4] = 1;
+    ht[5] = (caps.ht_cap & 0x1u) ? 1u : 0u; /* LDPC */
+    ht[7] = static_cast<uint8_t>((caps.ampdu_params >> 2) & 0x7u);
+    if (caps.vht) {
+      uint8_t *vht = r.wadd(WTBL_VHT, 12);
+      vht[4] = (caps.vht_cap & bit(4)) ? 1u : 0u; /* RXLDPC */
+      vht[6] = 1;
+      af = std::max<uint8_t>(af, static_cast<uint8_t>((caps.vht_cap >> 23) & 0x7u));
+    }
+    ht[6] = af;
+    (void)r.wadd(WTBL_SMPS, 8);
+  }
+  const auto &b = r.bytes();
+  const bool ok = mcu_send_uni(MCU_UNI_CMD_STA_REC_UPDATE, b.data(), b.size(), true, sta_cmd_timeout_ms);
+  log(std::string("station ") + std::to_string(wcid) + " (" + mac_str(peer) + ") " +
+      (ok ? "added" : "not added"));
+  return ok;
+}
+
+bool MtkDevice::sta_remove(uint8_t wcid, const uint8_t peer[6], uint8_t omac) {
+  if (wcid == 0 || wcid >= MT792X_WTBL_RESERVED) return false;
+  StaReq r(wcid, omac);
+  uint8_t *t = r.add(STA_REC_BASIC, 20);
+  put_le<uint32_t>(t, 4, CONNECTION_INFRA_STA);
+  t[8] = CONN_STATE_DISCONNECT;
+  std::memcpy(t + 12, peer, 6);
+  put_le<uint16_t>(t, 18, EXTRA_INFO_VER);
+  r.wtbl(WTBL_RESET_AND_SET, wcid);
+  const auto &b = r.bytes();
+  return mcu_send_uni(MCU_UNI_CMD_STA_REC_UPDATE, b.data(), b.size(), true, sta_cmd_timeout_ms);
+}
+
+bool MtkDevice::sta_ba(uint8_t wcid, const uint8_t peer[6], uint8_t tid, uint16_t ssn, uint16_t win,
+                       bool tx, bool enable, uint8_t omac) {
+  if (wcid == 0 || wcid >= MT792X_WTBL_RESERVED || tid >= 8) return false;
+  { /* mt76_connac_mcu_wtbl_ba_tlv */
+    StaReq r(wcid, omac);
+    r.wtbl(WTBL_SET, wcid);
+    uint8_t *ba = r.wadd(WTBL_BA, 28);
+    ba[4] = tid;
+    if (tx) {
+      ba[5] = MT_BA_TYPE_ORIGINATOR;
+      put_le<uint16_t>(ba, 8, enable ? ssn : 0u);
+      ba[10] = enable ? 1u : 0u;
+    } else {
+      ba[5] = MT_BA_TYPE_RECIPIENT;
+      std::memcpy(ba + 14, peer, 6);
+      ba[20] = tid;
+      ba[21] = RST_BA_MAC_TID_MATCH;
+      ba[22] = 1;
+    }
+    put_le<uint16_t>(ba, 12, enable ? win : 0u);
+    const auto &b = r.bytes();
+    if (!mcu_send_uni(MCU_UNI_CMD_STA_REC_UPDATE, b.data(), b.size(), true, sta_cmd_timeout_ms))
+      return false;
+  }
+  { /* mt76_connac_mcu_sta_ba_tlv */
+    StaReq r(wcid, omac);
+    uint8_t *ba = r.add(STA_REC_BA, 12);
+    ba[4] = tid;
+    ba[5] = tx ? MT_BA_TYPE_ORIGINATOR : MT_BA_TYPE_RECIPIENT;
+    ba[6] = 0; /* no A-MSDU */
+    ba[7] = static_cast<uint8_t>(enable ? (1u << tid) : 0u);
+    put_le<uint16_t>(ba, 8, ssn);
+    put_le<uint16_t>(ba, 10, win);
+    const auto &b = r.bytes();
+    return mcu_send_uni(MCU_UNI_CMD_STA_REC_UPDATE, b.data(), b.size(), true, sta_cmd_timeout_ms);
+  }
+}
+
 /* --------------------------------------------------------------------------
  * Raw 802.11 TX & RX Data Path
  * -------------------------------------------------------------------------- */
+uint16_t MtkDevice::tx_rate_ofdm(unsigned mbps) { return ofdm_rate_val(mbps); }
+uint16_t MtkDevice::tx_rate_cck(unsigned mbps_x2) { return cck_rate_val(mbps_x2); }
+uint16_t MtkDevice::tx_rate_ht(unsigned mcs) { return ht_rate_val(static_cast<uint8_t>(mcs)); }
+
+int MtkDevice::queue_tx_frame(const uint8_t *frame, size_t len, const uint32_t txd[8], bool kick) {
+  if (!_dma_running || !frame || len < 10 || len > DmaPool32::kPageBytes) return -1;
+
+  tx_ring_reclaim(_tx_data);
+  const uint32_t next = (_tx_data.head + 1) % _tx_data.count;
+  if (next == _tx_data.tail) return -1;
+
+  const uint32_t idx = _tx_data.head;
+  std::memcpy(_tx_data.bufs[idx].va, frame, len);
+
+  auto *txwi = reinterpret_cast<uint32_t *>(_tx_data.txwi[idx].va);
+  std::memset(txwi, 0, MT_TXD_SIZE + sizeof(MtkHwTxp));
+  std::memcpy(txwi, txd, MT_TXD_SIZE);
+
+  auto *txp = reinterpret_cast<MtkHwTxp *>(_tx_data.txwi[idx].va + MT_TXD_SIZE);
+  _tx_token = (_tx_token + 1) & 0x1fffu;
+  const uint16_t token = _tx_token;
+  txp->msdu_id[0] = static_cast<uint16_t>(token | MT_MSDU_ID_VALID);
+  txp->ptr[0].buf0 = _tx_data.bufs[idx].pa;
+  txp->ptr[0].len0 = static_cast<uint16_t>((len & MT_TXD_LEN_MASK) | MT_TXD_LEN_LAST);
+
+  MtkDesc *d = _tx_data.descs();
+  d[idx].buf0 = _tx_data.txwi[idx].pa;
+  d[idx].buf1 = 0;
+  d[idx].info = 0;
+  plat::mem_barrier();
+  d[idx].ctrl = field_prep(MT_DMA_CTL_SD_LEN0, static_cast<uint32_t>(MT_TXD_SIZE + sizeof(MtkHwTxp))) |
+                MT_DMA_CTL_LAST_SEC0;
+  plat::mem_barrier();
+
+  _tx_data.head = next;
+  if (kick) {
+    wr(_tx_data.reg_base + 0x8, _tx_data.head);
+    _tx_pending_kick = false;
+  } else {
+    _tx_pending_kick = true;
+  }
+  return static_cast<int>(token);
+}
+
+int MtkDevice::transmit_raw(const uint8_t *frame, size_t len, uint16_t rate_val, uint8_t omac,
+                            bool no_ack, bool force_altx) {
+  if (!_dma_running || !frame || len < 10 || len > DmaPool32::kPageBytes) return -1;
+  const uint16_t fc = static_cast<uint16_t>(frame[0] | (frame[1] << 8));
+  const uint8_t fc_type = static_cast<uint8_t>((fc >> 2) & 0x3u);
+  const uint8_t fc_stype = static_cast<uint8_t>((fc >> 4) & 0xfu);
+  const bool multicast = (frame[4] & 1u) != 0;
+  const bool eff_no_ack = no_ack || multicast;
+  const size_t hdr_len = ieee80211_hdrlen(fc);
+  const bool is_qos_data = (frame[0] & 0xfcu) == 0x88u;
+  const uint8_t tid =
+      (is_qos_data && len >= hdr_len) ? static_cast<uint8_t>(frame[hdr_len - 2] & 0x07u) : 0u;
+  const uint32_t q_idx = (force_altx || fc_type == 0 || multicast) ? MT_LMAC_ALTX0 : MT_LMAC_AC00;
+
+  uint32_t txd[8] = {};
+  txd[0] = field_prep(MT_TXD0_TX_BYTES, static_cast<uint32_t>(len + MT_TXD_SIZE)) |
+           field_prep(MT_TXD0_PKT_FMT, MT_TX_TYPE_CT) |
+           field_prep(MT_TXD0_Q_IDX, q_idx);
+  txd[1] = MT_TXD1_LONG_FORMAT |
+           field_prep(MT_TXD1_WLAN_IDX, 0u) |
+           field_prep(MT_TXD1_OWN_MAC, omac) |
+           field_prep(MT_TXD1_TID, tid) |
+           field_prep(MT_TXD1_HDR_FORMAT, MT_HDR_FORMAT_802_11) |
+           field_prep(MT_TXD1_HDR_INFO, static_cast<uint32_t>(hdr_len / 2));
+  txd[2] = field_prep(MT_TXD2_FRAME_TYPE, fc_type) |
+           field_prep(MT_TXD2_SUB_TYPE, fc_stype) |
+           field_prep(MT_TXD2_MULTICAST, multicast ? 1u : 0u) |
+           MT_TXD2_FIX_RATE | MT_TXD2_HTC_VLD;
+  txd[3] = field_prep(MT_TXD3_REM_TX_COUNT, eff_no_ack ? 1u : 15u) |
+           MT_TXD3_BA_DISABLE |
+           (eff_no_ack ? MT_TXD3_NO_ACK : 0u);
+  if (fc_type != 1 && len >= 24) {
+    const uint16_t sc = static_cast<uint16_t>(frame[22] | (frame[23] << 8));
+    txd[3] |= MT_TXD3_SN_VALID | field_prep(MT_TXD3_SEQ, (sc >> 4) & 0xfffu);
+  }
+  txd[6] = MT_TXD6_FIXED_BW | field_prep(MT_TXD6_TX_RATE, rate_val);
+  txd[7] = field_prep(MT_TXD7_TYPE, fc_type) |
+           field_prep(MT_TXD7_SUB_TYPE, fc_stype) |
+           field_prep(MT_TXD7_SPE_IDX, 24u);
+  return queue_tx_frame(frame, len, txd, true);
+}
+
+int MtkDevice::transmit_sta(const uint8_t *frame, size_t len, uint8_t wcid, uint8_t omac) {
+  if (!_dma_running || !frame || len < 26 || len > DmaPool32::kPageBytes) return -1;
+  const uint16_t fc = static_cast<uint16_t>(frame[0] | (frame[1] << 8));
+  const uint8_t fc_type = static_cast<uint8_t>((fc >> 2) & 0x3u);
+  const uint8_t fc_stype = static_cast<uint8_t>((fc >> 4) & 0xfu);
+  const size_t hdr_len = ieee80211_hdrlen(fc);
+  if (fc_type != 2 || !(fc_stype & 8u) || len < hdr_len) return -1;
+  const uint8_t tid = static_cast<uint8_t>(frame[hdr_len - 2] & 0x07u);
+  const uint16_t sc = static_cast<uint16_t>(frame[22] | (frame[23] << 8));
+
+  uint32_t txd[8] = {};
+  txd[0] = field_prep(MT_TXD0_TX_BYTES, static_cast<uint32_t>(len + MT_TXD_SIZE)) |
+           field_prep(MT_TXD0_PKT_FMT, MT_TX_TYPE_CT) |
+           field_prep(MT_TXD0_Q_IDX, MT_LMAC_AC00);
+  txd[1] = MT_TXD1_LONG_FORMAT |
+           field_prep(MT_TXD1_WLAN_IDX, wcid) |
+           field_prep(MT_TXD1_OWN_MAC, omac) |
+           field_prep(MT_TXD1_TID, tid) |
+           field_prep(MT_TXD1_HDR_FORMAT, MT_HDR_FORMAT_802_11) |
+           field_prep(MT_TXD1_HDR_INFO, static_cast<uint32_t>(hdr_len / 2));
+  txd[2] = field_prep(MT_TXD2_FRAME_TYPE, fc_type) |
+           field_prep(MT_TXD2_SUB_TYPE, fc_stype);
+  /* Firmware rate control picks rate from STA record; keep TX BA disabled for the AP. */
+  txd[3] = field_prep(MT_TXD3_REM_TX_COUNT, 15u) |
+           MT_TXD3_BA_DISABLE | MT_TXD3_SN_VALID |
+           field_prep(MT_TXD3_SEQ, (sc >> 4) & 0xfffu);
+  txd[7] = field_prep(MT_TXD7_TYPE, fc_type) |
+           field_prep(MT_TXD7_SUB_TYPE, fc_stype) |
+           field_prep(MT_TXD7_SPE_IDX, 24u);
+  return queue_tx_frame(frame, len, txd, true);
+}
+
 bool MtkDevice::transmit(const uint8_t *frame, size_t len, unsigned rate_mbps, bool kick) {
   TxParams params{};
   params.is_ht = false;
@@ -2198,13 +2653,53 @@ bool MtkDevice::parse_rx_packet(const uint8_t *buf, size_t len, RxFrame &out) {
   return out.len >= 16;
 }
 
+void MtkDevice::handle_tx_free(const uint8_t *data, size_t len) { /* mt7921_mac_tx_free */
+  if (len < 8) return;
+  uint32_t rxd0 = 0;
+  std::memcpy(&rxd0, data, sizeof(rxd0));
+  unsigned count = static_cast<unsigned>(field_get(MT_TX_FREE_MSDU_CNT, rxd0));
+  const auto *info = reinterpret_cast<const uint32_t *>(data + 8);
+  const size_t entries = (len - 8) / 4;
+  for (unsigned i = 0; i < count && i < entries; i++) {
+    const uint32_t v = info[i];
+    if (v & MT_TX_FREE_PAIR) {
+      count++;
+      continue;
+    }
+    const unsigned msdu = static_cast<unsigned>(field_get(MT_TX_FREE_MSDU_ID, v));
+    const unsigned stat = static_cast<unsigned>(field_get(MT_TX_FREE_STATUS, v));
+    const unsigned tries = static_cast<unsigned>(field_get(MT_TX_FREE_COUNT, v));
+    if (_on_tx_status) _on_tx_status(msdu, stat == 0, tries);
+  }
+}
+
+void MtkDevice::handle_rx_meta(const uint8_t *buf, size_t len) {
+  if (len < 8) return;
+  uint32_t rxd0 = 0;
+  std::memcpy(&rxd0, buf, sizeof(rxd0));
+  const uint32_t pkt_type = field_get(MT_RXD0_PKT_TYPE, rxd0);
+  if (pkt_type == PKT_TYPE_TXRX_NOTIFY) {
+    handle_tx_free(buf, len);
+  } else if (pkt_type == PKT_TYPE_RX_EVENT && len >= sizeof(MtkMcuRxd)) {
+    const auto *rxd = reinterpret_cast<const MtkMcuRxd *>(buf);
+    if (rxd->eid == 0xf0u) {
+      const std::string text(reinterpret_cast<const char *>(buf) + sizeof(MtkMcuRxd),
+                             len - sizeof(MtkMcuRxd));
+      if (text.find("ASSERT") != std::string::npos) {
+        log("WARNING: firmware coredump ASSERT: " + text.substr(0, 120));
+      }
+    }
+  }
+}
+
 size_t MtkDevice::poll(const RxHandler &on_rx) {
   if (!_dma_running) return 0;
 
-  /* Drain async MCU events on ring 0 and reclaim completed TX descriptors. */
+  /* Drain async MCU events / TX-free reports on ring 0 and reclaim completed TX descriptors. */
   {
     int mcu_drained = 0;
     while (rx_ring_pop(_rx_mcu, _rx_pkt_buf, false)) {
+      handle_rx_meta(_rx_pkt_buf.data(), _rx_pkt_buf.size());
       mcu_drained++;
     }
     if (mcu_drained > 0) rx_ring_commit(_rx_mcu);
@@ -2226,6 +2721,8 @@ size_t MtkDevice::poll(const RxHandler &on_rx) {
         snoop_rx_ba(f.data, f.len);
         if (on_rx) on_rx(f);
         count++;
+      } else {
+        handle_rx_meta(_rx_pkt_buf.data(), _rx_pkt_buf.size());
       }
     }
     if (uncommited > 0) rx_ring_commit(ring);
@@ -2257,6 +2754,8 @@ void MtkDevice::close() {
   _dma_running = false;
   _tx_pending_kick = false;
   _fw_loaded = false;
+  _rx_path_set = false;
+  _sta_iface_up = false;
   _peers.fill(PeerEntry{});
   _pending_addba.fill(PendingAddba{});
   _pending_tx_addba.fill(PendingAddba{});

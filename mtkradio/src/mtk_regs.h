@@ -286,6 +286,12 @@ constexpr uint32_t MT_ARB_SCR_BAND0 = 0x820e3080;
 constexpr uint32_t MT_ARB_SCR_TX_DISABLE = bit(8);
 constexpr uint32_t MT_ARB_SCR_RX_DISABLE = bit(9);
 
+/* Band 0 MAC timing registers (mt792x_mac_set_timeing). */
+constexpr uint32_t MT_AGG_ACR0_BAND0 = 0x820e2084;
+constexpr uint32_t MT_TMAC_CDTR_BAND0 = 0x820e4090;
+constexpr uint32_t MT_TMAC_ODTR_BAND0 = 0x820e4094;
+constexpr uint32_t MT_TMAC_ICR0_BAND0 = 0x820e40a4;
+
 constexpr uint32_t MT_WTBL_UPDATE = 0x820d4230;
 constexpr uint32_t MT_WTBL_UPDATE_WLAN_IDX = genmask(9, 0);
 constexpr uint32_t MT_WTBL_UPDATE_ADM_COUNT_CLEAR = bit(12);
@@ -369,9 +375,17 @@ constexpr uint32_t MT_TXD7_SPE_IDX = genmask(15, 11);
 constexpr uint32_t MT_TX_RATE_NSS = genmask(12, 10);
 constexpr uint32_t MT_TX_RATE_MODE = genmask(9, 6);
 constexpr uint32_t MT_TX_RATE_IDX = genmask(5, 0);
+constexpr uint32_t MT_PHY_TYPE_CCK = 0;
 constexpr uint32_t MT_PHY_TYPE_OFDM = 1;
 constexpr uint32_t MT_PHY_TYPE_HT = 2;
 constexpr uint32_t MT_PHY_TYPE_VHT = 4;
+
+/* TX-free completion notification (PKT_TYPE_TXRX_NOTIFY, mt76_connac2_mac.h). */
+constexpr uint32_t MT_TX_FREE_MSDU_CNT = genmask(25, 16);
+constexpr uint32_t MT_TX_FREE_PAIR = bit(31);
+constexpr uint32_t MT_TX_FREE_MSDU_ID = genmask(30, 16);
+constexpr uint32_t MT_TX_FREE_STATUS = genmask(14, 13);
+constexpr uint32_t MT_TX_FREE_COUNT = genmask(12, 0);
 
 /* Hardware TXP (mt76_connac.h struct mt76_connac_hw_txp) */
 constexpr uint16_t MT_MSDU_ID_VALID = 0x8000u;
@@ -507,13 +521,18 @@ constexpr uint16_t DEV_INFO_ACTIVE = 0;
 constexpr uint16_t UNI_BSS_INFO_BASIC = 0;
 constexpr uint16_t UNI_BSS_INFO_QBSS = 15;
 constexpr uint16_t STA_REC_BASIC = 0;
+constexpr uint16_t STA_REC_RA = 1;
 constexpr uint16_t STA_REC_BA = 6;
+constexpr uint16_t STA_REC_STATE = 7;
 constexpr uint16_t STA_REC_HT = 9;
 constexpr uint16_t STA_REC_VHT = 10;
 constexpr uint16_t STA_REC_WTBL = 13;
+constexpr uint16_t STA_REC_PHY = 0x15;
+constexpr uint8_t STA_STATE_ASSOC = 2;
 constexpr uint16_t EXTRA_INFO_VER = bit(0);
 constexpr uint16_t EXTRA_INFO_NEW = bit(1);
 constexpr uint32_t CONNECTION_INFRA_STA = bit(0) | bit(16);
+constexpr uint32_t CONNECTION_INFRA_AP = bit(1) | bit(16);
 constexpr uint32_t CONNECTION_IBSS_ADHOC = bit(2) | bit(18);
 constexpr uint32_t CONNECTION_INFRA_BC = bit(5) | bit(16);
 constexpr uint8_t CONN_STATE_DISCONNECT = 0;
@@ -531,6 +550,7 @@ constexpr uint16_t WTBL_HT = 2;
 constexpr uint16_t WTBL_VHT = 3;
 constexpr uint16_t WTBL_HDR_TRANS = 6;
 constexpr uint16_t WTBL_BA = 8;
+constexpr uint16_t WTBL_SMPS = 13;
 constexpr uint8_t MT_BA_TYPE_ORIGINATOR = 1;
 constexpr uint8_t MT_BA_TYPE_RECIPIENT = 2;
 constexpr uint8_t RST_BA_MAC_TID_MATCH = 0;

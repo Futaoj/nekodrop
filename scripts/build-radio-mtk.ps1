@@ -24,6 +24,8 @@ if ($LASTEXITCODE -ne 0) { throw "cmake configure failed ($LASTEXITCODE)" }
 
 & $tools.CMake --build $build
 if ($LASTEXITCODE -ne 0) { throw "build failed ($LASTEXITCODE)" }
+& (Join-Path $build 'ccmp_test.exe')
+if ($LASTEXITCODE -ne 0) { throw "ccmp_test failed ($LASTEXITCODE)" }
 
 $fwDest = Join-Path $build 'firmware'
 New-Item -ItemType Directory -Force $fwDest | Out-Null

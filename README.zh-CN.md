@@ -98,8 +98,8 @@ nekodrop 通过模块化底层驱动后端（`CardCatalog` + `radio_backend.h`�
 | So 平台上的 Intel Wi-Fi 6 AX203 / 9560 | 与 AX211 相同 | `so-a0-hr/jf-b0-68`（`iwx`，同时连 Wi-Fi / 按需） | ⚠️ 未测试 |
 | **Realtek RTL8852CE** | `10EC:C852` | 内嵌固件（`devourer`，仅按需接管） | ⚠️ 已内置，还没有用户反馈 |
 | **MediaTek MT7902** | `14C3:7902` | linux-firmware `WIFI_RAM_CODE_MT7902_1`（移植自 `mt76`，同时连 Wi-Fi（仅 5 GHz）与按需接管） | ⚠️ 已内置；一张卡上双向 AirDrop 实测可用（接收约 15 MB/s，发送约 5 MB/s）；同时连 Wi-Fi 已在一张卡上实测（AirDrop 待命时下载约 3.5 MB/s、上传约 1.3 MB/s） |
-| **MediaTek MT7922 / AMD RZ616** | `14C3:0616` `14C3:7922` | linux-firmware `WIFI_RAM_CODE_MT7922_1`（`mtkradio`，仅按需接管） | 🧪 实验性，已内置；已在 MT7922 / AMD RZ616 上实测双向 AirDrop 可用（[#40](../../pull/40)，[docs/MT7922.md](docs/MT7922.md)） |
-| **MediaTek MT7921 / AMD RZ608** | `14C3:7961` `14C3:0608` | linux-firmware `WIFI_RAM_CODE_MT7961_1`（`mtkradio`，仅按需接管） | ⚠️ 实验性，已内置；尚未在真机上测试 |
+| **MediaTek MT7922 / AMD RZ616** | `14C3:0616` `14C3:7922` | linux-firmware `WIFI_RAM_CODE_MT7922_1`（`mtkradio`，同时连 Wi-Fi（仅 5 GHz，实验性）与按需接管） | 🧪 实验性，已内置；已在 MT7922 / AMD RZ616 上实测双向 AirDrop 可用（[#40](../../pull/40)，[docs/MT7922.md](docs/MT7922.md)）；同时连 Wi-Fi 尚未在真机上测试 |
+| **MediaTek MT7921 / AMD RZ608** | `14C3:7961` `14C3:0608` | linux-firmware `WIFI_RAM_CODE_MT7961_1`（`mtkradio`，同时连 Wi-Fi（仅 5 GHz，实验性）与按需接管） | ⚠️ 实验性，已内置；按需与同时连 Wi-Fi 均尚未在真机上测试 |
 | Intel SnJ `2726`、QnJ `2720`、Meteor Lake `7E40`/`2729` | `8086:` | 上游没有固件 | ❌ |
 | **Intel Wi-Fi 7 BE200**（独立网卡） | `8086:272B` | linux-firmware `gl-c0-fm-c0-100`（`iwx` 的 Bz/MLD 路径，仅按需接管） | 🧪 实验性，已内置；**还没在真机上跑过**，欢迎试用并提交诊断报告（[docs/BE200.md](docs/BE200.md)） |
 | Intel BE201 / BE211（Wi-Fi 7，CNVi） | `8086:` `A840` `7740` | 需要 CNVi 硬件 | ❌ |

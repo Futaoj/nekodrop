@@ -53,7 +53,7 @@ $WifiChips = @{
   # Realtek (Linux rtw88/rtw89 device IDs). RTL8852CE is natively supported
   # via nekodrop's built-in devourer backend (on-demand AirDrop).
   '10EC:C852' = @('supported-rtl', 'Realtek RTL8852CE')
-  # MediaTek MT7902: built-in mt76 port (nekodrop-radio-mt.exe, on-demand AirDrop).
+  # MediaTek MT7902: built-in mt76 port (nekodrop-radio-mt.exe, 5 GHz Wi-Fi beside AirDrop or on-demand).
   '14C3:7902' = @('supported-mtk', 'MediaTek MT7902')
   '10EC:8852' = @('rtl', 'Realtek RTL8852AE')
   '10EC:A85A' = @('rtl', 'Realtek RTL8852AE')
@@ -98,7 +98,7 @@ $WifiChips = @{
 # kind -> what the report says, and a hint for the reader (may be empty).
 $WifiKinds = @{
   'supported'     = @('supported by nekodrop', '')
-  'supported-mtk' = @('supported by nekodrop (on-demand AirDrop, built-in MediaTek backend)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers.')
+  'supported-mtk' = @('supported by nekodrop (5 GHz Wi-Fi beside AirDrop, or on-demand; built-in MediaTek backend)', 'Joins 5 GHz Wi-Fi beside AirDrop, or runs on demand while Windows keeps Wi-Fi.')
   'supported-rtl' = @('supported by nekodrop (on-demand AirDrop, built-in RTL8852CE backend)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers.')
   'intel-fw'      = @('not supported: its firmware is not shipped upstream', 'nekodrop runs the Intel cards whose firmware ForbiddenItlwm ships (API 68); this one has none there.')
   'intel-be-exp'  = @('supported by nekodrop (experimental, on-demand AirDrop, not yet run on a real card)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers. Please post a diagnostic report in an issue whether it works or not.')
