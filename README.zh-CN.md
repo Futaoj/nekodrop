@@ -336,7 +336,7 @@ nekodrop 是在其他开源项目的基础上做的。这里写清楚哪些是**
 
 - [@BaiBaiAi](https://github.com/BaiBaiAi)：Windows → iPhone 发送不再出示客户端证书（[#13](../../pull/13)）、AWDL 发送流水线化让大文件能传完（[#15](../../pull/15)），以及第一份 AX210 实测报告（[#14](../../issues/14)）。
 - [@XXD051030](https://github.com/XXD051030)：Intel 网卡可选的蓝牙均衡共存模式，让电脑几秒内就能找到 iPhone 和 Mac，而不是等一两分钟，并附了一份 AX200 上的详细前后对照（[#26](../../pull/26)）。
-- [@GGBond-cer](https://github.com/GGBond-cer)：大量详细的 AX200 实测报告，帮我们定位了 A-MPDU 和速度问题（[#4](../../issues/4)），找到了卸载残留的根因（[#22](../../issues/22)），写了传输速度测试指南（[#28](../../pull/28)），并修好了卸载程序被自己的清理步骤结束、留下快捷方式和安装目录的问题（[#38](../../pull/38)），以及升级后自动删除下载的安装包（[#44](../../pull/44)）。
+- [@GGBond-cer](https://github.com/GGBond-cer)：大量详细的 AX200 实测报告，帮我们定位了 A-MPDU 和速度问题（[#4](../../issues/4)），找到了卸载残留的根因（[#22](../../issues/22)），写了传输速度测试指南（[#28](../../pull/28)），并修好了卸载程序被自己的清理步骤结束、留下快捷方式和安装目录的问题（[#38](../../pull/38)），升级后自动删除下载的安装包（[#44](../../pull/44)），以及多屏幕、不同缩放比例时让面板和文件对话框不跨屏（[#49](../../pull/49)）。
 - [@DaiJiequn](https://github.com/DaiJiequn)：MediaTek MT7902 支持，从 Linux mt76 移植的用户态驱动，按需模式下双向 AirDrop 可用（[#34](../../pull/34)）；以及它的「同时连 Wi-Fi」模式，用 AirDrop 时 Wi-Fi 不断，这部分共用的联网代码现在 MT7921/MT7922 也在用（[#47](../../pull/47)）。
 - [@sh17632](https://github.com/sh17632)：提出 AirDrop 风格的雷达界面和「共享」菜单方案，成为 2.0 新界面的基础（[#36](../../issues/36)），以及 AX211 实测反馈（[#35](../../issues/35)）。
 - [@YiHoooong](https://github.com/YiHoooong)：MediaTek MT7922/MT7921 用户态无线电驱动（mtkradio），已在 MT7922 / AMD RZ616 上实测可用（[#40](../../pull/40)）。
