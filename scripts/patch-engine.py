@@ -441,82 +441,122 @@ _hook('sender.py', [
      "        'SenderModelName': DEFAULT_MODEL," + NL + '        **nekodrop_identity.sender_extra(),' + NL),
 ], 'import nekodrop_identity')
 
-# mdns.py: answer the A record macOS keeps asking for.  macOS 15.8.1 asks
-# `A <host>.local` for the receiver's host name and ignores the NSEC record
-# that says there is no A record, so the name never resolves.  Publish
-# awdl0's IPv4 link-local address next to the AAAA record.
+# macOS 15 can follow the advertised SRV target with an IPv4 A query (#51,
+# PR #55). awdl0 transports IPv6 only, so answer for the name we own with an
+# explicit negative record, not a Windows APIPA address the peer cannot use.
+# RFC 6762 §6.1: synthesized mDNS NSEC must not set the NSEC bit itself.
 mdns = pathlib.Path(sys.argv[1]) / 'mdns.py'
 text = mdns.read_text(encoding='utf-8')
-changed = False
+if 'def address_response(self, types):' not in text:
+    pairs = [
+        (
+            'TYPE_PTR, TYPE_TXT, TYPE_AAAA, TYPE_SRV, TYPE_NSEC = 12, 16, 28, 33, 47',
+            'TYPE_A = 1\nTYPE_PTR, TYPE_TXT, TYPE_AAAA, TYPE_SRV, TYPE_NSEC = 12, 16, 28, 33, 47',
+        ),
+        (
+            '# NSEC type bitmap, window 0, with bits 28 (AAAA) and 47 (NSEC) set.\n'
+            'HOST_TYPES = bytes([0, 6, 0, 0, 0, 0x08, 0, 0x01])',
+            '# Synthesized mDNS NSEC: window 0, only type 28 (AAAA) exists.\n'
+            'HOST_TYPES = bytes([0, 4, 0, 0, 0, 0x08])',
+        ),
+        (
+            """def question_names(packet):
+    \"\"\"Lower-cased names a query asks about; empty for responses and for
+    anything malformed.\"\"\"
+    try:
+        _, flags, questions = struct.unpack_from('!HHH', packet)
+        if flags & FLAG_RESPONSE:
+            return set()
+        names = set()
+        offset = 12
+        for _ in range(questions):
+            name, offset = decode_name(packet, offset)
+            offset += 4
+            names.add(name.lower())
+        return names
+    except (IndexError, struct.error, ValueError):
+        return set()""",
+            """def questions_in(packet):
+    \"\"\"(name, type) from IN-class mDNS questions, including QU questions.\"\"\"
+    try:
+        _, flags, questions, _, _, _ = struct.unpack_from('!HHHHHH', packet)
+        if flags & FLAG_RESPONSE:
+            return set()
+        found = set()
+        offset = HEADER_BYTES
+        for _ in range(questions):
+            name, offset = decode_name(packet, offset)
+            rtype, rclass = struct.unpack_from('!HH', packet, offset)
+            offset += 4
+            if rclass & ~CACHE_FLUSH == CLASS_IN:
+                found.add((name.lower(), rtype))
+        return found
+    except (IndexError, struct.error, ValueError):
+        return set()
 
-old = 'TYPE_PTR, TYPE_TXT, TYPE_AAAA, TYPE_SRV, TYPE_NSEC = 12, 16, 28, 33, 47'
-new = 'TYPE_A = 1' + NL + old
-if 'TYPE_A = 1' not in text:
-    if old not in text:
-        sys.exit('mdns.py: the type constants moved; update patch-engine.py')
-    text = text.replace(old, new, 1)
-    changed = True
 
-old = 'def __init__(self, service_type, instance, host, address, port, text):'
-new = 'def __init__(self, service_type, instance, host, address, port, text, address_v4=None):'
-if new not in text:
-    if old not in text:
-        sys.exit('mdns.py: the Service signature moved; update patch-engine.py')
-    text = text.replace(old, new, 1)
-    changed = True
+def question_names(packet):
+    return {name for name, _ in questions_in(packet)}""",
+        ),
+        (
+            '    def response(self, alive=True):',
+            """    def address_response(self, types):
+        \"\"\"Reply to host address queries, with the requested result in Answer.\"\"\"
+        unique = CLASS_IN | CACHE_FLUSH
+        aaaa = _record(self.host_name, TYPE_AAAA, unique, TTL_HOST, self.address.packed)
+        nsec = _record(self.host_name, TYPE_NSEC, unique, TTL_HOST,
+                       encode_name(self.host_name) + HOST_TYPES)
+        answers, additional = [], []
+        (answers if TYPE_AAAA in types else additional).append(aaaa)
+        (answers if TYPE_A in types else additional).append(nsec)
+        header = struct.pack('!HHHHHH', 0, RESPONSE_FLAGS, 0, len(answers), 0, len(additional))
+        return header + b''.join(answers + additional)
 
-old = '        self.text = text' + NL
-new = old + '        self.address_v4 = address_v4' + NL
-if 'self.address_v4 = address_v4' not in text:
-    if old not in text:
-        sys.exit('mdns.py: the Service body moved; update patch-engine.py')
-    text = text.replace(old, new, 1)
-    changed = True
-
-old = '            _record(self.host_name, TYPE_AAAA, unique, host_ttl, self.address.packed),'
-new = NL.join([
-    old,
-    '            # macOS keeps asking for an A record and ignores the NSEC that says',
-    "            # there is none, so answer it with awdl0's IPv4 link-local address.",
-    '            _record(self.host_name, TYPE_A, unique, host_ttl,',
-    '                    socket.inet_aton(self.address_v4))',
-    '            if self.address_v4 else None,',
-])
-if 'inet_aton(self.address_v4)' not in text:
-    if old not in text:
-        sys.exit('mdns.py: the AAAA record line moved; update patch-engine.py')
-    text = text.replace(old, new, 1)
-    changed = True
-
-if changed:
+    def response(self, alive=True):""",
+        ),
+        (
+            """        asked = question_names(packet) & self.service.names()
+        if asked:
+            logging.info('mdns: %s asked for %s', sender[0].split('%')[0],
+                         ', '.join(sorted(asked)))
+        return bool(asked)""",
+            """        names = self.service.names()
+        asked = {(name, rtype) for name, rtype in questions_in(packet) if name in names}
+        if asked:
+            logging.info('mdns: %s asked for %s', sender[0].split('%')[0],
+                         ', '.join(f'{name} (type {rtype})' for name, rtype in sorted(asked)))
+        return asked""",
+        ),
+        (
+            """        last_sent = 0.0
+        while not self.stopping.is_set():
+            asked = self._asked()
+            since = time.monotonic() - last_sent
+            if (asked and since >= MIN_REPLY_GAP_S) or since >= ANNOUNCE_PERIOD_S:
+                self._send(announcement)
+                last_sent = time.monotonic()""",
+            """        last_announce = last_reply = float('-inf')
+        while not self.stopping.is_set():
+            now = time.monotonic()
+            if now - last_announce >= ANNOUNCE_PERIOD_S:
+                self._send(announcement)
+                last_announce = now
+            asked = self._asked()
+            now = time.monotonic()
+            if not asked or self.stopping.is_set() or now - last_reply < MIN_REPLY_GAP_S:
+                continue
+            host = self.service.host_name.lower()
+            if all(name == host and rtype in (TYPE_A, TYPE_AAAA) for name, rtype in asked):
+                self._send(self.service.address_response({rtype for _, rtype in asked}))
+            else:
+                self._send(announcement)
+                last_announce = now
+            last_reply = now""",
+        ),
+    ]
+    for old, new in pairs:
+        if text.count(old) != 1:
+            sys.exit(f'mdns.py: {old[:60]!r} moved; update patch-engine.py')
+        text = text.replace(old, new, 1)
     mdns.write_text(text, encoding='utf-8')
-print('mdns patched')
-
-# engine.py: give the Service the address the A record above needs.  awdl0
-# carries an IPv4 link-local address next to its IPv6 one; reading it here
-# keeps mdns.py free of Windows calls.
-V4 = NL.join([
-    'def _address4():',
-    '    """awdl0\'s IPv4 link-local address, for the A record macOS asks for."""',
-    '    import re',
-    '    import subprocess',
-    '    try:',
-    '        out = subprocess.run(["netsh", "interface", "ipv4", "show", "addresses", "awdl0"],',
-    '                             capture_output=True, text=True, timeout=5).stdout',
-    '    except Exception:',
-    '        return None',
-    '    found = re.search(r"(\\d{1,3}(?:\\.\\d{1,3}){3})", out)',
-    '    return found.group(1) if found else None',
-    '',
-    '',
-])
-text = engine.read_text(encoding='utf-8')
-old = "address, self.settings.port, f'flags={self.settings.flags}'),"
-new = "address, self.settings.port, f'flags={self.settings.flags}', _address4()),"
-if new not in text:
-    if old not in text:
-        sys.exit('engine.py: the Service call moved; update patch-engine.py')
-    text = text.replace(old, new, 1)
-    text = text.replace(NL + 'class ', NL + V4 + 'class ', 1)
-    engine.write_text(text, encoding='utf-8')
-    print('engine patched (A record address)')
+    print('mdns.py: IPv6-only host answers for macOS address queries')
