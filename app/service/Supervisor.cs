@@ -714,7 +714,11 @@ public sealed class Supervisor : IDisposable
                 // the same way, while a start 16 s or 90 s later worked. Back off 5, 10, 20,
                 // 30, 30 s before each restart, so Windows has time to free memory; every
                 // other failure restarts at once as before.
-                if ((_detail ?? "").Contains("out of DMA memory") && _restarts < 5)
+                // The MT7902 reports the same transient condition using a different
+                // diagnostic (#52): it needs lockable pages below 4 GiB.
+                var dmaShortage = _detail.Contains("out of DMA memory", StringComparison.OrdinalIgnoreCase) ||
+                                  _detail.Contains("DMA memory below 4 GiB: only", StringComparison.OrdinalIgnoreCase);
+                if (dmaShortage && _restarts < 5)
                 {
                     if (_retryAt == DateTime.MinValue)
                     {

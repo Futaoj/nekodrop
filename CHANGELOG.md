@@ -15,6 +15,7 @@
   - Wi-Fi 窗口「已保存的网络」每行新增「连接」按钮，可直接定向扫描并连接已保存的隐藏网络，无需重复输入名称和密码；对开启自动连接的已保存隐藏网络在重启后也会自动发起定向探测连接
 - 修复 Apple ID 二次验证码提交（`/validate`）遇到 Apple 服务端临时返回 HTTP 502/503/504 时直接失败的问题（[#42](https://github.com/zheznanohana/nekodrop/issues/42)）：改为携带新 OTP 自动退避重试最多 3 次
 - MT7922 / MT7921 并发模式：推迟 AirDrop 活跃期间的后台 Wi-Fi 扫描，断网时逐步延长扫描间隔，调频失败时跳过该信道（[#54](https://github.com/zheznanohana/nekodrop/issues/54)、[#56](https://github.com/zheznanohana/nekodrop/issues/56)）。两种传输方向和扫描结果仍需真机复测。
+- MT7902 遇到 4 GiB 以下可锁定 DMA 页不足时，不再连续立即重启（[#52](https://github.com/zheznanohana/nekodrop/issues/52)）；这不等同于修复报告中的并发断网。
 - BE200 与 Apple ID 登录改动仍待对应硬件和账号复测。
 
 ### English
@@ -24,6 +25,7 @@
   - Add a **Connect** button to each row in Saved networks to run a directed scan and join with saved credentials, and probe auto-connect hidden profiles after reboot
 - Retry transient HTTP 502/503/504 errors (up to 3 times with fresh Anisette OTP headers) when submitting the Apple ID 2FA verification code to `/validate` ([#42](https://github.com/zheznanohana/nekodrop/issues/42))
 - MT7922 / MT7921 Concurrent mode: defer background Wi-Fi scans while AirDrop is active, back off repeated scans while disconnected, and skip channels that fail to tune ([#54](https://github.com/zheznanohana/nekodrop/issues/54), [#56](https://github.com/zheznanohana/nekodrop/issues/56)). Both transfer directions and scan results still need hardware testing.
+- MT7902 now backs off before restarting if it runs short of lockable DMA pages below 4 GiB ([#52](https://github.com/zheznanohana/nekodrop/issues/52)); this does not establish a fix for the reported Internet outage.
 - The BE200 and Apple ID sign-in changes still need testing on the affected hardware and accounts.
 
 ---
