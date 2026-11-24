@@ -207,8 +207,12 @@ private:
   uint32_t read_umac_prph(uint32_t addr) { return read_prph(addr + (gen3() ? 0x300000u : 0u)); }
   void write_umac_prph(uint32_t addr, uint32_t v) { write_prph(addr + (gen3() ? 0x300000u : 0u), v); }
   bool gen3() const { return _card.ax210; }
+  bool bz() const { return _card.bz; }
+  bool use_mld() const { return _use_mld; }
   void set_bits_prph(uint32_t addr, uint32_t bits);
   void clear_bits_prph(uint32_t addr, uint32_t bits);
+  void sw_reset();
+  void ring_rx_doorbell(unsigned idx);
 
   /* Bring-up */
   bool identify(std::string &error);
@@ -244,6 +248,11 @@ private:
   int binding_cmd(uint32_t action);
   int add_monitor_sta();
   int enable_monitor_queue();
+  /* MLD API (Bz / BE200, monitor/inject only) */
+  int mld_mac_cmd(uint32_t action);
+  int mld_link_add();
+  int mld_link_modify(bool active, uint32_t modify_mask);
+  int mld_add_monitor_sta();
 
   /* Receive */
   void post_rx_buf(unsigned index); /* iwx_update_rx_desc */
@@ -286,11 +295,13 @@ private:
   CardInfo _card;
   bool _integrated = true;
   std::string _fw_name;
-  /* AX210 family */
-  DmaBuf _prph_scratch, _prph_info, _iml_buf, _pnvm_buf;
+  /* AX210 / Bz families */
+  DmaBuf _prph_scratch, _prph_info, _iml_buf, _pnvm_buf, _pnvm_desc;
+  std::vector<DmaBuf> _pnvm_chunks;
   std::vector<uint8_t> _pnvm_raw;
   uint32_t _sku_id[3] = {};
   bool _pnvm_done = false;
+  bool _use_mld = false;
   /* TFD write pointers run modulo 256 (22000) or 65536 (AX210); the slot is
    * the pointer modulo the ring size. */
   unsigned wrap() const { return gen3() ? 65536u : 256u; }
@@ -326,7 +337,7 @@ private:
 
   /* Monitor state */
   bool _phy_added = false, _mac_added = false, _binding_added = false,
-       _sta_added = false, _queue_enabled = false;
+       _link_added = false, _link_active = false, _sta_added = false, _queue_enabled = false;
   uint8_t _channel = 0;
   unsigned _width = 20;
   std::array<uint8_t, 6> _address{};
