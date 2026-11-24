@@ -101,7 +101,8 @@ nekodrop 通过模块化底层驱动后端（`CardCatalog` + `radio_backend.h`�
 | **MediaTek MT7922 / AMD RZ616** | `14C3:0616` `14C3:7922` | linux-firmware `WIFI_RAM_CODE_MT7922_1`（`mtkradio`，仅按需接管） | 🧪 实验性，已内置；已在 MT7922 / AMD RZ616 上实测双向 AirDrop 可用（[#40](../../pull/40)，[docs/MT7922.md](docs/MT7922.md)） |
 | **MediaTek MT7921 / AMD RZ608** | `14C3:7961` `14C3:0608` | linux-firmware `WIFI_RAM_CODE_MT7961_1`（`mtkradio`，仅按需接管） | ⚠️ 实验性，已内置；尚未在真机上测试 |
 | Intel SnJ `2726`、QnJ `2720`、Meteor Lake `7E40`/`2729` | `8086:` | 上游没有固件 | ❌ |
-| Intel BE200 / BE201（Wi-Fi 7） | `8086:` | 上游没有驱动 | ❌ |
+| **Intel Wi-Fi 7 BE200**（独立网卡） | `8086:272B` | linux-firmware `gl-c0-fm-c0-100`（`iwx` 的 Bz/MLD 路径，仅按需接管） | 🧪 实验性，已内置；**还没在真机上跑过**，欢迎试用并提交诊断报告（[docs/BE200.md](docs/BE200.md)） |
+| Intel BE201 / BE211（Wi-Fi 7，CNVi） | `8086:` `A840` `7740` | 需要 CNVi 硬件 | ❌ |
 | 其他 Realtek、MediaTek、高通、博通 | | | ❌ |
 
 怎么看自己的网卡：打开 *设备管理器 → 网络适配器*。没有受支持的无线网卡时，安装程序会拒绝安装，并列出本机检测到的无线网卡、PCI/USB ID 和不支持原因，以及运行 `installer/report.ps1` 的指引。在未实测的网卡上（包括新内置的 Realtek RTL8852CE 后端），nekodrop 可能启动不了 radio；这时网卡不会坏，运行下面的**一键回退**即可，也欢迎在 [Issues](../../issues) 附上日志反馈。

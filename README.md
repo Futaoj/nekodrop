@@ -98,7 +98,8 @@ Quick summary of currently active cards:
 | Intel Wi-Fi 6 AX203 / 9560 on So | same IDs as AX211 | `so-a0-hr/jf-b0-68` (`iwx`, Concurrent & On-Demand) | ⚠️ untested |
 | **Realtek RTL8852CE** | `10EC:C852` | embedded (`devourer`, On-Demand only) | ⚠️ built in, no user report yet |
 | Intel SnJ `2726`, QnJ `2720`, Meteor Lake `7E40`/`2729` | `8086:` | not shipped upstream | ❌ |
-| Intel BE200 / BE201 (Wi-Fi 7) | `8086:` | no upstream driver | ❌ |
+| **Intel Wi-Fi 7 BE200** (discrete) | `8086:272B` | linux-firmware `gl-c0-fm-c0-100` (`iwx` Bz/MLD path, On-Demand only) | 🧪 experimental, built in; **not yet run on a real card**: please post a diagnostic report ([docs/BE200.md](docs/BE200.md)) |
+| Intel BE201 / BE211 (Wi-Fi 7, CNVi) | `8086:` `A840` `7740` | needs CNVi hardware | ❌ |
 | **MediaTek MT7902** | `14C3:7902` | linux-firmware `WIFI_RAM_CODE_MT7902_1` (`mt76` port, Concurrent (5 GHz Wi-Fi) & On-Demand) | ⚠️ built in; AirDrop both ways on one card (~15 MB/s receive, ~5 MB/s send); Concurrent tested on one card (Wi-Fi beside AirDrop ~3.5 MB/s down, ~1.3 MB/s up) |
 | **MediaTek MT7922 / AMD RZ616** | `14C3:0616` `14C3:7922` | linux-firmware `WIFI_RAM_CODE_MT7922_1` (`mtkradio`, On-Demand only) | 🧪 experimental, built in; two-way AirDrop tested on an MT7922 / AMD RZ616 ([#40](../../pull/40), [docs/MT7922.md](docs/MT7922.md)) |
 | **MediaTek MT7921 / AMD RZ608** | `14C3:7961` `14C3:0608` | linux-firmware `WIFI_RAM_CODE_MT7961_1` (`mtkradio`, On-Demand only) | ⚠️ experimental, built in; untested on hardware |

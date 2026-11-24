@@ -29,7 +29,7 @@ nekodrop 在用户态直接驱动无线网卡芯片，使 Windows 原生运行�
 | Intel Wi-Fi 6E AX411 / Killer AX1690（CNVi） | 同 AX211 | `so-a0-gf4-a0-68` + PNVM | 同时连 Wi-Fi / 按需 | ⚠️ 已内置，待实测（[#7](../../../issues/7)） |
 | Intel Wi-Fi 6 AX203 / 9560（So CNVi） | 同 AX211 | `so-a0-hr/jf-b0-68` | 同时连 Wi-Fi / 按需 | ⚠️ 已内置，待实测 |
 | Intel Meteor Lake `Ma` / `SnJ` | `7E40` `2729` `2726` | `ma-b0`（`linux-firmware`） | 同时连 Wi-Fi / 按需 | 🚧 规划中（高优先级） |
-| Intel Wi-Fi 7 BE200 / BE201（`bz` 族） | `272B` `A840` `E440` | API 86+ MLD/Link | 同时连 Wi-Fi / 按需 | 🗓️ 中长期规划 |
+| **Intel Wi-Fi 7 BE200**（`bz`/`gl` 族） | `272B` | API 100，MLD（监听/发包） | 按需接管 | 🧪 **已内置，实验性，还没在真机上跑过**（[BE200.md](BE200.md)）；BE201/BE211 CNVi（`A840` `7740` `E440`）需要 CNVi 硬件 |
 | 老款 Intel 9260（`2526`）/ 8–9 代 9560（`9DF0`/`A370`） | `2526` `9DF0` `A370` | `iwm` 旧式 FH DMA | — | ❌ 暂不支持（上游 `hal_iwm` 无 AWDL 支持） |
 
 ---
