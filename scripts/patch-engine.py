@@ -56,6 +56,19 @@ if new not in text:
     text = text.replace(NL + 'class ', NL + HELPER + 'class ', 1)
     changed = True
 
+# #45: the --outdir default called valid_dir('~/Downloads') while the parser was
+# built, so with no Downloads folder in the profile (deleted after choosing
+# another receive folder) the engine died at start every few seconds, even
+# though the client always passes --outdir.  A string default goes through
+# `type` only when --outdir is missing, so standalone runs behave as before.
+old = "default=receiver.valid_dir('~/Downloads'))"
+new = "default='~/Downloads')  # nekodrop: checked only when --outdir is missing (#45)"
+if new not in text:
+    if text.count(old) != 1:
+        sys.exit('engine.py: the --outdir default moved; update patch-engine.py')
+    text = text.replace(old, new, 1)
+    changed = True
+
 if changed:
     engine.write_text(text, encoding='utf-8')
 print('engine patched')
