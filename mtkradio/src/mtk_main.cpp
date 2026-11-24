@@ -147,6 +147,7 @@ bool is_awdl_bssid(const uint8_t *frame, size_t len) {
 constexpr uint16_t kStaEthernet = 0x100;   /* Ethernet frame from the TAP adapter */
 constexpr uint16_t kScanRequest = 0x101;   /* "scan [SSID hex]" on stdin */
 constexpr uint16_t kRejoinRequest = 0x102; /* "rejoin" on stdin */
+constexpr uint16_t kBackgroundScan = 0x103; /* "scan-bg [SSID hex]" on stdin */
 
 struct PendingCmd {
   uint16_t type = 0;
@@ -455,7 +456,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  /* Service commands on stdin: "scan [SSID hex]" and "rejoin". */
+  /* Service commands on stdin: "scan[-bg] [SSID hex]" and "rejoin". */
   std::thread([&push_cmd] {
     char line[128];
     while (!stopping() && std::fgets(line, sizeof(line), stdin)) {
@@ -464,8 +465,9 @@ int main(int argc, char **argv) {
         continue;
       }
       if (std::strncmp(line, "scan", 4) != 0) continue;
+      const bool background = std::strncmp(line + 4, "-bg", 3) == 0;
       std::vector<uint8_t> ssid;
-      for (const char *h = line + 4; *h;) {
+      for (const char *h = line + (background ? 7 : 4); *h;) {
         if (*h == ' ') {
           h++;
           continue;
@@ -478,7 +480,7 @@ int main(int argc, char **argv) {
         if (ssid.size() < 32) ssid.push_back(static_cast<uint8_t>(std::strtoul(b, nullptr, 16)));
         h += 2;
       }
-      push_cmd({kScanRequest, std::move(ssid), now_us()});
+      push_cmd({background ? kBackgroundScan : kScanRequest, std::move(ssid), now_us()});
     }
   }).detach();
 
@@ -522,9 +524,10 @@ int main(int argc, char **argv) {
   std::map<std::string, BssSeen> bss_map;
 
   struct Scan {
-    bool active = false, ps_done = false;
+    bool active = false, ps_done = false, background = false, home = false;
     std::vector<uint8_t> channels, ssid;
     size_t next = 0;
+    unsigned visits = 0, home_visits = 0;
     Clock::time_point until{}, started{};
     uint64_t frames = 0, beacons = 0;
     std::map<uint8_t, std::pair<uint64_t, uint64_t>> heard;
@@ -580,21 +583,34 @@ int main(int argc, char **argv) {
     (void)dev.transmit_raw(f.data(), f.size(), mtk::MtkDevice::tx_rate_ofdm(6), 0, true, true);
   };
 
-  auto start_scan = [&](const std::vector<uint8_t> &ssid) {
+  auto start_scan = [&](const std::vector<uint8_t> &ssid, bool background) {
     if (scan.active) return;
     scan = Scan{};
     scan.active = true;
+    scan.background = background;
     scan.ssid = ssid;
     scan.started = Clock::now();
     for (uint8_t c = 36; c <= 64; c += 4) scan.channels.push_back(c);
     for (uint8_t c = 100; c <= 144; c += 4) scan.channels.push_back(c);
     for (uint8_t c = 149; c <= 165; c += 4) scan.channels.push_back(c);
-    for (uint8_t c = 1; c <= 13; c++) scan.channels.push_back(c);
+    // The MT792x Concurrent station can join only 5 GHz; probing 2.4 GHz
+    // here would waste off-channel time producing results the service discards.
     log_line("event: scan-started");
   };
 
   auto scan_step = [&]() -> bool {
     const auto now = Clock::now();
+    // A 9.6 s uninterrupted scan expired the AWDL peer in under 3 s, and
+    // cut active uploads in both directions (#54, #56). Check at start and
+    // during the home windows, before any further off-channel dwell.
+    const uint64_t t = now_us();
+    if (scan.background && (scan.next == 0 || scan.home) && last_awdl_data_us &&
+        t - last_awdl_data_us < 3000000u) {
+      scan.active = false;
+      log_line("scan: yielded to AirDrop traffic");
+      log_line("event: scan-interrupted air-drop");
+      return true;
+    }
     if (!scan.ps_done) {
       const bool running = sta && sta->state() == WifiStation::State::Running;
       if (station_on_air() && running && dev.channel() == sta_dev->channel()) {
@@ -618,9 +634,9 @@ int main(int argc, char **argv) {
         heard += " " + std::to_string(ch) + ":" + std::to_string(c.first) + "/" +
                  std::to_string(c.second);
       }
-      log_fmt("scan: %llu frames, %llu beacons or probe responses (channel:frames/beacons%s)",
+      log_fmt("scan: %llu frames, %llu beacons or probe responses, %u AWDL home visits (channel:frames/beacons%s)",
               static_cast<unsigned long long>(scan.frames),
-              static_cast<unsigned long long>(scan.beacons), heard.c_str());
+              static_cast<unsigned long long>(scan.beacons), scan.home_visits, heard.c_str());
       unsigned n = 0;
       for (const auto &[bssid, b] : bss_map) {
         if (b.seen < scan.started || b.ssid.empty()) continue;
@@ -637,6 +653,27 @@ int main(int argc, char **argv) {
       log_fmt("event: scan-done %u", n);
       return true;
     }
+    // Give queued AWDL TX and the peer's sync frames a chance at least every
+    // three scan channels. Keep the normal active/passive dwell per channel.
+    if (!scan.home && scan.visits >= 3) {
+      dev.kick_tx();
+      if (dev.channel() != awdl_channel || dev.width_mhz() != (awdl_channel > 14 ? width : 20u)) {
+        if (!dev.set_channel(awdl_channel, awdl_channel > 14 ? width : 20u)) {
+          scan.active = false;
+          move_failed = true;
+          log_fmt("scan: could not return to AWDL channel %u", awdl_channel);
+          log_line("event: scan-interrupted retune");
+          return true;
+        }
+      }
+      scan.visits = 0;
+      scan.home_visits++;
+      scan.home = true;
+      scan.until = Clock::now() + std::chrono::milliseconds(200);
+      return true;
+    }
+    scan.home = false;
+    scan.visits++;
     const uint8_t ch = scan.channels[scan.next++];
     dev.kick_tx();
     if (!dev.set_channel(ch, 20)) {
@@ -713,7 +750,10 @@ int main(int argc, char **argv) {
   };
 
   auto schedule = [&]() -> bool {
-    if (scan.active) return scan_step();
+    if (scan.active) {
+      timeshare = false;
+      return scan_step();
+    }
     uint8_t want = awdl_channel;
     unsigned want_w = width;
     timeshare = false;
@@ -783,8 +823,8 @@ int main(int argc, char **argv) {
       did_local = true;
       if (c.type == kStaEthernet) {
         if (sta) sta->on_ethernet(c.payload.data(), c.payload.size());
-      } else if (c.type == kScanRequest) {
-        start_scan(c.payload);
+      } else if (c.type == kScanRequest || c.type == kBackgroundScan) {
+        start_scan(c.payload, c.type == kBackgroundScan);
       } else if (c.type == kRejoinRequest) {
         if (sta) {
           log_line("event: wifi-stall");
@@ -815,8 +855,8 @@ int main(int argc, char **argv) {
 
     if (schedule()) did_local = true;
 
-    /* Send AWDL TX frames only while tuned to AWDL's channel and not scanning. */
-    const bool on_awdl_ch = (dev.channel() == awdl_channel && !scan.active);
+    /* Send AWDL TX on its own channel, including the scan's home windows. */
+    const bool on_awdl_ch = (dev.channel() == awdl_channel && (!scan.active || scan.home));
     if (on_awdl_ch) {
       const uint64_t now = now_us();
       while (!awdl_tx_q.empty()) {

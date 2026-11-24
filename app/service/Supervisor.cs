@@ -38,6 +38,7 @@ public sealed class Supervisor : IDisposable
     (string Ssid, string? Password, bool? Auto)? _pendingConnect;
     int _pendingScans; // scans that missed the pending network so far
     int _mtkBackgroundScans; // repeated MT792x off-channel scans while Wi-Fi is down
+    string? _mtkBackgroundScanSsid;
     readonly HashSet<string> _hiddenProbed = [];
     static readonly TimeSpan StaleScan = TimeSpan.FromSeconds(20);
     string _detail = "";
@@ -337,6 +338,7 @@ public sealed class Supervisor : IDisposable
             // A scan the old radio never finished must not block auto-connect forever (Codex review #29).
             _scanBusy = false;
             _wantBootScan = false;
+            _mtkBackgroundScanSsid = null;
             _channelOpen = false;
             _hiddenProbed.Clear();
             _launchGen++;
@@ -500,16 +502,17 @@ public sealed class Supervisor : IDisposable
         var text = at >= 0 ? line[(at + 7)..] : line;
         if (text.StartsWith("ready on channel", StringComparison.Ordinal))
         {
-            bool bootScan;
+            bool bootScan, bootBackground;
             lock (_lock)
             {
                 State = RadioState.On;
                 bootScan = _wantBootScan;
+                bootBackground = _pendingConnect is null;
                 _wantBootScan = false;
                 if (bootScan) _wifiDownSince = DateTime.MinValue;
             }
             Publish();
-            if (bootScan) WifiScan();
+            if (bootScan) WifiScan(background: bootBackground);
         }
         else if (text.StartsWith("bring-up failed: ", StringComparison.Ordinal))
         {
@@ -648,10 +651,34 @@ public sealed class Supervisor : IDisposable
                         .OrderByDescending(n => (int?)n["dbm"] ?? -127).ToList();
                     _scanPending = [];
                     _scanBusy = false;
+                    _mtkBackgroundScanSsid = null;
                     _scanAt = DateTime.UtcNow;
                 }
                 Publish();
                 _ = Task.Run(AfterScan);
+                break;
+            case "scan-interrupted":
+                string? pendingSsid = null;
+                lock (_lock)
+                {
+                    _scanPending = [];
+                    _scanBusy = false;
+                    _scanAt = DateTime.UtcNow;
+                    if (_mtkBackgroundScanSsid is { } hidden) _hiddenProbed.Remove(hidden);
+                    _mtkBackgroundScanSsid = null;
+                    if (value == "air-drop")
+                    {
+                        pendingSsid = _pendingConnect?.Ssid;
+                    }
+                    else if (_pendingConnect is not null)
+                    {
+                        _pendingConnect = null;
+                        _pendingScans = 0;
+                        _wifiError = "could not return to the AirDrop channel during the scan";
+                    }
+                }
+                Publish();
+                if (pendingSsid is not null) WifiScan(pendingSsid);
                 break;
         }
     }
@@ -761,7 +788,7 @@ public sealed class Supervisor : IDisposable
                 !Wlan.WiredUp())
             {
                 if (mtk && _mtkBackgroundScans < 4) _mtkBackgroundScans++;
-                WifiScan();
+                WifiScan(background: true);
             }
             if (EffectiveMode() == NetMode.OnDemand && State == RadioState.On &&
                 DateTime.UtcNow - _lastUse > TimeSpan.FromSeconds(_cfg.IdleSeconds))
@@ -955,16 +982,19 @@ public sealed class Supervisor : IDisposable
     }
 
     /// <summary>Refreshes the list; `ssid` makes it a directed scan (hidden networks).</summary>
-    public void WifiScan(string? ssid = null)
+    public void WifiScan(string? ssid = null, bool background = false)
     {
         if (State != RadioState.On) return;
+        var mtkBackground = background && _profile.Backend == RadioBackendKind.MtkRadio;
         lock (_lock)
         {
             _scanPending = [];
             _scanBusy = true;
             _scanStartedAt = DateTime.UtcNow;
+            _mtkBackgroundScanSsid = mtkBackground ? ssid : null;
         }
-        RadioCommand(string.IsNullOrEmpty(ssid) ? "scan" : "scan " + Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(ssid)));
+        var cmd = mtkBackground ? "scan-bg" : "scan";
+        RadioCommand(string.IsNullOrEmpty(ssid) ? cmd : cmd + " " + Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(ssid)));
         Publish();
     }
 
@@ -1107,6 +1137,10 @@ public sealed class Supervisor : IDisposable
             return;
         }
         if (_userOff || EffectiveMode() != NetMode.Concurrent || _wifi == "connected") return;
+        // Auto-join can restart the radio. Don't do that to an AirDrop transfer
+        // that started during the scan's home windows (#54/#56).
+        if (_profile.Backend == RadioBackendKind.MtkRadio &&
+            DateTime.UtcNow - _lastUse <= TimeSpan.FromSeconds(10)) return;
         if (DateTime.UtcNow - _wifiDownSince < TimeSpan.FromSeconds(20)) return;
         // Beside a wired connection Wi-Fi is joined only from the Wi-Fi window (issue #1).
         if (Wlan.WiredUp()) return;
@@ -1125,7 +1159,7 @@ public sealed class Supervisor : IDisposable
                     ?.Ssid;
                 if (nextHidden is not null) _hiddenProbed.Add(nextHidden);
             }
-            if (nextHidden is not null) WifiScan(nextHidden);
+            if (nextHidden is not null) WifiScan(nextHidden, background: true);
             return;
         }
         var ssid = (string?)best["ssid"] ?? "";
