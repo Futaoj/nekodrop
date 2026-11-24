@@ -11,7 +11,7 @@
 ### 中文
 - 新增 MediaTek MT7922 / MT7921（AMD RZ616 / RZ608）支持，按需和同时连 Wi-Fi（仅 5 GHz）（[#40](https://github.com/zheznanohana/nekodrop/pull/40)，感谢 @YiHoooong）
 - 新增 MediaTek MT7902 同时连 Wi-Fi 模式（[#47](https://github.com/zheznanohana/nekodrop/pull/47)，感谢 @DaiJiequn）
-- 新增 Intel BE200（Wi-Fi 7）实验性支持，按需
+- 新增 Intel BE200（Wi-Fi 7）实验性支持，同时连 Wi-Fi 和按需
 - 修复部分 Apple ID 登录报 -27952 的 bug：自动换新版客户端标识重试一次（[#42](https://github.com/zheznanohana/nekodrop/issues/42)、[#45](https://github.com/zheznanohana/nekodrop/issues/45)）
 - AX210 / AX201：日志记录 Block Ack 通知的去向，排查发送退回单帧的问题（[#39](https://github.com/zheznanohana/nekodrop/issues/39)、[#43](https://github.com/zheznanohana/nekodrop/issues/43)）
 - 以上只在 CI 上编译测试；BE200、MT7921 和两张联发科卡的同时连 Wi-Fi 还没有真机验证
@@ -19,7 +19,7 @@
 ### English
 - New: MediaTek MT7922 / MT7921 (AMD RZ616 / RZ608), on demand and Concurrent (5 GHz only) ([#40](https://github.com/zheznanohana/nekodrop/pull/40), thanks @YiHoooong)
 - New: Concurrent mode for MediaTek MT7902 ([#47](https://github.com/zheznanohana/nekodrop/pull/47), thanks @DaiJiequn)
-- New: experimental Intel BE200 (Wi-Fi 7), on demand
+- New: experimental Intel BE200 (Wi-Fi 7), Concurrent and on demand
 - Fix Apple ID sign-in failing with -27952 for some accounts: retries once with a newer client identity ([#42](https://github.com/zheznanohana/nekodrop/issues/42), [#45](https://github.com/zheznanohana/nekodrop/issues/45))
 - AX210 / AX201: the log says where Block Ack notifications go, to find why sending falls back to single frames ([#39](https://github.com/zheznanohana/nekodrop/issues/39), [#43](https://github.com/zheznanohana/nekodrop/issues/43))
 - Built and tested on CI only; BE200, MT7921 and Concurrent on both MediaTek cards are not yet verified on hardware
