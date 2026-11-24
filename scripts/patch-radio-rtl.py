@@ -11,6 +11,8 @@
 #   (9-14 MB/s sending).  The channel comes from the sequence in the phone's
 #   AWDL frames (TLV 18), by the rule of iwxradio/src/awdl_policy.h
 #   peer_channel(); the receive thread notes it, the pipe thread logs it.
+#   2.1.0 still never moved: the radio now also logs each new sequence it
+#   reads (at most 20 a run), so the next report shows what the phone names.
 #
 # Idempotent; exits with an error when the source no longer matches.
 import pathlib
@@ -30,6 +32,12 @@ HELPER = NL.join([
     'namespace nekodrop {',
     'std::atomic<unsigned> peer_channel_news{0};',
     'unsigned peer_channel_told = 0; /* receive thread only */',
+    '/* The last sequence seen, for the log (2.1.0 never moved off 6 and its log',
+    ' * could not say why, #32): 16 channel numbers packed in two words. */',
+    'std::atomic<uint64_t> seq_lo{0}, seq_hi{0};',
+    'std::atomic<bool> seq_news{false};',
+    'uint64_t seq_told_lo = 0, seq_told_hi = 0; /* receive thread only */',
+    'unsigned seq_logged = 0; /* pipe thread only */',
     '',
     'unsigned peer_channel(std::span<const uint8_t> f) {',
     '  if (f.size() < 40 || f[0] != 0xd0 || f[24] != 0x7f || f[25] != 0x00 ||',
@@ -49,6 +57,18 @@ HELPER = NL.join([
     '    i += 3 + value;',
     '  }',
     '  if (!found) return 0;',
+    '  uint64_t lo = 0, hi = 0;',
+    '  for (size_t n = 0; n < 8; ++n) {',
+    '    lo |= uint64_t(seq[n]) << (8 * n);',
+    '    hi |= uint64_t(seq[n + 8]) << (8 * n);',
+    '  }',
+    '  if (lo != seq_told_lo || hi != seq_told_hi) {',
+    '    seq_told_lo = lo;',
+    '    seq_told_hi = hi;',
+    '    seq_lo = lo;',
+    '    seq_hi = hi;',
+    '    seq_news = true;',
+    '  }',
     '  const auto names = [&seq](unsigned ch, bool wifi_too) {',
     '    const auto at = [&seq](size_t n) { return unsigned(seq[n]); };',
     '    if (!wifi_too && (at(6) == ch || at(7) == ch || at(14) == ch || at(15) == ch))',
@@ -84,6 +104,14 @@ LOOP_NEW = NL.join([
     '    untold++;',
     '    if (const unsigned ch = nekodrop::peer_channel_news.exchange(0)) /* nekodrop (#32) */',
     '      logger->info("radio: event: peer-channel {}", ch);',
+    '    if (nekodrop::seq_news.exchange(false) && nekodrop::seq_logged < 20) { /* nekodrop (#32) */',
+    '      nekodrop::seq_logged++;',
+    '      const uint64_t lo = nekodrop::seq_lo, hi = nekodrop::seq_hi;',
+    '      std::string seq;',
+    '      for (unsigned n = 0; n < 16; ++n)',
+    '        seq += (n ? " " : "") + std::to_string(unsigned(((n < 8 ? lo : hi) >> (8 * (n & 7))) & 0xff));',
+    '      logger->info("radio: peer sequence {}", seq);',
+    '    }',
     '',
 ])
 
