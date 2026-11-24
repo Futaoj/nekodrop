@@ -65,10 +65,10 @@ $WifiChips = @{
   '10EC:D723' = @('rtl', 'Realtek RTL8723DE')
   '10EC:B723' = @('rtl', 'Realtek RTL8723BE')
   # MediaTek, also sold as AMD RZ6xx/RZ7xx (Linux mt76).
-  '14C3:7961' = @('mtk', 'MediaTek MT7921')
-  '14C3:0608' = @('mtk', 'MediaTek MT7921 (AMD RZ608)')
-  '14C3:7922' = @('mtk', 'MediaTek MT7922')
-  '14C3:0616' = @('mtk', 'MediaTek MT7922 (AMD RZ616)')
+  '14C3:7961' = @('supported-mtk', 'MediaTek MT7921')
+  '14C3:0608' = @('supported-mtk', 'MediaTek MT7921 (AMD RZ608)')
+  '14C3:7922' = @('supported-mtk', 'MediaTek MT7922')
+  '14C3:0616' = @('supported-mtk', 'MediaTek MT7922 (AMD RZ616)')
   '14C3:7925' = @('mtk', 'MediaTek MT7925')
   '14C3:0717' = @('mtk', 'MediaTek MT7925 (AMD RZ717)')
   '14C3:7927' = @('mtk', 'MediaTek MT7927 (Wi-Fi 7)')
@@ -96,13 +96,13 @@ $WifiChips = @{
 # kind -> what the report says, and a hint for the reader (may be empty).
 $WifiKinds = @{
   'supported'     = @('supported by nekodrop', '')
-  'supported-mtk' = @('supported by nekodrop (on-demand AirDrop, built-in MT7902 backend)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers.')
+  'supported-mtk' = @('supported by nekodrop (on-demand AirDrop, built-in MediaTek backend)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers.')
   'supported-rtl' = @('supported by nekodrop (on-demand AirDrop, built-in RTL8852CE backend)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers.')
   'intel-fw'      = @('not supported: its firmware is not shipped upstream', 'nekodrop runs the Intel cards whose firmware ForbiddenItlwm ships (API 68); this one has none there.')
   'intel-be'      = @('not supported: Intel Wi-Fi 7, no upstream driver', 'ForbiddenItlwm, which nekodrop ports, has no driver for Wi-Fi 7 cards yet.')
   'intel-other'   = @('not supported: an Intel device ID nekodrop does not know', 'Please post this report in an issue: if upstream ships firmware for this card, its ID can be added.')
   'rtl'           = @('not supported: Realtek', 'Among Realtek chips, nekodrop currently has built-in support for RTL8852CE (10EC:C852) only.')
-  'mtk'           = @('not supported: MediaTek', 'No user-mode Windows driver exists for MediaTek Wi-Fi yet.')
+  'mtk'           = @('not supported: MediaTek', 'Among MediaTek chips, nekodrop currently has built-in support for MT7902, MT7921 (RZ608), and MT7922 (RZ616) only.')
   'qcom'          = @('not supported: Qualcomm', 'No user-mode Windows driver exists for Qualcomm Wi-Fi yet.')
   'bcm'           = @('not supported: Broadcom', 'There is no open Windows driver path for Broadcom Wi-Fi.')
   'usb'           = @('not supported: USB adapter', 'nekodrop drives PCIe cards only.')
@@ -148,10 +148,10 @@ function Test-KnownWifiId([string]$InstanceId) {
 
 # ------------------------------------------------------ the refusal message
 # The supported-card check: exact 15 Intel IDs plus Realtek RTL8852CE
-# (10EC:C852), with a 4-hex boundary so a 5-digit device ID (e.g. DEV_43F01 or
-# DEV_C8520) can never match a supported 4-digit ID.
-$SupportedCardPattern = '^PCI\\(?:VEN_8086&DEV_(' + ($SupportedIntelIds -join '|') + ')|VEN_10EC&DEV_C852|VEN_14C3&DEV_7902)(?=&|\\|$)'
-$NoSupportedCard = 'This PC has no Wi-Fi card nekodrop supports (Intel AX201, AX200, AX210, AX211, AX411, 9560 on Qu, Realtek RTL8852CE 10EC:C852, or MediaTek MT7902 14C3:7902); nekodrop cannot run here.'
+# (10EC:C852) and MediaTek MT7902/MT7921/MT7922, with a 4-hex boundary so a
+# 5-digit device ID (e.g. DEV_43F01 or DEV_C8520) can never match.
+$SupportedCardPattern = '^PCI\\(?:VEN_8086&DEV_(' + ($SupportedIntelIds -join '|') + ')|VEN_10EC&DEV_C852|VEN_14C3&DEV_(7902|7961|0608|7922|0616))(?=&|\\|$)'
+$NoSupportedCard = 'This PC has no Wi-Fi card nekodrop supports (Intel AX201, AX200, AX210, AX211, AX411, 9560 on Qu, Realtek RTL8852CE 10EC:C852, or MediaTek MT7902/MT7921/MT7922); nekodrop cannot run here.'
 $ReportUrl = 'https://github.com/zheznanohana/nekodrop/blob/main/installer/report.ps1'
 $IssuesUrl = 'https://github.com/zheznanohana/nekodrop/issues'
 # Adapter names that say wireless. As report.ps1: not bare "Killer" (its
@@ -238,12 +238,16 @@ if ($SelfTest) {
   }
   function Ascii([string]$s) { return ("$s" -cmatch '^[\x09\x0A\x0D\x20-\x7E]*$') }
 
-  # The supported-card check: exact 15 Intel IDs + Realtek RTL8852CE with 4-hex boundary.
-  if ($SupportedCardPattern -ne '^PCI\\(?:VEN_8086&DEV_(43F0|A0F0|02F0|06F0|34F0|3DF0|4DF0|2723|2725|7A70|7AF0|51F0|51F1|54F0|7F70)|VEN_10EC&DEV_C852|VEN_14C3&DEV_7902)(?=&|\\|$)') {
+  # The supported-card check: exact 15 Intel IDs + Realtek RTL8852CE + MediaTek MT7902/MT7921/MT7922 with 4-hex boundary.
+  if ($SupportedCardPattern -ne '^PCI\\(?:VEN_8086&DEV_(43F0|A0F0|02F0|06F0|34F0|3DF0|4DF0|2723|2725|7A70|7AF0|51F0|51F1|54F0|7F70)|VEN_10EC&DEV_C852|VEN_14C3&DEV_(7902|7961|0608|7922|0616))(?=&|\\|$)') {
     $fail += "supported-card pattern changed: $SupportedCardPattern"
   }
-  if ('PCI\VEN_14C3&DEV_7902&SUBSYS_60401A3B&REV_00\4&1' -notmatch $SupportedCardPattern) { $fail += '14C3:7902 not accepted' }
-  if ('PCI\VEN_14C3&DEV_79021&SUBSYS_60401A3B' -match $SupportedCardPattern) { $fail += '5-digit DEV_79021 matched as MT7902' }
+  foreach ($mtkDev in '7902', '7961', '0608', '7922', '0616') {
+    if ("PCI\VEN_14C3&DEV_$mtkDev&SUBSYS_60401A3B&REV_00\4&1" -notmatch $SupportedCardPattern) { $fail += "14C3:$mtkDev not accepted" }
+    if ("PCI\VEN_14C3&DEV_$($mtkDev)1&SUBSYS_60401A3B" -match $SupportedCardPattern) { $fail += "5-digit DEV_$($mtkDev)1 matched as MediaTek" }
+    if ((Classify-WifiCard "PCI\VEN_14C3&DEV_$mtkDev&SUBSYS_60401A3B").Kind -ne 'supported-mtk') { $fail += "14C3:$mtkDev not classified as supported-mtk" }
+  }
+  if ('PCI\VEN_14C3&DEV_7925&SUBSYS_792514C3' -match $SupportedCardPattern) { $fail += '14C3:7925 accepted as supported' }
   foreach ($d in $SupportedIntelIds) {
     if ("PCI\VEN_8086&DEV_$d&SUBSYS_00748086&REV_00\3&11583659&0&A3" -notmatch $SupportedCardPattern) { $fail += "8086:$d not accepted" }
     if ("PCI\VEN_8086&DEV_$d" -notmatch $SupportedCardPattern) { $fail += "8086:$d bare ID not accepted" }
@@ -285,26 +289,26 @@ if ($SelfTest) {
   }
   if ($msg.Contains('8168') -or $msg.Contains('SUBSYS') -or $msg.Contains('4&1&0')) { $fail += 'RTL8852BE message shows the Ethernet chip or the instance path' }
 
-  # MediaTek RZ616 found by its medium, a USB stick (serial = MAC address) found
+  # MediaTek RZ717 found by its medium, a USB stick (serial = MAC address) found
   # by name, Intel Meteor Lake and BE200, an Intel ID nobody knows, Qualcomm,
   # Broadcom and an unknown vendor's wireless adapter: PCIe first, at most 5.
   $manyPnp = @(
     (Dev 'USB\VID_0BDA&PID_8812\00E04C000001' 'Realtek 8812AU Wireless LAN 802.11ac USB NIC'),
-    (Dev 'PCI\VEN_14C3&DEV_0616&SUBSYS_E0CD1A3B&REV_00\4&1' 'MediaTek Wi-Fi 6E MT7922 (RZ616) 160MHz PCIe Adapter'),
+    (Dev 'PCI\VEN_14C3&DEV_0717&SUBSYS_E0CD1A3B&REV_00\4&1' 'MediaTek Wi-Fi 7 MT7925 (RZ717) 160MHz PCIe Adapter'),
     (Dev 'PCI\VEN_8086&DEV_7E40&SUBSYS_00908086&REV_20\3&1' 'Intel(R) Wi-Fi 6E AX211 160MHz'),
     (Dev 'PCI\VEN_8086&DEV_272B&SUBSYS_00F48086&REV_1A\4&1' 'Intel(R) Wi-Fi 7 BE200 320MHz'),
     (Dev 'PCI\VEN_8086&DEV_1234&SUBSYS_00008086\4&1' 'Intel(R) Wireless Something'),
     (Dev 'PCI\VEN_17CB&DEV_1103&SUBSYS_010817CB\4&1' 'Qualcomm FastConnect 6900 Wi-Fi 6E Dual Band Simultaneous (DBS) WiFi Network Adapter'),
     (Dev 'PCI\VEN_14E4&DEV_43A0&SUBSYS_0000106B\4&1' 'Broadcom 802.11ac Network Adapter')
   )
-  $manyNics = @((Nic 'PCI\VEN_14C3&DEV_0616&SUBSYS_E0CD1A3B&REV_00\4&1' 9))
+  $manyNics = @((Nic 'PCI\VEN_14C3&DEV_0717&SUBSYS_E0CD1A3B&REV_00\4&1' 9))
   $sel = @(Select-WirelessDevices $manyPnp $manyNics)
   if ($sel.Count -ne 5) { $fail += "expected 5 wireless devices, got $($sel.Count)" }
   if (@($sel | Where-Object { $_.InstanceId -match '^USB\\' }).Count) { $fail += 'a USB adapter came before 5 PCIe cards' }
   $all = @(Select-WirelessDevices ($manyPnp | Select-Object -First 3) @())
   if ($all.Count -ne 3 -or $all[-1].InstanceId -notmatch '^USB\\') { $fail += 'the USB adapter is not listed after the PCIe cards' }
   $msg = Format-UnsupportedCardMessage $all
-  foreach ($want in 'USB\VID_0BDA&PID_8812', 'not supported: USB adapter', 'MediaTek MT7922 (AMD RZ616)', 'not supported: MediaTek', 'Intel Ma (Meteor Lake CNVi)', 'firmware is not shipped upstream') {
+  foreach ($want in 'USB\VID_0BDA&PID_8812', 'not supported: USB adapter', 'MediaTek MT7925 (AMD RZ717)', 'not supported: MediaTek', 'Intel Ma (Meteor Lake CNVi)', 'firmware is not shipped upstream') {
     if (-not $msg.Contains($want)) { $fail += "message lacks '$want'" }
   }
   if ($msg.Contains('00E04C000001')) { $fail += 'message shows the USB serial number' }
@@ -453,7 +457,7 @@ function Stop-FromTarget {
   $root = [IO.Path]::GetFullPath($Target).TrimEnd('\') + '\'
   # Never by path under a drive root or a folder that is not nekodrop's.
   $byPath = $root.Length -gt 4 -and ((Test-Path (Join-Path $root 'NekoDropService.exe')) -or (Test-Path (Join-Path $root 'python\python.exe')))
-  $ours = @(Get-Process nekodrop, nekodrop-radio, nekodrop-radio-rtl, awdld, NekoDropService -ErrorAction SilentlyContinue) +
+  $ours = @(Get-Process nekodrop, nekodrop-radio, nekodrop-radio-rtl, nekodrop-radio-mt, nekodrop-radio-mtk, awdld, NekoDropService -ErrorAction SilentlyContinue) +
           @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
               try { $byPath -and $_.Path -and $_.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) } catch { $false } })
   # Processes started from elsewhere that name the folder on their command

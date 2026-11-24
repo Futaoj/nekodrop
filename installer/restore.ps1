@@ -372,7 +372,7 @@ if ($svc) {
   Set-Service NekoDropService -StartupType Disabled
   '   service stopped and disabled'
 }
-Get-Process nekodrop-radio, nekodrop-radio-rtl, awdld -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process nekodrop-radio, nekodrop-radio-rtl, nekodrop-radio-mt, nekodrop-radio-mtk, awdld -ErrorAction SilentlyContinue | Stop-Process -Force
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
   Where-Object { $_.CommandLine -like '*airdrop*engine.py*' } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }

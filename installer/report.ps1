@@ -66,10 +66,10 @@ $WifiChips = @{
   '10EC:D723' = @('rtl', 'Realtek RTL8723DE')
   '10EC:B723' = @('rtl', 'Realtek RTL8723BE')
   # MediaTek, also sold as AMD RZ6xx/RZ7xx (Linux mt76).
-  '14C3:7961' = @('mtk', 'MediaTek MT7921')
-  '14C3:0608' = @('mtk', 'MediaTek MT7921 (AMD RZ608)')
-  '14C3:7922' = @('mtk', 'MediaTek MT7922')
-  '14C3:0616' = @('mtk', 'MediaTek MT7922 (AMD RZ616)')
+  '14C3:7961' = @('supported-mtk', 'MediaTek MT7921')
+  '14C3:0608' = @('supported-mtk', 'MediaTek MT7921 (AMD RZ608)')
+  '14C3:7922' = @('supported-mtk', 'MediaTek MT7922')
+  '14C3:0616' = @('supported-mtk', 'MediaTek MT7922 (AMD RZ616)')
   '14C3:7925' = @('mtk', 'MediaTek MT7925')
   '14C3:0717' = @('mtk', 'MediaTek MT7925 (AMD RZ717)')
   '14C3:7927' = @('mtk', 'MediaTek MT7927 (Wi-Fi 7)')
@@ -97,13 +97,13 @@ $WifiChips = @{
 # kind -> what the report says, and a hint for the reader (may be empty).
 $WifiKinds = @{
   'supported'     = @('supported by nekodrop', '')
-  'supported-mtk' = @('supported by nekodrop (on-demand AirDrop, built-in MT7902 backend)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers.')
+  'supported-mtk' = @('supported by nekodrop (on-demand AirDrop, built-in MediaTek backend)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers.')
   'supported-rtl' = @('supported by nekodrop (on-demand AirDrop, built-in RTL8852CE backend)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers.')
   'intel-fw'      = @('not supported: its firmware is not shipped upstream', 'nekodrop runs the Intel cards whose firmware ForbiddenItlwm ships (API 68); this one has none there.')
   'intel-be'      = @('not supported: Intel Wi-Fi 7, no upstream driver', 'ForbiddenItlwm, which nekodrop ports, has no driver for Wi-Fi 7 cards yet.')
   'intel-other'   = @('not supported: an Intel device ID nekodrop does not know', 'Please post this report in an issue: if upstream ships firmware for this card, its ID can be added.')
   'rtl'           = @('not supported: Realtek', 'Among Realtek chips, nekodrop currently has built-in support for RTL8852CE (10EC:C852) only.')
-  'mtk'           = @('not supported: MediaTek', 'No user-mode Windows driver exists for MediaTek Wi-Fi yet.')
+  'mtk'           = @('not supported: MediaTek', 'Among MediaTek chips, nekodrop currently has built-in support for MT7902, MT7921 (RZ608), and MT7922 (RZ616) only.')
   'qcom'          = @('not supported: Qualcomm', 'No user-mode Windows driver exists for Qualcomm Wi-Fi yet.')
   'bcm'           = @('not supported: Broadcom', 'There is no open Windows driver path for Broadcom Wi-Fi.')
   'usb'           = @('not supported: USB adapter', 'nekodrop drives PCIe cards only.')
@@ -232,8 +232,11 @@ if ($SelfTest) {
     @('pci\ven_10ec&dev_c852&subsys_c85210ec', 'supported-rtl', 'Realtek RTL8852CE'),
     @('PCI\VEN_10EC&DEV_B852&SUBSYS_B85217AA\4&1', 'rtl', 'Realtek RTL8852BE'),
     @('PCI\VEN_10EC&DEV_ABCD&SUBSYS_000010EC', 'rtl', 'Realtek ABCD (not in nekodrop''s table)'),
-    @('PCI\VEN_14C3&DEV_7922&SUBSYS_7922103C\4&1', 'mtk', 'MediaTek MT7922'),
-    @('PCI\VEN_14C3&DEV_0616&SUBSYS_E0CD1A3B\4&1', 'mtk', 'MediaTek MT7922 (AMD RZ616)'),
+    @('PCI\VEN_14C3&DEV_7922&SUBSYS_7922103C\4&1', 'supported-mtk', 'MediaTek MT7922'),
+    @('PCI\VEN_14C3&DEV_0616&SUBSYS_E0CD1A3B\4&1', 'supported-mtk', 'MediaTek MT7922 (AMD RZ616)'),
+    @('PCI\VEN_14C3&DEV_7961&SUBSYS_796114C3\4&1', 'supported-mtk', 'MediaTek MT7921'),
+    @('PCI\VEN_14C3&DEV_0608&SUBSYS_060814C3\4&1', 'supported-mtk', 'MediaTek MT7921 (AMD RZ608)'),
+    @('PCI\VEN_14C3&DEV_7925&SUBSYS_792514C3\4&1', 'mtk', 'MediaTek MT7925'),
     @('PCI\VEN_14C3&DEV_7927&SUBSYS_792714C3\4&1', 'mtk', 'MediaTek MT7927 (Wi-Fi 7)'),
     @('PCI\VEN_14C3&DEV_7902&SUBSYS_790214C3\4&1', 'supported-mtk', 'MediaTek MT7902'),
     @('PCI\VEN_17CB&DEV_1103&SUBSYS_010817CB\4&1', 'qcom', 'Qualcomm WCN6855 (FastConnect 6800/6900)'),
@@ -424,7 +427,7 @@ $svcStart = Try-Get { (Get-CimInstance Win32_Service -Filter "Name='NekoDropServ
 $exe = Join-Path $app 'NekoDropService.exe'
 $version = Try-Get { (Get-Item $exe).VersionInfo.ProductVersion }
 $config = Try-Get { Get-Content (Join-Path $state 'service.json') -Raw | ConvertFrom-Json }
-$SupportedCardPattern = '^PCI\\(?:VEN_8086&DEV_(' + ($SupportedIntelIds -join '|') + ')|VEN_10EC&DEV_C852)(?=&|\\|$)'
+$SupportedCardPattern = '^PCI\\(?:VEN_8086&DEV_(' + ($SupportedIntelIds -join '|') + ')|VEN_10EC&DEV_C852|VEN_14C3&DEV_(7902|7961|0608|7922|0616))(?=&|\\|$)'
 # Every present device once: the supported card and the other wireless cards
 # below both come from it.
 $pnpAll = @(Try-Get { Get-PnpDevice -PresentOnly } | Where-Object { $_ })
@@ -484,7 +487,7 @@ function Wireless-Summary($dev) {
   $hw = if ($c.Bus -and $c.HardwareId -and $c.HardwareId -ne $c.Bus) { "$($c.Bus)\$($c.HardwareId)" } else { $c.HardwareId }
   return "$(Dev-Name $dev) (``$(Redact $hw)``): $($c.Chip), $($c.Status)"
 }
-$procs = @('nekodrop-radio', 'nekodrop-radio-rtl', 'awdld', 'nekodrop', 'NekoDropService') | ForEach-Object {
+$procs = @('nekodrop-radio', 'nekodrop-radio-rtl', 'nekodrop-radio-mt', 'nekodrop-radio-mtk', 'awdld', 'nekodrop', 'NekoDropService') | ForEach-Object {
   $p = Get-Process $_ -ErrorAction SilentlyContinue
   if ($p) { "$_ (running)" } else { "$_ (not running)" }
 }
@@ -496,13 +499,13 @@ $engineRunning = Try-Get { @(Get-CimInstance Win32_Process -Filter "Name='python
 $attempt = @()
 $lastRadio = -1; $lastTake = -1
 for ($i = 0; $i -lt $serviceLog.Count; $i++) {
-  if ($serviceLog[$i] -match 'radio: card 0x') { $lastRadio = $i }
+  if ($serviceLog[$i] -match 'radio: card 0x|mtkradio: regproxy opened:') { $lastRadio = $i }
   elseif ($serviceLog[$i] -match 'taking the card from') { $lastTake = $i }
 }
 $start = $lastRadio
 if ($lastTake -gt $lastRadio) { $start = $lastTake }
 elseif ($lastTake -ge 0 -and $lastRadio -ge 0) {
-  $between = $serviceLog[$lastTake..$lastRadio] | Where-Object { $_ -match 'radio: card 0x' }
+  $between = $serviceLog[$lastTake..$lastRadio] | Where-Object { $_ -match 'radio: card 0x|mtkradio: regproxy opened:' }
   if (@($between).Count -eq 1) { $start = $lastTake }
 }
 if ($start -ge 0) { $attempt = $serviceLog[$start..($serviceLog.Count - 1)] }
@@ -548,15 +551,15 @@ if ($start -lt 0) {
   W ''
   W '| Step | Result | Line |'
   W '|---|---|---|'
-  W (Stage 'Take the card (driver bind)' 'radio: card 0x' 'taking the card failed|binding .* failed|register proxy did not start|register proxy not openable')
-  W (Stage 'Identify the card' 'radio: .*\((AX210|22000) family' 'unsupported card|not an Intel device|card does not answer')
-  W (Stage 'DMA memory' 'DMA: \d+ pages in use' 'out of DMA memory for (the rings|receive|the transmit|command|the firmware|the peripheral)|could not lock|DMA: .*fail')
-  W (Stage 'Load the firmware' 'radio: firmware \S+: \d+ LMAC' 'firmware has more sections|no image loader|cannot read|firmware file')
-  W (Stage 'Firmware alive' 'radio: firmware alive' 'did not come alive|failed ALIVE|no ALIVE notification|card not ready|APM init failed|hardware start failed')
+  W (Stage 'Take the card (driver bind)' 'radio: card 0x|mtkradio: regproxy opened:' 'taking the card failed|binding .* failed|register proxy did not start|register proxy not openable')
+  W (Stage 'Identify the card' 'radio: .*\((AX210|22000) family|mtkradio: MTK chip_id=' 'unsupported card|not an Intel device|card does not answer')
+  W (Stage 'DMA memory' 'DMA: \d+ pages in use|mtkradio: 32-bit DMA pool locked' 'out of DMA memory for (the rings|receive|the transmit|command|the firmware|the peripheral)|could not lock|DMA: .*fail|SeLockMemoryPrivilege')
+  W (Stage 'Load the firmware' 'radio: firmware \S+: \d+ LMAC|mtkradio: loading RAM firmware' 'firmware has more sections|no image loader|cannot read|firmware file')
+  W (Stage 'Firmware alive' 'radio: firmware alive|mtkradio: MT792\d firmware booted and ready' 'did not come alive|failed ALIVE|no ALIVE notification|card not ready|APM init failed|hardware start failed')
   W (Stage 'PNVM (AX210 family)' 'PNVM: \d+ bytes for this SKU' 'PNVM: none|PNVM: no buffer|PNVM: out of DMA|no PNVM_INIT_COMPLETE|did not take its platform NVM' 'AX210 family')
-  W (Stage 'Firmware init (INIT_COMPLETE)' 'radio: NVM: tx antennas' 'no INIT_COMPLETE|INIT_EXTENDED_CFG failed|NVM_ACCESS_COMPLETE failed|reading the NVM failed')
-  W (Stage 'Firmware setup commands' 'radio: ready on channel' 'firmware init commands failed|PHY context add failed|MAC context|binding failed')
-  W (Stage 'Radio ready' 'radio: ready on channel' 'radio exited during bring-up|never became ready')
+  W (Stage 'Firmware init (INIT_COMPLETE)' 'radio: NVM: tx antennas|mtkradio: WFDMA rings allocated' 'no INIT_COMPLETE|INIT_EXTENDED_CFG failed|NVM_ACCESS_COMPLETE failed|reading the NVM failed')
+  W (Stage 'Firmware setup commands' 'radio: ready on channel|mtkradio: tuned to ch' 'firmware init commands failed|PHY context add failed|MAC context|binding failed')
+  W (Stage 'Radio ready' 'radio: ready on channel|mtkradio: listening on ' 'radio exited during bring-up|never became ready')
   $awdl = $attempt | Where-Object { $_ -match 'rx: \d+ frames, (\d+) AWDL action frames' } | ForEach-Object { [int]$Matches[1] } | Measure-Object -Maximum
   # MIF counts (0.1.9+): awdld takes a peer as valid only after one (#16).
   $mif = $attempt | Where-Object { $_ -match 'AWDL action frames \((\d+) PSF, (\d+) MIF' } | ForEach-Object { [int]$Matches[2] } | Measure-Object -Maximum
