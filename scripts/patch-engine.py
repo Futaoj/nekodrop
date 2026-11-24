@@ -372,6 +372,13 @@ if new_r not in text:
 # when the client set NEKODROP_IDENTITY: the Apple-signed certificate on TLS,
 # the validation record in /Discover and /Ask, and a Contacts Only filter on
 # the receiver (NEKODROP_RECEIVE=contacts). Without one nothing changes.
+# The hooks below import it, so the patch brings it along: engine-test ran the
+# patched engine without it and every test module of receiver/sender/engine
+# failed to import (ModuleNotFoundError) from 2.1.0 on.
+_identity = pathlib.Path(__file__).resolve().parent.parent / 'installer' / 'nekodrop_identity.py'
+(pathlib.Path(sys.argv[1]) / 'nekodrop_identity.py').write_bytes(_identity.read_bytes())
+
+
 def _hook(name, pairs, mark):
     path = pathlib.Path(sys.argv[1]) / name
     text = path.read_text(encoding='utf-8')
