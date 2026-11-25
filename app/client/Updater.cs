@@ -356,7 +356,7 @@ public static class Updater
     public static async Task<Release?> FindNewer(bool includePreview) => (await Check(includePreview)).Release;
 
     /// <summary>Downloads, verifies and starts the installer. Returns "" or why not.</summary>
-    public static async Task<string> Install(Release r, IProgress<DownloadProgress>? progress = null, bool deleteAfterInstall = true)
+    public static async Task<string> Install(Release r, IProgress<DownloadProgress>? progress = null, bool deleteAfterInstall = true, bool showWindow = true)
     {
         var dir = Path.Combine(Path.GetTempPath(), "nekodrop-update");
         Directory.CreateDirectory(dir);
@@ -419,7 +419,7 @@ public static class Updater
             return "the download does not match the published SHA-256";
         }
         // The installer closes this app itself (CloseApplications) and starts it again afterwards.
-        StartInstaller(path, deleteAfterInstall);
+        StartInstaller(path, deleteAfterInstall, showWindow);
         return "";
     }
 
@@ -427,13 +427,14 @@ public static class Updater
     /// Starts the installer. With deleteAfterInstall, a detached PowerShell helper
     /// waits for the installer and removes the setup file only after a successful
     /// exit. The app is closed by the installer itself, so the helper must live
-    /// outside this process.
+    /// outside this process. showWindow asks the installer to open the main panel
+    /// instead of starting the new version in the background.
     /// </summary>
-    static void StartInstaller(string path, bool deleteAfterInstall)
+    static void StartInstaller(string path, bool deleteAfterInstall, bool showWindow)
     {
         if (!deleteAfterInstall)
         {
-            Process.Start(new ProcessStartInfo(path, "/SILENT /NORESTART") { UseShellExecute = true });
+            Process.Start(InstallerStart(path, showWindow));
             return;
         }
 
@@ -457,6 +458,7 @@ public static class Updater
             psi.ArgumentList.Add(helper);
             psi.ArgumentList.Add("-Installer");
             psi.ArgumentList.Add(path);
+            if (showWindow) psi.ArgumentList.Add("-ShowApp");
             Process.Start(psi);
         }
         catch (Exception)
@@ -467,15 +469,23 @@ public static class Updater
             {
                 try { File.Delete(helper); } catch (Exception) { }
             }
-            Process.Start(new ProcessStartInfo(path, "/SILENT /NORESTART") { UseShellExecute = true });
+            Process.Start(InstallerStart(path, showWindow));
         }
     }
 
+    static ProcessStartInfo InstallerStart(string path, bool showWindow)
+    {
+        var args = "/SILENT /NORESTART" + (showWindow ? " /SHOWAPP" : "");
+        return new ProcessStartInfo(path, args) { UseShellExecute = true };
+    }
+
     const string CleanupScript = """
-param([Parameter(Mandatory = $true)][string]$Installer)
+param([Parameter(Mandatory = $true)][string]$Installer, [switch]$ShowApp)
 $ErrorActionPreference = 'SilentlyContinue'
 try {
-    $p = Start-Process -FilePath $Installer -ArgumentList '/SILENT', '/NORESTART' -PassThru -ErrorAction Stop
+    $setupArgs = @('/SILENT', '/NORESTART')
+    if ($ShowApp) { $setupArgs += '/SHOWAPP' }
+    $p = Start-Process -FilePath $Installer -ArgumentList $setupArgs -PassThru -ErrorAction Stop
     if ($p.WaitForExit(1800000) -and $p.ExitCode -eq 0) {
         Remove-Item -LiteralPath $Installer -Force
     }

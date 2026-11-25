@@ -884,7 +884,7 @@ public sealed class App : Application
         if (r is null) return L.T("update.none");
         try
         {
-            var why = await Updater.Install(r, progress, Settings.DeleteInstallerAfterInstall);
+            var why = await Updater.Install(r, progress, Settings.DeleteInstallerAfterInstall, Settings.UpdateLaunch == "window");
             if (why != "") Shell.DoneToast("update", L.T("update.failed"), why, null);
             return why;
         }

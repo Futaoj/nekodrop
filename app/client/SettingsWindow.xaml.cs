@@ -59,6 +59,7 @@ public partial class SettingsWindow : Window
         CheckUpdatesBox.IsChecked = s.CheckUpdates;
         PreviewUpdatesBox.IsChecked = s.PreviewUpdates;
         DeleteInstallerBox.IsChecked = s.DeleteInstallerAfterInstall;
+        (s.UpdateLaunch == "background" ? UpdateTray : UpdateWindow).IsChecked = true;
         VersionText.Text = "nekodrop " + Updater.Current;
         Title = L.T("set.title") + " · nekodrop " + Updater.Current;
         ShowCard(A.Service.Last);
@@ -259,6 +260,7 @@ public partial class SettingsWindow : Window
         {
             A.Settings.PreviewUpdates = PreviewUpdatesBox.IsChecked == true;
             A.Settings.DeleteInstallerAfterInstall = DeleteInstallerBox.IsChecked == true;
+            A.Settings.UpdateLaunch = UpdateTray.IsChecked == true ? "background" : "window";
             var res = await A.CheckForUpdateDetailed(true);
             switch (res.Status)
             {
@@ -333,6 +335,7 @@ public partial class SettingsWindow : Window
         s.CheckUpdates = CheckUpdatesBox.IsChecked == true;
         s.PreviewUpdates = PreviewUpdatesBox.IsChecked == true;
         s.DeleteInstallerAfterInstall = DeleteInstallerBox.IsChecked == true;
+        s.UpdateLaunch = UpdateTray.IsChecked == true ? "background" : "window";
         var language = (LanguageBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "auto";
         var languageChanged = language != s.Language;
         s.Language = language;
