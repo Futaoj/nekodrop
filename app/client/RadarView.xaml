@@ -297,12 +297,16 @@
             </BeginStoryboard>
           </DataTrigger.EnterActions>
         </DataTrigger>
-        <!-- Someone asks: the halo breathes and the bubble opens; the status line gives way to it -->
-        <DataTrigger Binding="{Binding Ask, Converter={x:Static local:IsSet.Instance}}" Value="True">
+        <!-- Someone asks (waiting for answer): the halo breathes and the bubble opens; the status line gives way to it -->
+        <MultiDataTrigger>
+          <MultiDataTrigger.Conditions>
+            <Condition Binding="{Binding Ask, Converter={x:Static local:IsSet.Instance}}" Value="True"/>
+            <Condition Binding="{Binding Ask.Receiving}" Value="False"/>
+          </MultiDataTrigger.Conditions>
           <Setter TargetName="bubbleHost" Property="Visibility" Value="Visible"/>
           <Setter TargetName="AskGlow" Property="Visibility" Value="Visible"/>
           <Setter TargetName="status" Property="Visibility" Value="Hidden"/>
-          <DataTrigger.EnterActions>
+          <MultiDataTrigger.EnterActions>
             <BeginStoryboard>
               <Storyboard>
                 <DoubleAnimation Storyboard.TargetName="bubble" Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.2"/>
@@ -324,15 +328,15 @@
                 </DoubleAnimation>
               </Storyboard>
             </BeginStoryboard>
-          </DataTrigger.EnterActions>
-          <DataTrigger.ExitActions><StopStoryboard BeginStoryboardName="askPulse"/></DataTrigger.ExitActions>
-        </DataTrigger>
-        <!-- Accepted: the bubble closes; this PC's ring shows the progress -->
+          </MultiDataTrigger.EnterActions>
+          <MultiDataTrigger.ExitActions><StopStoryboard BeginStoryboardName="askPulse"/></MultiDataTrigger.ExitActions>
+        </MultiDataTrigger>
+        <!-- Accepted (or auto-accepted): no bubble; this PC's ring and sender status show live progress -->
         <DataTrigger Binding="{Binding Ask.Receiving}" Value="True">
           <Setter TargetName="bubbleHost" Property="Visibility" Value="Collapsed"/>
           <Setter TargetName="AskGlow" Property="Visibility" Value="Hidden"/>
           <Setter TargetName="status" Property="Visibility" Value="Visible"/>
-          <Setter TargetName="status" Property="Text" Value="{local:T req.receiving}"/>
+          <Setter TargetName="status" Property="Text" Value="{Binding Ask.Status}"/>
           <Setter TargetName="status" Property="Foreground" Value="{DynamicResource Accent}"/>
         </DataTrigger>
       </DataTemplate.Triggers>
@@ -368,7 +372,7 @@
           </Grid>
           <StackPanel VerticalAlignment="Center">
             <TextBlock Text="{Binding Name}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-            <TextBlock Text="{Binding Status}" Style="{StaticResource StateText}" FontSize="12"/>
+            <TextBlock x:Name="listStatus" Text="{Binding Status}" Style="{StaticResource StateText}" FontSize="12"/>
           </StackPanel>
         </DockPanel>
       </Border>
@@ -393,6 +397,8 @@
         </DataTrigger>
         <DataTrigger Binding="{Binding Ask.Receiving}" Value="True">
           <Setter TargetName="answer" Property="Visibility" Value="Collapsed"/><Setter TargetName="inbar" Property="Visibility" Value="Visible"/>
+          <Setter TargetName="listStatus" Property="Text" Value="{Binding Ask.Status}"/>
+          <Setter TargetName="listStatus" Property="Foreground" Value="{DynamicResource Accent}"/>
         </DataTrigger>
       </DataTemplate.Triggers>
     </DataTemplate>

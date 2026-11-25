@@ -340,7 +340,7 @@ public sealed class App : Application
             ("wifi", () => { var w = new WifiWindow(); w.Render(wifiState); return w; }, 0),
             ("wifi-windows", () => { var w = new WifiWindow(); wifiState["mode"] = "ondemand"; w.Render(wifiState); return w; }, 0),
             ("tray", () => { var m = new TrayMenu(); m.Loaded += (_, _) => m.OpenModes(); return m; }, 0),
-            ("main-receiving", () => { Settings.DeviceView = "radar"; asking.Receiving = true; asking.Progress = 0.6; return Main("ready"); }, 0),
+            ("main-receiving", () => { Settings.DeviceView = "radar"; asking.Receiving = true; asking.Progress = 0.6; asking.Status = L.F("req.receivingPct", 0.6); return Main("ready"); }, 0),
             ("main-done", () => { asking.Receiving = false; var w = Main("ready"); w.Loaded += (_, _) => Dispatcher.BeginInvoke(Model.RaiseStored); return w; }, 0),
             ("main-empty", () => { Settings.DeviceView = "radar"; Model.Devices.Clear(); Model.Requests.Clear(); return Main("ready"); }, 0),
             ("main-starting", () => Main("starting"), 0),
@@ -411,7 +411,7 @@ public sealed class App : Application
         var phone = new Device { Id = "p", Name = "iPhone", Model = "iPhone15,2" };
         Model.Devices.Add(phone);
         Model.Devices.Add(mac);
-        var ask = new Request { Id = "q", Sender = "iPhone", Model = "iPhone15,2", What = L.F("what.photos", 3), Receiving = true, Progress = 0.4 };
+        var ask = new Request { Id = "q", Sender = "iPhone", Model = "iPhone15,2", What = L.F("what.photos", 3), Receiving = true, Progress = 0.4, Status = L.F("req.receivingPct", 0.4) };
         Model.Requests.Add(ask);
         phone.Ask = ask;
         Model.Air = "ready";
@@ -1059,7 +1059,7 @@ public sealed class App : Application
             }
             case "peer_gone":
                 var gone = Model.Devices.FirstOrDefault(x => x.Id == id);
-                if (gone is not null && !gone.Busy) Model.Devices.Remove(gone);
+                if (gone is not null && !gone.Busy && gone.Ask is null) Model.Devices.Remove(gone);
                 break;
             case "asked":
             {
@@ -1084,26 +1084,52 @@ public sealed class App : Application
                     if (Settings.RecentSenders.Count > 8) Settings.RecentSenders.RemoveRange(8, Settings.RecentSenders.Count - 8);
                     Settings.Save();
                 }
-                if (!waits) break;
-                var autoAccept = Settings.AutoAcceptMode == "everyone" ||
+                var autoAccept = !waits ||
+                                 Settings.AutoAcceptMode == "everyone" ||
                                  (Settings.AutoAcceptMode == "contacts" && isContact) ||
                                  Settings.AlwaysAccept.Contains(key);
-                if (autoAccept) { Engine.Answer(id, true); break; }
-                var r = new Request { Id = id, Sender = sender, Model = model, What = what };
+                var r = new Request
+                {
+                    Id = id,
+                    Sender = sender,
+                    Model = model,
+                    What = what,
+                    Receiving = autoAccept,
+                    Status = autoAccept ? L.T("req.receiving") : L.T("req.waiting"),
+                };
                 _requests[id] = r;
                 Model.Requests.Insert(0, r);
                 AttachAsk(r);
-                Shell.AskToast(id, sender, what, preview);
+                if (autoAccept)
+                {
+                    if (waits) Engine.Answer(id, true);
+                }
+                else
+                {
+                    Shell.AskToast(id, sender, what, preview);
+                }
                 break;
             }
             case "incoming":
-                if (_requests.TryGetValue(id, out var inc))
+                if (!_requests.TryGetValue(id, out var inc))
                 {
-                    var total = (double?)o["total"] ?? 0;
-                    inc.Progress = total > 0 ? ((double?)o["done"] ?? 0) / total : 0;
-                    inc.Status = L.T("req.receiving");
-                    inc.Receiving = true;
+                    inc = new Request
+                    {
+                        Id = id,
+                        Sender = _askSender.GetValueOrDefault(id, L.T("dev.someone")),
+                        Model = "",
+                        What = L.T("what.some"),
+                        Receiving = true,
+                        Status = L.T("req.receiving"),
+                    };
+                    _requests[id] = inc;
+                    Model.Requests.Insert(0, inc);
+                    AttachAsk(inc);
                 }
+                var incTotal = (double?)o["total"] ?? 0;
+                inc.Progress = incTotal > 0 ? Math.Clamp(((double?)o["done"] ?? 0) / incTotal, 0, 1) : 0;
+                inc.Status = incTotal > 0 ? L.F("req.receivingPct", inc.Progress) : L.T("req.receiving");
+                inc.Receiving = true;
                 Service.Touch();
                 break;
             case "stored":

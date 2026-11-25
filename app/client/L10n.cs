@@ -77,6 +77,7 @@ public static class L
         ["dev.someone"] = ("某台设备", "A device"),
         ["req.waiting"] = ("等待你的回应", "Waiting for you"),
         ["req.receiving"] = ("正在接收…", "Receiving…"),
+        ["req.receivingPct"] = ("接收中 {0:P0}", "Receiving {0:P0}"),
         ["req.declined"] = ("已拒绝", "Declined"),
         ["what.some"] = ("一些内容", "something"),
         ["what.photos"] = ("{0} 张照片", "{0} photo(s)"),
