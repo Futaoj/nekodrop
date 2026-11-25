@@ -21,7 +21,9 @@
 #include <string>
 #include <vector>
 
+#ifndef NEKO_KERNEL
 #include "dma_runs.h"
+#endif
 
 struct DmaBuf {
   uint8_t *va = nullptr;
@@ -54,8 +56,10 @@ public:
   /* Whether buffers of these sizes (in pages) can all be carved from runs of
    * adjacent frames (best fit, largest first). */
   bool fits(std::vector<size_t> runs) const;
+#ifndef NEKO_KERNEL
   /* Reserve the tested spans before singles take them. Consumed by alloc(). */
   bool reserve_runs(std::vector<size_t> runs);
+#endif
   /* Physical memory Windows has free, in bytes (0 if unknown). */
   static uint64_t available_bytes();
   /* Longest run of adjacent frames, in pages (a diagnostic). */
@@ -71,8 +75,10 @@ private:
   uint8_t *_view = nullptr;
   std::vector<uintptr_t> _frames; /* sorted; index i is mapped at _view + i * 4 KiB */
   std::vector<bool> _taken;
+#ifndef NEKO_KERNEL
   DmaRuns _runs;
   DmaRuns::Reservations _reserved;
+#endif
   size_t _part = SIZE_MAX;       /* page being packed with small buffers */
   size_t _part_used = 0;
   size_t _used_pages = 0;

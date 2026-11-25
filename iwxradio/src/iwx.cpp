@@ -8,7 +8,6 @@
  * by side.
  */
 #include "iwx.h"
-#include "iwx_channel.h"
 
 #include "plat.h"
 
@@ -18,6 +17,7 @@
 #include <cstring>
 
 #include "iwxreg.h"
+#include "iwx_channel.h"
 
 namespace {
 
@@ -335,8 +335,10 @@ bool IwxDevice::alloc_rings(std::string &error) {
     }
     report("grew to");
   }
+#ifndef NEKO_KERNEL
   if (!_dma.reserve_runs(need))
     _log("DMA: not enough free runs to reserve all rings and firmware sections");
+#endif
 
   _ctxt_info = _dma.alloc(std::max(sizeof(iwx_context_info), sizeof(iwx_context_info_gen3)), 4096);
   /* Receive: free list, used list, status word, 512 buffers of 4 KiB. The

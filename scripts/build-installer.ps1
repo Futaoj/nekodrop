@@ -114,7 +114,7 @@ foreach ($f in 'signtool.exe', 'signtool.exe.manifest', 'mssign32.dll', 'wintrus
 }
 
 'kernel Wi-Fi driver (installed separately: needs test signing)'
-& "$PSScriptRoot\build-kdriver.ps1" | Out-Null
+& "$PSScriptRoot\build-kdriver.ps1" | Out-Host
 New-Item -ItemType Directory -Force "$stage\kdriver" | Out-Null
 Copy-Item "$repo\build\kdriver\package\*" "$stage\kdriver\"
 Copy-Item "$PSScriptRoot\kdriver-install.ps1", "$PSScriptRoot\kdriver-restore.ps1" "$stage\kdriver\"
