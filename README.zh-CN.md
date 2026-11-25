@@ -38,9 +38,9 @@
 - **AirDrop 时照常上网**：在“同时联网和 AirDrop”模式下，nekodrop 自己驱动网卡，一个虚拟接口连你的 Wi-Fi，另一个跑 AWDL（苹果无线直连协议）。Windows 里上网走一块名叫 **nekodrop** 的“有线网卡”。
 - **完整的 Wi-Fi 管理**：扫描、连接、隐藏网络、已保存网络和自动连接。会导入 Windows 里已保存的 Wi-Fi，还能识别酒店、机场、校园网这类需要网页登录的网络，并自动在浏览器里打开登录页。
 - **自动恢复**：后台服务盯着 radio、AWDL 守护进程和 AirDrop 引擎，哪个停了就重启哪个。开机自动启动。
-- **托盘旁的小面板**：中英双语，浅色 / 深色。点托盘图标或按快捷键（默认 Win+Shift+D，可以录入自己的组合键）从右下角弹出，点别处自动收起。附近设备显示在雷达（或列表）上，动效用 Windows 原生 Fluent 曲线：发送时送出蓝色波纹、进度环匀速走满，完成后变绿打勾。
-- **点 AirDrop 标志切换谁能发给你**：点左上角的标志，选 **接收关闭**、**仅限联系人** 或 **所有人**，和 iPhone 一样。
-- **仅限联系人（实验性）**：在电脑上登录 Apple ID，或导入 Mac 的 AirDrop 证书，电脑就会像你的 Mac 一样出现在你自己的 iPhone 上，开了「仅限联系人」的 iPhone 也能用。见下方「仅限联系人」一节。
+- **托盘旁的小面板**：中英双语，浅色 / 深色。点托盘图标或按快捷键（默认 Win+Shift+D，可以录入自己的组合键）从右下角弹出，点别处自动收起。附近设备显示在雷达（或列表）上，动效用 Windows 原生 Fluent 曲线：发送与接收时送出蓝色波纹、进度环匀速走满并显示实时传输速率（`MB/s` / `KB/s`，可在设置里开关），完成后变绿打勾。
+- **点 AirDrop 标志切换谁能发给你**：点左上角的标志，选 **接收关闭**、**仅限联系人** 或 **所有人**，和 iPhone 一样。支持三档自动同意接收（关闭 / 仅限联系人 / 全部）、媒体格式偏好（兼容 JPEG/H.264 或原始 HEIC/HEVC 及可选自动转存 JPG 副本）、系统通知大图预览与一键复制，以及发完大文件后自动 BLE 重脉冲唤醒 iPhone。
+- **仅限联系人（实验性）**：在电脑上登录 Apple ID（支持 `-27952` 与 2FA 503 自动重试，以及一键导出脱敏登录日志），或导入 Mac 的 AirDrop 证书，电脑就会像你的 Mac 一样出现在你自己的 iPhone 上，开了「仅限联系人」的 iPhone 也能用。见下方「仅限联系人」一节。
 - **Windows「共享」菜单**：资源管理器和其他应用的分享面板里可以直接选 nekodrop。
 
 ## 界面截图
@@ -74,10 +74,10 @@
 | 系统 | Windows 11 专业版 x64 |
 | iPhone → Windows | ✅ 可用：照片和文件完整收到 |
 | Windows → iPhone | ✅ 可用：右键 → 用 nekodrop 发送，iPhone 接受并收到 |
-| AirDrop 速度 | 电脑 → iPhone **30.8 MB/s**（104.8 MB 用 3.4 秒；每个聚合 63 帧，确认率 99.7%）；同一个文件 iPhone → 电脑平均 **13.5 MB/s**（0.1.30） |
+| AirDrop 速度 | 电脑 → iPhone 最高 **50.55 MiB/s（53.00 MB/s）**（846 MB 用 15.97 秒，Block Ack 确认率 99.85%，0 丢包）；iPhone → 电脑 净传输最高 **50.81 MiB/s（53.28 MB/s）**、端到端 **47.36 MiB/s（49.66 MB/s）**（846 MB 净收 15.84 秒 / 总计 17.00 秒，0 丢包；开启高吞吐 HE80 + MTU 1500 与零管道 SHM，`v2.2.9+`） |
 | 同时上网 | ✅ 可用：AirDrop 运行时电脑通过 nekodrop 自己的 WPA2 连接保持在线，Wi-Fi 和 AWDL 在同一个 5 GHz 信道上也没问题 |
 
-之后用户也在 AX200、AX210、AX211、9560 上确认了 AirDrop 可用，贡献者也在 MediaTek MT7902 和 MT7922 上实测过（见下表）。欢迎在 [Issues](../../issues) 反馈其他机器的结果。
+之后用户也在 AX200、AX210、AX211、AX411/AX1690i、9560 和 Realtek RTL8852CE 上确认了 AirDrop 可用，贡献者也在 MediaTek MT7902 和 MT7922 上实测过（见下表）。欢迎在 [Issues](../../issues) 反馈其他机器的结果。
 
 ## 支持的网卡
 
@@ -100,14 +100,14 @@ nekodrop 通过模块化底层驱动后端（`CardCatalog` + `radio_backend.h`�
 | Intel Wi-Fi 6 AX200（独立网卡） | `8086:2723` | `cc-a0-68`（`iwx`，同时连 Wi-Fi / 按需） | ✅ 用户反馈双向 AirDrop 可用（[#1](../../issues/1)、[#4](../../issues/4)）；打开 A-MPDU 后发给 iPhone 9–25 MiB/s（[#4](../../issues/4)） |
 | Intel Wi-Fi 6E AX210（独立网卡） | `8086:2725` | `ty-a0-gf-a0-68` + PNVM（`iwx`，同时连 Wi-Fi / 按需） | ✅ 用户反馈双向 AirDrop 可用（[#14](../../issues/14)、[#18](../../issues/18)、[#11](../../issues/11)） |
 | Intel Wi-Fi 6E AX211（CNVi，第 12 代及以后） | `8086:` `7AF0` `7A70` `51F0` `51F1` `54F0` `7F70` | `so-a0-gf-a0-68` + PNVM（`iwx`，同时连 Wi-Fi / 按需） | ✅ 用户反馈双向 AirDrop 可用（[#9](../../issues/9)、[#29](../../issues/29)）；0.1.31 起 iPhone 能看到电脑（[#24](../../issues/24)） |
-| Intel Wi-Fi 6E AX411 / Killer AX1690（CNVi） | 与 AX211 相同 | `so-a0-gf4-a0-68` + PNVM（`iwx`，同时连 Wi-Fi / 按需） | 🧪 能识别、固件能启动（[#25](../../issues/25)）；已包含 AX211 的 0.1.31 修复，待用户确认 |
+| Intel Wi-Fi 6E AX411 / Killer AX1690（CNVi） | 与 AX211 相同 | `so-a0-gf4-a0-68` + PNVM（`iwx`，同时连 Wi-Fi / 按需） | ✅ 用户实测可用（[#37](../../issues/37)） |
 | So 平台上的 Intel Wi-Fi 6 AX203 / 9560 | 与 AX211 相同 | `so-a0-hr/jf-b0-68`（`iwx`，同时连 Wi-Fi / 按需） | ⚠️ 未测试 |
-| **Realtek RTL8852CE** | `10EC:C852` | 内嵌固件（`devourer`，仅按需接管） | ⚠️ 已内置；用户实测可用，但停在 6 信道时发送慢，正在排查（[#32](../../issues/32)） |
-| **MediaTek MT7902** | `14C3:7902` | linux-firmware `WIFI_RAM_CODE_MT7902_1`（移植自 `mt76`，同时连 Wi-Fi（仅 5 GHz）与按需接管） | ⚠️ 已内置；一张卡上双向 AirDrop 实测可用（接收约 15 MB/s，发送约 5 MB/s）；同时连 Wi-Fi 已在一张卡上实测（AirDrop 待命时下载约 3.5 MB/s、上传约 1.3 MB/s） |
-| **MediaTek MT7922 / AMD RZ616** | `14C3:0616` `14C3:7922` | linux-firmware `WIFI_RAM_CODE_MT7922_1`（`mtkradio`，同时连 Wi-Fi（仅 5 GHz，实验性）与按需接管） | 🧪 实验性，已内置；已在 MT7922 / AMD RZ616 上实测双向 AirDrop 可用（[#40](../../pull/40)，[docs/MT7922.md](docs/MT7922.md)）；同时连 Wi-Fi 尚未在真机上测试 |
+| **Realtek RTL8852CE** | `10EC:C852` | 内嵌固件（`devourer`，仅按需接管） | ✅ 已内置；用户实测双向可用，峰值约 **24.5 MB/s**（[#61](../../issues/61)） |
+| **MediaTek MT7902** | `14C3:7902` | linux-firmware `WIFI_RAM_CODE_MT7902_1`（移植自 `mt76`，同时连 Wi-Fi（仅 5 GHz）与按需接管） | ✅ 已内置；双向 AirDrop（接收约 15 MB/s，发送约 5 MB/s）与同时连 Wi-Fi 均已真机实测（[#34](../../pull/34)、[#47](../../pull/47)） |
+| **MediaTek MT7922 / AMD RZ616** | `14C3:0616` `14C3:7922` | linux-firmware `WIFI_RAM_CODE_MT7922_1`（`mtkradio`，同时连 Wi-Fi（仅 5 GHz，实验性）与按需接管） | 🧪 实验性，已内置；双向 AirDrop 已实测（[#40](../../pull/40)，[docs/MT7922.md](docs/MT7922.md)）；`v2.2.8`–`v2.2.9` 已补齐 HE80 2SS LWTBL、扫描 `FIF_BIT_CLR`、固件 RA 与 RX A-MSDU 修复（[#65](../../pull/65)、[#66](../../issues/66)） |
 | **MediaTek MT7921 / AMD RZ608** | `14C3:7961` `14C3:0608` | linux-firmware `WIFI_RAM_CODE_MT7961_1`（`mtkradio`，同时连 Wi-Fi（仅 5 GHz，实验性）与按需接管） | ⚠️ 实验性，已内置；按需与同时连 Wi-Fi 均尚未在真机上测试 |
 | Intel SnJ `2726`、QnJ `2720`、Meteor Lake `7E40`/`2729` | `8086:` | 上游没有固件 | ❌ |
-| **Intel Wi-Fi 7 BE200**（独立网卡） | `8086:272B` | linux-firmware `gl-c0-fm-c0-100`（`iwx` 的 Bz/MLD 路径，同时连 Wi-Fi / 按需） | 🧪 实验性，已内置；**还没在真机上跑过**，欢迎试用并提交诊断报告（[docs/BE200.md](docs/BE200.md)） |
+| **Intel Wi-Fi 7 BE200**（独立网卡） | `8086:272B` | linux-firmware `gl-c0-fm-c0-100`（`iwx` 的 Bz/MLD 路径，同时连 Wi-Fi / 按需） | 🧪 实验性，已内置；`v2.2.9` 已加固 4096 字节页对齐与双 LMAC 诊断，欢迎实测反馈（[#53](../../issues/53)、[docs/BE200.md](docs/BE200.md)） |
 | Intel BE201 / BE211（Wi-Fi 7，CNVi） | `8086:` `A840` `7740` | 需要 CNVi 硬件 | ❌ |
 | 其他 Realtek、MediaTek、高通、博通 | | | ❌ |
 
@@ -115,7 +115,7 @@ nekodrop 通过模块化底层驱动后端（`CardCatalog` + `radio_backend.h`�
 
 网卡按 PCI ID 自动识别。没识别出来时，可以在 *设置 → 网卡* 里手动选择网卡和型号（只对驱动包里列出的硬件 ID 有效）。想给 nekodrop 适配新的网卡家族，见 [docs/ADDING-A-CARD.md](docs/ADDING-A-CARD.md)。
 
-不确定自己是什么网卡，或者希望支持别的网卡？[诊断报告](#反馈问题诊断报告)不装 nekodrop 也能用：下载 [`installer/report.ps1`](installer/report.ps1)，运行 `powershell -ExecutionPolicy Bypass -File report.ps1`。它会列出每块无线网卡的 PCI ID、芯片、驱动，以及 nekodrop 为什么能或不能在上面运行；欢迎贴到 [Issues](../../issues)。已安装 nekodrop 时，运行 `NekoDropService.exe --status` 可查看匹配到的网卡档案、能力与当前驱动提供者，`NekoDropService.exe --selftest` 可在无网卡、无管理员权限下校验全部 16 个活跃网卡档案（15 款 Intel + Realtek RTL8852CE）以及双后端启动参数规划。Intel 的 radio 启动时会记一行 `backend …` 日志并在每次构建时运行 `iwx_selftest`；Realtek 的 radio 构建会同步运行四项离线单测（`block_ack_test`、`reorder_buffer_test`、`outgoing_session_test`、`dma_address_test`）；`install.ps1 -SelfTest`、`restore.ps1 -SelfTest` 和 `report.ps1 -SelfTest` 也会在每次构建时于 Windows PowerShell 5.1 下运行离线自检。支持其他网卡需要做什么，见 [docs/HARDWARE.md](docs/HARDWARE.md)（英文）。
+不确定自己是什么网卡，或者希望支持别的网卡？[诊断报告](#反馈问题诊断报告)不装 nekodrop 也能用：下载 [`installer/report.ps1`](installer/report.ps1)，运行 `powershell -ExecutionPolicy Bypass -File report.ps1`。它会列出每块无线网卡的 PCI ID、芯片、驱动，以及 nekodrop 为什么能或不能在上面运行；欢迎贴到 [Issues](../../issues)。已安装 nekodrop 时，运行 `NekoDropService.exe --status` 可查看匹配到的网卡档案、能力与当前驱动提供者，`NekoDropService.exe --selftest` 可在无网卡、无管理员权限下校验全部 22 个活跃网卡档案以及多后端启动参数规划。Intel 的 radio 启动时会记一行 `backend …` 日志并在每次构建时运行 `iwx_selftest`；Realtek 的 radio 构建会同步运行四项离线单测（`block_ack_test`、`reorder_buffer_test`、`outgoing_session_test`、`dma_address_test`）；`install.ps1 -SelfTest`、`restore.ps1 -SelfTest` 和 `report.ps1 -SelfTest` 也会在每次构建时于 Windows PowerShell 5.1 下运行离线自检。支持其他网卡需要做什么，见 [docs/HARDWARE.md](docs/HARDWARE.md)（英文）。
 
 ### 出问题了？一键回退
 
@@ -137,6 +137,7 @@ nekodrop 通过模块化底层驱动后端（`CardCatalog` + `radio_backend.h`�
 |---|---|
 | `C:\ProgramData\nekodrop\service.log`（以及 `service.log.1`） | 服务、radio（固件、AWDL、Wi-Fi）和 awdld 的日志，需要管理员权限才能读 |
 | `%LocalAppData%\nekodrop\engine.log`（以及 `engine.log.old`） | AirDrop 引擎：发现设备、蓝牙信标、收发文件 |
+| `%LocalAppData%\nekodrop\appleid\appleid.log` | Apple ID 登录与 Anisette 辅助日志（`report.ps1` 自动脱敏收录，亦可在 设置 → Apple ID 一键导出） |
 | `C:\ProgramData\nekodrop\install.log` | 安装过程：驱动、TAP 网卡、防火墙、服务 |
 | `C:\ProgramData\nekodrop\restore.log` | 一键回退 |
 
@@ -165,7 +166,7 @@ nekodrop 只支持上表里的网卡。**单纯要求支持其他网卡、不附
    - 把文件复制到 `C:\Program Files\nekodrop`；
    - **在你的电脑上**生成一个代码签名证书，用它给小小的寄存器代理驱动签名并信任它，然后**删除私钥**，这个证书以后再也签不了别的东西；
    - 创建名为 **nekodrop** 的 TAP 虚拟网卡（TAP-Windows，OpenVPN 签名）；
-   - 添加两条只允许链路本地地址的入站防火墙规则（TCP 8771-8779、UDP 5353）；
+   - 添加两条只允许链路本地地址的入站防火墙规则（`TCP 8771-8779, 18771-18779, 28771-28779` 以避开 Hyper-V 保留端口段、`UDP 5353`）；
    - 安装并启动 **NekoDropService** 服务。
 3. 托盘里会出现紫色小猫图标。打开它，确认 **允许接收** 已勾选。
 
@@ -173,7 +174,7 @@ nekodrop 只支持上表里的网卡。**单纯要求支持其他网卡、不附
 
 ### 更新
 
-nekodrop 启动一分钟后检查 GitHub 上有没有新版本，之后每 6 小时检查一次。发现新版本会弹通知，点 **更新** 就会下载安装包，先核对 GitHub 公布的 SHA-256，再运行安装（Windows 会请求管理员权限）。不会在你不知情时自己安装。*设置 → 更新* 里可以关闭自动检查、选择是否包括预览版，也可以手动 **检查更新**。版本分两个通道：**稳定版**，以及修复一出就构建的预览版。默认包括预览版；取消勾选「包括预览版」就只收稳定版。
+nekodrop 启动一分钟后检查 GitHub 上有没有新版本，之后每 6 小时检查一次，支持实时动态读取 Windows 系统代理；当 `api.github.com` 不可达或限流时自动回退到与浏览器同源的网页通道（[#62](../../issues/62)）。发现新版本会弹通知，点 **更新** 就会下载安装包并实时显示下载速率（`KB/s` / `MB/s`，[#64](../../pull/64)），先核对 GitHub 公布的 SHA-256，再运行安装（Windows 会请求管理员权限）。不会在你不知情时自己安装。*设置 → 关于与更新* 里可以关闭自动检查、选择是否包括预览版、安装完成后自动删除安装包（[#44](../../pull/44)）、选择更新完成后打开 **主面板** 或启动到 **托盘**（[#71](../../pull/71)），也可以手动 **检查更新**。版本分两个通道：**稳定版**（当前为 `v2.2.8`），以及修复一出就构建的 **预览版**。默认包括预览版；取消勾选「包括预览版」就只收稳定版。
 
 ### 卸载
 
@@ -227,33 +228,34 @@ nekodrop 启动一分钟后检查 GitHub 上有没有新版本，之后每 6 小
 
 ### 实验性功能
 
-在 *设置 → 实验性功能* 里，默认都关闭；关掉后行为和原来完全一样。（已经转正、始终打开的：聚合发送 A-MPDU，0.1.35 起，AX201 上发给 iPhone 30.8 MB/s，AX200 上 9–25 MiB/s；Intel 网卡的蓝牙与 Wi-Fi 均衡共存，0.1.37 起，让蓝牙信标发得出去，电脑几秒内就能找到 iPhone 和 Mac，AX200 和 AX211 上有实测，感谢 [@XXD051030](https://github.com/XXD051030)，[#26](../../pull/26)。）
+在 *设置 → 网卡与高级 → 实验性功能* 里，默认都关闭；关掉后行为和原来完全一样。（已经转正、始终打开的：聚合发送 A-MPDU，0.1.35 起；Intel 网卡的蓝牙与 Wi-Fi 均衡共存，0.1.37 起，让蓝牙信标发得出去，电脑几秒内就能找到 iPhone 和 Mac，感谢 [@XXD051030](https://github.com/XXD051030)，[#26](../../pull/26)。）
 
+- **高吞吐模式（Wi-Fi 6 HE80 + MTU 1500）**（参考 [`YiHoooong/owly`](https://github.com/YiHoooong/owly/tree/feat/windows-mtkradio)）：在 5 GHz 80 MHz 下广播 Apple AWDL Wi-Fi 6（HE80）能力并将 `awdl0` MTU 提至 `1500`。配合 4+4 MiB 无锁共享内存数据面、8 KiB 接收 DMA、8 MiB Wintun 环、`ev_win.c` 公平轮询与流式接收，AX201 实测双向均可达到 **50+ MiB/s（约 53 MB/s）**。
 - **Wi-Fi 和 AirDrop 不在同一信道时按苹果的方式分时**：告诉 iPhone 电脑什么时候在路由器那边。nekodrop 连的 Wi-Fi 在另一个 5 GHz 信道时，一台 AX211 不开它一个 AirDrop 帧都收不到（[#35](../../issues/35)）；一台 AX200 上速度时快时慢（[#4](../../issues/4)）。
 - **更快解锁被动 5 GHz 信道**：更早扫描，让拒绝国家码的网卡更快可以发射（[#11](../../issues/11)）。
+- **待机 BLE 广播（`NEKODROP_BLE_STANDBY=1`）**：可选环境变量开关（[#69](../../pull/69)，默认关闭），开启后可在接收待命时维持低占空比 BLE AirDrop 广播。
 
 ## 进度
 
 | 部分 | 状态 |
 |---|---|
-| 用户态 Intel 驱动：固件启动、监听、注入、扫描 | ✅ AX201、AX200、AX210、AX211 上可用（后三者为用户反馈） |
-| iPhone → Windows | ✅ 可用（收到的照片完整，哈希一致） |
-| Windows → iPhone | ✅ 可用（AX201 实测；AX200、AX210、AX211 用户反馈可用）；打开 A-MPDU 后最高 30.8 MB/s |
+| 用户态 Intel 驱动：固件启动、监听、注入、扫描 | ✅ AX201、AX200、AX210、AX211、AX411/AX1690i、9560 上可用（后五者为用户反馈） |
+| iPhone → Windows | ✅ 可用；AX201 实测净收最高 **50.81 MiB/s（53.28 MB/s）**、端到端 **47.36 MiB/s**（`v2.2.9+`，0 丢包） |
+| Windows → iPhone | ✅ 可用；AX201 实测最高 **50.55 MiB/s（53.00 MB/s）**（`v2.2.9+`，BA 确认率 99.85%，0 丢包） |
 | 联网同时 AirDrop | ✅ 可用（WPA2、DHCP、DNS 都走“nekodrop”网卡） |
 | Wi-Fi 管理、已保存网络、网页登录识别 | ✅ |
 | 服务、托盘程序、通知、右键菜单、安装包 | ✅ |
-| 托盘面板、雷达、「共享」菜单、自定义快捷键 | ✅ 2.0.2 |
-| 仅限联系人（Apple ID 登录或 Mac 证书） | ✅ 2.1.0，实验性（维护者真机确认可用） |
+| 托盘面板、雷达、「共享」菜单、自定义快捷键、实时传输速率 | ✅ `v2.2.10` |
+| 仅限联系人（Apple ID 登录、日志导出或 Mac 证书） | ✅ 实验性（`v2.1.0+`，`v2.2.9` 补齐 `-27952`/2FA 重试与日志脱敏导出） |
 | 纯 WPA3、OWE | 🧪 0.1.12，未实机测试 |
-| 802.1X（企业版） | ⏳ 计划中 |
-| AX200、AX210、AX211 | ✅ 用户反馈双向 AirDrop 可用 |
-| AX411 / Killer AX1690 | 🧪 能识别、固件能启动（[#25](../../issues/25)）；AirDrop 待用户确认 |
+| 802.1X（企业版） | ⏳ 计划中（eduroam PEAP 方案见 [#58](../../pull/58)） |
+| AX200、AX210、AX211、AX411 / Killer AX1690i | ✅ 用户反馈双向 AirDrop 可用（[#1](../../issues/1)、[#14](../../issues/14)、[#24](../../issues/24)、[#37](../../issues/37)） |
 | Qu 上的 9560 | ✅ 用户实测可用（[#45](../../issues/45)） |
 | So 上的 9560、AX203 | 🧪 已照上游移植，还没有用户反馈 |
-| Realtek RTL8852CE | ⚠️ 用户实测可用；停在 6 信道时发送慢，正在排查（[#32](../../issues/32)） |
+| Realtek RTL8852CE | ✅ 用户实测双向可用，峰值约 **24.5 MB/s**（[#61](../../issues/61)） |
 | MediaTek MT7902 | ✅ 双向 AirDrop 和同时连 Wi-Fi，作者实测（[#34](../../pull/34)、[#47](../../pull/47)） |
-| MediaTek MT7922 / MT7921 | 🧪 2.1.2：MT7922 按需模式作者实测（[#40](../../pull/40)）；同时连 Wi-Fi 和 MT7921 未测试 |
-| Intel BE200（Wi-Fi 7） | 🧪 2.1.2，实验性：还没在真卡上跑过（[docs/BE200.md](docs/BE200.md)） |
+| MediaTek MT7922 / MT7921 | 🧪 MT7922 按需模式已实测（[#40](../../pull/40)）；`v2.2.8`–`v2.2.9` 已补齐 HE80 2SS、扫描 `FIF_BIT_CLR`、固件 RA 与 RX A-MSDU 修复（[#65](../../pull/65)、[#66](../../issues/66)） |
+| Intel BE200（Wi-Fi 7） | 🧪 实验性：`v2.2.9` 加固 Bz/MLD 4096 字节页对齐与双 LMAC 错误转储（[#53](../../issues/53)、[docs/BE200.md](docs/BE200.md)） |
 | Windows 10 | ✅ 用户反馈 0.1.16 及以上双向 AirDrop 可用（[#18](../../issues/18)） |
 | 内核 WiFiCx 驱动（`kdriver/`） | 🧊 已搁置：实验性，安装包**不会安装**它，见 [docs/KERNEL.md](docs/KERNEL.md) |
 
@@ -264,16 +266,16 @@ nekodrop 启动一分钟后检查 GitHub 上有没有新版本，之后每 6 小
    │  AirDrop 引擎（Python）                        │ 接管 / 归还网卡
    │  通知 · 右键菜单 · 发送窗口                       │ Wi-Fi 管理、看门狗
    │                                                ▼
-   └── awdl0（Wintun，IPv6）◄── awdld（AWDL，OWL）◄─管道─ nekodrop-radio（用户态 Intel 驱动）
+   └── awdl0（Wintun 8 MiB，IPv6）◄── awdld（AWDL，OWL）◄─SHM/管道─ nekodrop-radio（用户态驱动）
                                                          ├ MAC 0：AWDL，信道 6/44/149
      “nekodrop” TAP 网卡 ◄── 以太网桥接 ◄─────────────────┤ MAC 1：站点模式，连你的路由器
      （Windows 上网用）                                   └ UMDF 寄存器代理 + 用户态 DMA → 无线网卡
 ```
 
 1. **寄存器代理**：一个很小的 UMDF 驱动（`driver/regproxy`）代替厂商驱动绑定网卡。它只负责把网卡寄存器和中断映射给一个用户态进程，我们自己的代码不在内核里运行。
-2. **用户态驱动**：Intel 网卡用的 `nekodrop-radio`（`iwxradio/`）是把 OpenBSD/itlwm 的 `iwx` 驱动移植到用户态。它通过用户态 DMA 加载 Intel 固件，然后同时跑两个 MAC：一个监听和注入 AWDL 帧，另一个是普通的 Wi-Fi 站点，支持 WPA2（四次握手、密钥交给固件、速率控制）。Realtek 和 MediaTek 的 radio 为各自的芯片做同样的事，Wi-Fi 站点的代码是共用的。
-3. **AWDL**：`awdld`（OWL，Open Wireless Link）通过 radio 管道实现苹果的 AWDL 协议，把链路做成 IPv6 网卡 `awdl0`。
-4. **AirDrop**：Python 引擎在 `awdl0` 上实现 AirDrop：mDNS 发现，8771 端口上的 HTTPS（8772-8779 备用），`/Discover`、`/Ask`、`/Upload` 流程，以及发送时用的蓝牙信标。
+2. **用户态驱动**：Intel 网卡用的 `nekodrop-radio`（`iwxradio/`）是把 OpenBSD/itlwm 的 `iwx` 驱动移植到用户态。它通过用户态 DMA（8 KiB 接收缓冲 + 与 `awdld` 的 4+4 MiB 无锁共享内存环）加载 Intel 固件，然后同时跑两个 MAC：一个监听和注入 AWDL 帧，另一个是普通的 Wi-Fi 站点，支持 WPA2（四次握手、密钥交给固件、速率控制）。Realtek 和 MediaTek 的 radio 为各自的芯片做同样的事，Wi-Fi 站点的代码是共用的。
+3. **AWDL**：`awdld`（OWL，Open Wireless Link）通过共享内存 / radio 管道实现苹果的 AWDL 协议，把链路做成 IPv6 网卡 `awdl0`（8 MiB Wintun 环、`ev_win.c` 公平轮询、TCP GRO，可选 HE80 + MTU 1500）。
+4. **AirDrop**：Python 引擎在 `awdl0` 上实现 AirDrop：mDNS 发现（含 macOS IPv6 应答），`8771` 端口上的 HTTPS（备用段 `8772-8779`、`18771-18779`、`28771-28779`），流式 DVZip→CPIO 解包与 4 MiB 异步落盘，`/Discover`、`/Ask`、`/Upload` 流程，以及带传输后自动重脉冲唤醒的蓝牙信标。
 5. **上网**：站点 MAC 收发的帧桥接到“nekodrop” TAP 网卡，Windows 把它当成以太网，用 DHCP 拿地址。
 
 设计细节：[docs/DESIGN.md](docs/DESIGN.md)（驱动、DMA、风险）· [docs/CLIENT.md](docs/CLIENT.md)（服务、客户端、联网模式）· [docs/TESTING.md](docs/TESTING.md)（传输速度测试方法，英文）。
@@ -341,26 +343,29 @@ nekodrop 是在其他开源项目的基础上做的。这里写清楚哪些是**
 | OpenBSD `iwx(4)`、Linux `iwlwifi` | 固件、UMAC 扫描、站点模式、密钥的工作方式 |
 | [seemoo-lab/opendrop](https://github.com/seemoo-lab/opendrop) | AirDrop 协议（`/Discover`、`/Ask`、`/Upload`、mDNS 记录） |
 | [microsoft/Windows-driver-samples](https://github.com/microsoft/Windows-driver-samples) | 已搁置的内核驱动（`kdriver/`）的 WiFiCx 结构 |
-| [t4t5/owly](https://github.com/t4t5/owly)、[JungyoKim/WirDrop](https://github.com/JungyoKim/WirDrop) | 其他平台上实现 AirDrop 的尝试，设计时对比参考 |
+| [t4t5/owly](https://github.com/t4t5/owly)、[`YiHoooong/owly`](https://github.com/YiHoooong/owly/tree/feat/windows-mtkradio)、[JungyoKim/WirDrop](https://github.com/JungyoKim/WirDrop) | 其他平台上实现 AirDrop 的方案，设计时对比参考（含 HE80 + MTU 1500 高吞吐思路） |
+| [ndpyzwy-0w0/DropBridge](https://github.com/ndpyzwy-0w0/DropBridge) | 交互体验参考：系统通知大图预览 + 一键复制剪贴板（Bitmap + FileDrop 双格式复制与目录边界校验）以及 HEIC / Live Photo 自动伴生 JPG 副本 |
 
 ### nekodrop 自己写的部分
 
-- `iwxradio/`：用户态移植本身，以及所有 Windows 特有的部分：两个 MAC 同时运行（AWDL 监听加上独立 PHY 上的 Wi-Fi 站点）、WPA2 站点模式（四次握手、密钥交给固件、TLC 速率控制）、TAP 桥接、固件 UMAC 扫描、信标解析和加密方式识别。
+- `iwxradio/`：用户态移植本身，以及所有 Windows 特有的部分：两个 MAC 同时运行（AWDL 监听加上独立 PHY 上的 Wi-Fi 站点）、4+4 MiB 无锁共享内存数据面、8 KiB 接收 DMA、WPA2 站点模式（四次握手、密钥交给固件、TLC 速率控制）、TAP 桥接、固件 UMAC 扫描、信标解析和加密方式识别。
 - `app/service/`：Windows 服务：网卡接管、radio 和 awdld 监管、Wi-Fi 管理（DPAPI 加密保存的网络、自动连接、隐藏网络、网页登录识别）。
-- `app/client/`：托盘程序（WPF）、通知、发送窗口、Wi-Fi 窗口、中英文界面。
+- `app/client/`：托盘程序（WPF）、通知、实时传输速率显示、发送窗口、Wi-Fi 窗口、Apple ID 日志脱敏导出、中英文界面。
 - `app/shellext/`：Windows 11 右键菜单。
-- `installer/`：Inno Setup 安装包、本机驱动签名、TAP 配置和卸载。
+- `installer/`：Inno Setup 安装包、本机驱动签名、TAP 配置、诊断报告（`report.ps1`）、BLE 信标（`airdrop-beacon.ps1`）和卸载。
 
 ## 贡献者
 
-感谢提交代码和细致测试报告的各位：
+感谢提交代码、文档和细致测试报告的各位：
 
 - [@BaiBaiAi](https://github.com/BaiBaiAi)：Windows → iPhone 发送不再出示客户端证书（[#13](../../pull/13)）、AWDL 发送流水线化让大文件能传完（[#15](../../pull/15)），以及第一份 AX210 实测报告（[#14](../../issues/14)）。
-- [@XXD051030](https://github.com/XXD051030)：Intel 网卡可选的蓝牙均衡共存模式，让电脑几秒内就能找到 iPhone 和 Mac，而不是等一两分钟，并附了一份 AX200 上的详细前后对照（[#26](../../pull/26)）。
-- [@GGBond-cer](https://github.com/GGBond-cer)：大量详细的 AX200 实测报告，帮我们定位了 A-MPDU 和速度问题（[#4](../../issues/4)），找到了卸载残留的根因（[#22](../../issues/22)），写了传输速度测试指南（[#28](../../pull/28)），并修好了卸载程序被自己的清理步骤结束、留下快捷方式和安装目录的问题（[#38](../../pull/38)），升级后自动删除下载的安装包（[#44](../../pull/44)），以及多屏幕、不同缩放比例时让面板和文件对话框不跨屏（[#49](../../pull/49)）。
-- [@DaiJiequn](https://github.com/DaiJiequn)：MediaTek MT7902 支持，从 Linux mt76 移植的用户态驱动，按需模式下双向 AirDrop 可用（[#34](../../pull/34)）；以及它的「同时连 Wi-Fi」模式，用 AirDrop 时 Wi-Fi 不断，这部分共用的联网代码现在 MT7921/MT7922 也在用（[#47](../../pull/47)）。
-- [@sh17632](https://github.com/sh17632)：提出 AirDrop 风格的雷达界面和「共享」菜单方案，成为 2.0 新界面的基础（[#36](../../issues/36)），以及 AX211 实测反馈（[#35](../../issues/35)）。
-- [@YiHoooong](https://github.com/YiHoooong)：MediaTek MT7922/MT7921 用户态无线电驱动（mtkradio），已在 MT7922 / AMD RZ616 上实测可用（[#40](../../pull/40)）。
+- [@XXD051030](https://github.com/XXD051030)：Intel 网卡的蓝牙均衡共存模式，让电脑几秒内就能找到 iPhone 和 Mac，并附了一份 AX200 上的详细前后对照（[#26](../../pull/26)）。
+- [@GGBond-cer](https://github.com/GGBond-cer)：大量详细的 AX200 实测报告，定位 A-MPDU 和速度问题（[#4](../../issues/4)）、卸载残留根因（[#22](../../issues/22)），撰写传输速度测试指南（[#28](../../pull/28)），修复卸载清理竞态（[#38](../../pull/38)），实现升级后自动删除安装包（[#44](../../pull/44)）、多屏不同缩放下窗口不跨屏（[#49](../../pull/49)）、更新下载实时速率显示（[#64](../../pull/64)），以及更新完成后可选打开主面板或托盘启动（[#71](../../pull/71)）。
+- [@DaiJiequn](https://github.com/DaiJiequn)：MediaTek MT7902 支持，从 Linux mt76 移植的用户态驱动，按需模式下双向 AirDrop 可用（[#34](../../pull/34)）；以及它的「同时连 Wi-Fi」模式，这部分共用的联网代码现在 MT7921/MT7922 也在用（[#47](../../pull/47)）。
+- [@sh17632](https://github.com/sh17632)：提出 AirDrop 风格的雷达界面和「共享」菜单方案，成为 2.0 新界面的基础（[#36](../../issues/36)）；贡献 AX211 实测反馈（[#35](../../issues/35)）、macOS IPv6-only mDNS 地址查询应答（[#55](../../pull/55)）、实验性待机 BLE 广播（`NEKODROP_BLE_STANDBY=1`，[#69](../../pull/69)），以及深入的 macOS 15 / iOS 18 AWDL 与 BLE 抓包分析（[#51](../../issues/51)、[#67](../../issues/67)）。
+- [@YiHoooong](https://github.com/YiHoooong)：MediaTek MT7922/MT7921 用户态无线电驱动（`mtkradio`，[#40](../../pull/40)），修复 MT7922 切道超时与 RX 过滤恢复并加入 HE80 2SS LWTBL（[#65](../../pull/65)），并分享 `owly` 的 HE80 + MTU 1500 高吞吐实测经验。
+- [@Yanlyn](https://github.com/Yanlyn)：补充 Windows + AX201 连接 eduroam PEAP 校园网文档（[#58](../../pull/58)），以及社区 MT7927 驱动适配研究（[#57](../../issues/57)）。
+- 同时感谢所有提交完整诊断日志、帮助定位 AX211、AX411/AX1690i、BE200、RTL8852CE、MT7922 及 Apple ID 登录问题的热心测试者（[#30](../../issues/30)、[#37](../../issues/37)、[#42](../../issues/42)、[#53](../../issues/53)、[#54](../../issues/54)、[#61](../../issues/61)、[#62](../../issues/62)、[#66](../../issues/66) 等）。
 
 ## 许可
 

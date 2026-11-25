@@ -38,9 +38,9 @@
 - **Stay online.** In *Wi-Fi and AirDrop together* mode nekodrop drives the card itself. It joins your Wi-Fi on one virtual interface and runs AWDL (Apple Wireless Direct Link) on the other. Windows sees your internet connection as a wired adapter called **nekodrop**.
 - **Manage Wi-Fi.** Scanning, connecting, hidden networks and saved networks with auto-connect all work. Saved Windows Wi-Fi profiles are imported, and captive portals (hotel, airport and campus sign-in pages) are detected and opened in your browser.
 - **Recover by itself.** A service watches the radio, the AWDL daemon and the AirDrop engine and restarts whatever stops. It starts with Windows.
-- **A small panel by the tray**, in Chinese and English, light and dark. It slides up from the tray icon or your shortcut (Win+Shift+D unless you record your own) and goes away when you click elsewhere. Nearby devices sit on a radar (or a list), with motion on Windows' own Fluent curves: a blue wave and a steady ring while sending, then green with a check mark.
-- **Who can send to you, from the AirDrop mark.** Click the mark at the top left: **Receiving Off**, **Contacts Only** or **Everyone**, as on an iPhone.
-- **Contacts Only (experimental).** Sign in to your Apple ID on the PC, or import a Mac's AirDrop certificate, and the PC shows up on your own iPhone like one of your Macs and works with iPhones set to Contacts Only. See [Contacts Only](#contacts-only-apple-id-experimental).
+- **A small panel by the tray**, in Chinese and English, light and dark. It slides up from the tray icon or your shortcut (Win+Shift+D unless you record your own) and goes away when you click elsewhere. Nearby devices sit on a radar (or a list), with motion on Windows' own Fluent curves: a blue wave, a steady ring, and live transfer speed (`MB/s` / `KB/s`, toggleable in Settings) while sending or receiving, then green with a check mark.
+- **Who can send to you, from the AirDrop mark.** Click the mark at the top left: **Receiving Off**, **Contacts Only** or **Everyone**, as on an iPhone. Supports configurable auto-accept (**Off**, **Contacts**, or **Everyone**), media format preference (**Compatible** JPEG/H.264 or **Original** HEIC/HEVC with optional sibling JPG conversion), toast image previews with one-click copy to clipboard, and automatic post-transfer BLE re-pulse so iPhones re-appear cleanly after large sends.
+- **Contacts Only (experimental).** Sign in to your Apple ID on the PC (with automatic `-27952` / 2FA 503 retries and redacted sign-in log export), or import a Mac's AirDrop certificate, and the PC shows up on your own iPhone like one of your Macs and works with iPhones set to Contacts Only. See [Contacts Only](#contacts-only-apple-id-experimental).
 - **Windows Share sheet.** nekodrop is in Explorer's and other apps' Share panel.
 
 ## Screenshots
@@ -74,10 +74,10 @@ Everything below was tested by the author on their own laptop, not just in theor
 | OS | Windows 11 Pro x64 |
 | iPhone → Windows | ✅ works: photos and files arrive intact |
 | Windows → iPhone | ✅ works: right-click → Send with nekodrop, accepted and received on the iPhone |
-| AirDrop speed | PC → iPhone **30.8 MB/s** (104.8 MB in 3.4 s; 63 frames per aggregate, 99.7% acknowledged); iPhone → PC **13.5 MB/s** average for the same file (0.1.30) |
+| AirDrop speed | PC → iPhone up to **50.55 MiB/s (53.00 MB/s)** (`846 MB` in `15.97 s`; 99.85% Block Ack rate, 0 drops); iPhone → PC up to **50.81 MiB/s (53.28 MB/s)** net / **47.36 MiB/s (49.66 MB/s)** end-to-end (`846 MB` in `15.84 s` net / `17.00 s` total, 0 drops) with High-throughput mode (HE80 + MTU 1500) and zero-pipe SHM (`v2.2.9+`) |
 | Wi-Fi at the same time | ✅ works: the PC stays online through nekodrop's own WPA2 connection while AirDrop runs, including with Wi-Fi and AWDL on the same 5 GHz channel |
 
-Users have since confirmed AirDrop on the AX200, AX210, AX211 and 9560 as well, and contributors on the MediaTek MT7902 and MT7922 (see the table below). Reports from other machines are welcome in [Issues](../../issues).
+Users have since confirmed AirDrop on the AX200, AX210, AX211, AX411/AX1690i, 9560 and Realtek RTL8852CE as well, and contributors on the MediaTek MT7902 and MT7922 (see the table below). Reports from other machines are welcome in [Issues](../../issues).
 
 ## Supported hardware
 
@@ -100,14 +100,14 @@ Quick summary of currently active cards:
 | Intel Wi-Fi 6 AX200 (discrete) | `8086:2723` | `cc-a0-68` (`iwx`, Concurrent & On-Demand) | ✅ two-way AirDrop in user reports ([#1](../../issues/1), [#4](../../issues/4)); 9–25 MiB/s to an iPhone with A-MPDU ([#4](../../issues/4)) |
 | Intel Wi-Fi 6E AX210 (discrete) | `8086:2725` | `ty-a0-gf-a0-68` + PNVM (`iwx`, Concurrent & On-Demand) | ✅ two-way AirDrop in user reports ([#14](../../issues/14), [#18](../../issues/18), [#11](../../issues/11)) |
 | Intel Wi-Fi 6E AX211 (CNVi, 12th gen+) | `8086:` `7AF0` `7A70` `51F0` `51F1` `54F0` `7F70` | `so-a0-gf-a0-68` + PNVM (`iwx`, Concurrent & On-Demand) | ✅ two-way AirDrop in user reports ([#9](../../issues/9), [#29](../../issues/29)); iPhones list the PC since 0.1.31 ([#24](../../issues/24)) |
-| Intel Wi-Fi 6E AX411 / Killer AX1690 (CNVi) | same IDs as AX211 | `so-a0-gf4-a0-68` + PNVM (`iwx`, Concurrent & On-Demand) | 🧪 recognized and firmware boots ([#25](../../issues/25)); has the AX211's 0.1.31 fix, awaiting confirmation |
+| Intel Wi-Fi 6E AX411 / Killer AX1690 (CNVi) | same IDs as AX211 | `so-a0-gf4-a0-68` + PNVM (`iwx`, Concurrent & On-Demand) | ✅ works in a user report ([#37](../../issues/37)) |
 | Intel Wi-Fi 6 AX203 / 9560 on So | same IDs as AX211 | `so-a0-hr/jf-b0-68` (`iwx`, Concurrent & On-Demand) | ⚠️ untested |
-| **Realtek RTL8852CE** | `10EC:C852` | embedded (`devourer`, On-Demand only) | ⚠️ built in; works in a user report but sending is slow while it stays on channel 6, being investigated ([#32](../../issues/32)) |
+| **Realtek RTL8852CE** | `10EC:C852` | embedded (`devourer`, On-Demand only) | ✅ built in; two-way AirDrop confirmed in user reports up to **~24.5 MB/s** ([#61](../../issues/61)) |
 | Intel SnJ `2726`, QnJ `2720`, Meteor Lake `7E40`/`2729` | `8086:` | not shipped upstream | ❌ |
-| **Intel Wi-Fi 7 BE200** (discrete) | `8086:272B` | linux-firmware `gl-c0-fm-c0-100` (`iwx` Bz/MLD path, Concurrent & On-Demand) | 🧪 experimental, built in; **not yet run on a real card**: please post a diagnostic report ([docs/BE200.md](docs/BE200.md)) |
+| **Intel Wi-Fi 7 BE200** (discrete) | `8086:272B` | linux-firmware `gl-c0-fm-c0-100` (`iwx` Bz/MLD path, Concurrent & On-Demand) | 🧪 experimental, built in; bring-up hardening + dual-LMAC diagnostics in `v2.2.9` ([#53](../../issues/53), [docs/BE200.md](docs/BE200.md)) |
 | Intel BE201 / BE211 (Wi-Fi 7, CNVi) | `8086:` `A840` `7740` | needs CNVi hardware | ❌ |
-| **MediaTek MT7902** | `14C3:7902` | linux-firmware `WIFI_RAM_CODE_MT7902_1` (`mt76` port, Concurrent (5 GHz Wi-Fi) & On-Demand) | ⚠️ built in; AirDrop both ways on one card (~15 MB/s receive, ~5 MB/s send); Concurrent tested on one card (Wi-Fi beside AirDrop ~3.5 MB/s down, ~1.3 MB/s up) |
-| **MediaTek MT7922 / AMD RZ616** | `14C3:0616` `14C3:7922` | linux-firmware `WIFI_RAM_CODE_MT7922_1` (`mtkradio`, Concurrent (5 GHz Wi-Fi, experimental) & On-Demand) | 🧪 experimental, built in; two-way AirDrop tested on an MT7922 / AMD RZ616 ([#40](../../pull/40), [docs/MT7922.md](docs/MT7922.md)); Concurrent mode untested on hardware |
+| **MediaTek MT7902** | `14C3:7902` | linux-firmware `WIFI_RAM_CODE_MT7902_1` (`mt76` port, Concurrent (5 GHz Wi-Fi) & On-Demand) | ✅ built in; AirDrop both ways (~15 MB/s receive, ~5 MB/s send) and Concurrent tested on hardware ([#34](../../pull/34), [#47](../../pull/47)) |
+| **MediaTek MT7922 / AMD RZ616** | `14C3:0616` `14C3:7922` | linux-firmware `WIFI_RAM_CODE_MT7922_1` (`mtkradio`, Concurrent (5 GHz Wi-Fi, experimental) & On-Demand) | 🧪 experimental, built in; two-way AirDrop tested ([#40](../../pull/40), [docs/MT7922.md](docs/MT7922.md)); HE80 2SS LWTBL, scan `FIF_BIT_CLR`, firmware RA & RX A-MSDU fixes in `v2.2.8`–`v2.2.9` ([#65](../../pull/65), [#66](../../issues/66)) |
 | **MediaTek MT7921 / AMD RZ608** | `14C3:7961` `14C3:0608` | linux-firmware `WIFI_RAM_CODE_MT7961_1` (`mtkradio`, Concurrent (5 GHz Wi-Fi, experimental) & On-Demand) | ⚠️ experimental, built in; untested on hardware (On-Demand and Concurrent) |
 | Other Realtek, MediaTek, Qualcomm, Broadcom | | | ❌ |
 
@@ -115,7 +115,7 @@ To check your card: *Device Manager → Network adapters*. On a PC without a sup
 
 Cards are recognized by their PCI ID. When yours is not, *Settings > Wi-Fi card* lets you pick the card and its model by hand (for hardware IDs the driver package lists). To add a new card family to nekodrop, see [docs/ADDING-A-CARD.md](docs/ADDING-A-CARD.md).
 
-Not sure which card you have, or want another card supported? The [diagnostic report](#reporting-a-problem-the-diagnostic-report) works without nekodrop installed: download [`installer/report.ps1`](installer/report.ps1) and run `powershell -ExecutionPolicy Bypass -File report.ps1`. It lists every wireless card with its PCI ID, chip, driver and why nekodrop does or does not run on it; please post it in an [issue](../../issues). On an installed nekodrop, `NekoDropService.exe --status` prints the matched card profile, capabilities and bound driver provider, and `NekoDropService.exe --selftest` runs offline catalog and radio-launch checks across all 16 active profiles (15 Intel + Realtek RTL8852CE) without a card or administrator rights. Intel's radio logs one `backend …` line at start and runs `iwx_selftest` on every build; the Realtek radio build runs its own offline unit tests (`block_ack_test`, `reorder_buffer_test`, `outgoing_session_test`, `dma_address_test`) on every build; `install.ps1 -SelfTest`, `restore.ps1 -SelfTest` and `report.ps1 -SelfTest` likewise run offline under Windows PowerShell 5.1 on every build. What other cards would take: [docs/HARDWARE.md](docs/HARDWARE.md).
+Not sure which card you have, or want another card supported? The [diagnostic report](#reporting-a-problem-the-diagnostic-report) works without nekodrop installed: download [`installer/report.ps1`](installer/report.ps1) and run `powershell -ExecutionPolicy Bypass -File report.ps1`. It lists every wireless card with its PCI ID, chip, driver and why nekodrop does or does not run on it; please post it in an [issue](../../issues). On an installed nekodrop, `NekoDropService.exe --status` prints the matched card profile, capabilities and bound driver provider, and `NekoDropService.exe --selftest` runs offline catalog and radio-launch checks across all 22 active profiles without a card or administrator rights. Intel's radio logs one `backend …` line at start and runs `iwx_selftest` on every build; the Realtek radio build runs its own offline unit tests (`block_ack_test`, `reorder_buffer_test`, `outgoing_session_test`, `dma_address_test`) on every build; `install.ps1 -SelfTest`, `restore.ps1 -SelfTest` and `report.ps1 -SelfTest` likewise run offline under Windows PowerShell 5.1 on every build. What other cards would take: [docs/HARDWARE.md](docs/HARDWARE.md).
 
 ### Something went wrong? One-click restore
 
@@ -137,6 +137,7 @@ Logs are what let us fix things, especially on cards we don't have. Please attac
 |---|---|
 | `C:\ProgramData\nekodrop\service.log` (and `service.log.1`) | the service, the radio (firmware, AWDL, Wi-Fi) and awdld; readable by administrators |
 | `%LocalAppData%\nekodrop\engine.log` (and `engine.log.old`) | the AirDrop engine: discovery, Bluetooth beacon, transfers |
+| `%LocalAppData%\nekodrop\appleid\appleid.log` | Apple ID sign-in & Anisette helper log (auto-redacted in `report.ps1` and exportable from Settings → Apple ID) |
 | `C:\ProgramData\nekodrop\install.log` | the installer: driver, TAP adapter, firewall, service |
 | `C:\ProgramData\nekodrop\restore.log` | the one-click restore |
 
@@ -165,7 +166,7 @@ If you have the card and want to port it, pull requests are welcome:
    - copies the files to `C:\Program Files\nekodrop`;
    - creates a code-signing certificate **on your PC**, signs the small register-proxy driver with it, trusts it, and **deletes the private key**, so nothing else can ever be signed with it;
    - creates the TAP adapter **nekodrop** (TAP-Windows, signed by OpenVPN);
-   - adds two inbound firewall rules, link-local addresses only (TCP 8771-8779, UDP 5353);
+   - adds two inbound firewall rules, link-local addresses only (`TCP 8771-8779, 18771-18779, 28771-28779` to avoid Hyper-V excluded port blocks, `UDP 5353`);
    - installs and starts the **NekoDropService** service.
 3. The tray icon (the purple cat) appears. Open it and turn on **Allow receiving**.
 
@@ -173,7 +174,7 @@ On first start nekodrop takes the Wi-Fi card away from the Intel driver and reco
 
 ### Updates
 
-nekodrop checks GitHub for a newer release a minute after it starts and then every 6 hours. When it finds one, a notification offers **Update**. nekodrop then downloads the installer, checks it against the SHA-256 GitHub publishes for it, and runs it (Windows asks for administrator rights). It never installs anything on its own. *Settings → Updates* turns the check off, chooses whether preview releases count, and has **Check now**. There are two channels: **Stable** releases, and preview releases built as fixes land. Previews are included by default; untick *Include preview releases* to get only stable ones.
+nekodrop checks GitHub for a newer release a minute after it starts and then every 6 hours, resolving your current Windows system proxy dynamically and falling back to browser-style `github.com` web endpoints if `api.github.com` is blocked or rate-limited ([#62](../../issues/62)). When it finds one, a notification offers **Update**. nekodrop downloads the installer with live download speed (`KB/s` / `MB/s`, [#64](../../pull/64)), checks it against the SHA-256 GitHub publishes for it, and runs it (Windows asks for administrator rights). It never installs anything on its own. *Settings → About & updates* lets you toggle update checks, choose whether preview releases count, delete the downloaded installer after a successful install ([#44](../../pull/44)), pick whether to open the **Main panel** or start in the **Tray** after an update ([#71](../../pull/71)), or click **Check now**. There are two channels: **Stable** releases (currently `v2.2.8`), and **Preview** releases built as fixes land. Previews are included by default; untick *Include preview releases* to get only stable ones.
 
 ### Uninstall
 
@@ -227,33 +228,34 @@ With an identity, your own iPhone lists this PC like one of your Macs, and iPhon
 
 ### Experimental features
 
-In *Settings → Experimental*, all off by default; turning one off restores the old behaviour exactly. (Graduated from here and always on: aggregated sending, A-MPDU, in 0.1.35: 30.8 MB/s to an iPhone on AX201, 9–25 MiB/s on AX200; balanced Bluetooth coexistence on Intel cards in 0.1.37, which lets the Bluetooth beacon through so the PC finds iPhones and Macs in seconds, measured on AX200 and AX211: thanks to [@XXD051030](https://github.com/XXD051030), [#26](../../pull/26).)
+In *Settings → Experimental*, all off by default; turning one off restores the old behaviour exactly. (Graduated from here and always on: aggregated sending, A-MPDU, in 0.1.35; balanced Bluetooth coexistence on Intel cards in 0.1.37, which lets the Bluetooth beacon through so the PC finds iPhones and Macs in seconds, thanks to [@XXD051030](https://github.com/XXD051030), [#26](../../pull/26).)
 
+- **High-throughput mode (Wi-Fi 6 HE80 + MTU 1500)** (inspired by [`YiHoooong/owly`](https://github.com/YiHoooong/owly/tree/feat/windows-mtkradio)): advertises Apple AWDL Wi-Fi 6 (HE80) in 5 GHz 80 MHz and raises `awdl0` MTU from `1450` to `1500`. Combined with the lock-free 4+4 MiB SHM data plane, 8 KiB RX DMA, 8 MiB Wintun ring, fair-polled `ev_win.c`, and streaming receive, AX201 reaches **50+ MiB/s (~53 MB/s)** in both directions.
 - **Time sharing when Wi-Fi and AirDrop use different channels**: tells the iPhone when the PC is away with the router. With nekodrop's Wi-Fi on another 5 GHz channel, one AX211 heard no AirDrop frame without it ([#35](../../issues/35)); on one AX200 speeds went both up and down ([#4](../../issues/4)).
 - **Faster unlock of a passive 5 GHz channel**: scans sooner so cards that refuse the country code can transmit earlier ([#11](../../issues/11)).
+- **Standby BLE beacon (`NEKODROP_BLE_STANDBY=1`)**: optional environment variable contributed in [#69](../../pull/69) (off by default) to keep the BLE AirDrop advertisement active while receiving on standby.
 
 ## Status
 
 | Part | State |
 |---|---|
-| User-mode Intel driver: firmware boot, monitor, inject, scan | ✅ works on AX201, AX200, AX210, AX211 (user reports for the last three) |
-| iPhone → Windows | ✅ works (photos received intact, hash-checked) |
-| Windows → iPhone | ✅ works (AX201; AX200, AX210, AX211 in user reports); up to 30.8 MB/s with A-MPDU |
+| User-mode Intel driver: firmware boot, monitor, inject, scan | ✅ works on AX201, AX200, AX210, AX211, AX411/AX1690i, 9560 (user reports for the last five) |
+| iPhone → Windows | ✅ works; up to **50.81 MiB/s (53.28 MB/s)** net / **47.36 MiB/s** end-to-end on AX201 (`v2.2.9+`, 0 drops) |
+| Windows → iPhone | ✅ works; up to **50.55 MiB/s (53.00 MB/s)** on AX201 (`v2.2.9+`, 99.85% BA rate, 0 drops) |
 | Wi-Fi and AirDrop at the same time | ✅ works (WPA2, DHCP, DNS through the "nekodrop" adapter) |
 | Wi-Fi manager, saved networks, captive portal | ✅ |
 | Service, tray app, notifications, context menu, installer | ✅ |
-| Tray panel, radar, Share sheet, custom shortcut | ✅ 2.0.2 |
-| Contacts Only (Apple ID sign-in or a Mac's certificate) | ✅ 2.1.0, experimental (confirmed by the maintainer) |
+| Tray panel, radar, Share sheet, custom shortcut, live transfer speed | ✅ `v2.2.10` |
+| Contacts Only (Apple ID sign-in, log export, or Mac certificate) | ✅ experimental (`v2.1.0+`, `-27952` / 2FA retry & log export in `v2.2.9`) |
 | WPA3-only, OWE | 🧪 0.1.12, untested on hardware |
-| 802.1X (Enterprise) | ⏳ planned |
-| AX200, AX210, AX211 | ✅ two-way AirDrop in user reports |
-| AX411 / Killer AX1690 | 🧪 recognized and firmware boots ([#25](../../issues/25)); AirDrop awaiting confirmation |
+| 802.1X (Enterprise) | ⏳ planned (eduroam PEAP setup documented in [#58](../../pull/58)) |
+| AX200, AX210, AX211, AX411 / Killer AX1690i | ✅ two-way AirDrop in user reports ([#1](../../issues/1), [#14](../../issues/14), [#24](../../issues/24), [#37](../../issues/37)) |
 | 9560 on Qu | ✅ works in a user report ([#45](../../issues/45)) |
 | 9560 on So, AX203 | 🧪 ported from upstream, no user report yet |
-| Realtek RTL8852CE | ⚠️ works in a user report; slow sending on channel 6 being investigated ([#32](../../issues/32)) |
+| Realtek RTL8852CE | ✅ two-way AirDrop confirmed up to **~24.5 MB/s** ([#61](../../issues/61)) |
 | MediaTek MT7902 | ✅ AirDrop both ways and Concurrent, tested by its author ([#34](../../pull/34), [#47](../../pull/47)) |
-| MediaTek MT7922 / MT7921 | 🧪 2.1.2: MT7922 on demand tested by its author ([#40](../../pull/40)); Concurrent and MT7921 untested |
-| Intel BE200 (Wi-Fi 7) | 🧪 2.1.2, experimental: not yet run on a real card ([docs/BE200.md](docs/BE200.md)) |
+| MediaTek MT7922 / MT7921 | 🧪 MT7922 tested on demand ([#40](../../pull/40)); HE80 2SS, scan `FIF_BIT_CLR`, firmware RA & RX A-MSDU fixes in `v2.2.8`–`v2.2.9` ([#65](../../pull/65), [#66](../../issues/66)) |
+| Intel BE200 (Wi-Fi 7) | 🧪 experimental: Bz/MLD path with 4096 B ring alignment & dual-LMAC diagnostics in `v2.2.9` ([#53](../../issues/53), [docs/BE200.md](docs/BE200.md)) |
 | Windows 10 | ✅ two-way AirDrop confirmed in user reports on 0.1.16+ ([#18](../../issues/18)) |
 | Kernel WiFiCx driver (`kdriver/`) | 🧊 shelved: experimental and **not installed** by the setup. See [docs/KERNEL.md](docs/KERNEL.md) |
 
@@ -264,16 +266,16 @@ In *Settings → Experimental*, all off by default; turning one off restores the
    │  AirDrop engine (Python)                         │ takes/gives back the card
    │  notifications · context menu · send window      │ Wi-Fi manager, watchdogs
    │                                                  ▼
-   └── awdl0 (Wintun, IPv6) ◄── awdld (AWDL, OWL) ◄─pipe─ nekodrop-radio (user-mode Intel driver)
+   └── awdl0 (Wintun 8 MiB, IPv6) ◄── awdld (AWDL, OWL) ◄─SHM/pipe─ nekodrop-radio (user-mode driver)
                                                           ├ MAC 0: AWDL on channel 6/44/149
      "nekodrop" TAP adapter ◄── Ethernet bridge ◄─────────┤ MAC 1: station, joined to your router
      (Windows' internet)                                  └ UMDF register proxy + user-mode DMA → Wi-Fi card
 ```
 
 1. **Register proxy.** A tiny UMDF driver (`driver/regproxy`) binds to the card in place of its vendor's driver. It does nothing but map the card's registers and interrupts into one user-mode process. No kernel code of ours runs.
-2. **User-mode driver.** For Intel cards, `nekodrop-radio` (`iwxradio/`) is a port of the OpenBSD/itlwm `iwx` driver to user mode. It loads Intel's firmware through user-mode DMA, then runs two MACs at once: one listens and injects AWDL frames, the other is a normal Wi-Fi station with WPA2 (4-way handshake, keys in firmware, rate control). The Realtek and MediaTek radios do the same job for their chips; the Wi-Fi station code is shared.
-3. **AWDL.** `awdld` (OWL, the Open Wireless Link) speaks Apple's AWDL protocol over the radio pipe and exposes the link as the IPv6 interface `awdl0`.
-4. **AirDrop.** A Python engine speaks AirDrop over `awdl0`: mDNS discovery, HTTPS on port 8771 (spare ports 8772-8779), the `/Discover`, `/Ask` and `/Upload` flow, and the BLE beacon used for sending.
+2. **User-mode driver.** For Intel cards, `nekodrop-radio` (`iwxradio/`) is a port of the OpenBSD/itlwm `iwx` driver to user mode. It loads Intel's firmware through user-mode DMA (with 8 KiB RX buffers and lock-free 4+4 MiB SHM ring to `awdld`), then runs two MACs at once: one listens and injects AWDL frames, the other is a normal Wi-Fi station with WPA2 (4-way handshake, keys in firmware, rate control). The Realtek and MediaTek radios do the same job for their chips; the Wi-Fi station code is shared.
+3. **AWDL.** `awdld` (OWL, the Open Wireless Link) speaks Apple's AWDL protocol over the shared-memory / radio pipe and exposes the link as the IPv6 interface `awdl0` (8 MiB Wintun ring, fair-polled `ev_win.c`, TCP GRO, optional HE80 + MTU 1500).
+4. **AirDrop.** A Python engine speaks AirDrop over `awdl0`: mDNS discovery (with IPv6-only macOS replies), HTTPS on port `8771` (spare blocks `8772-8779`, `18771-18779`, `28771-28779`), streaming DVZip→CPIO extraction with 4 MiB async disk buffering, the `/Discover`, `/Ask` and `/Upload` flow, and the BLE beacon (with automatic post-transfer re-pulse).
 5. **Internet.** Frames from the station MAC are bridged to the TAP adapter "nekodrop". Windows treats it as Ethernet and gets an address by DHCP.
 
 Design notes: [docs/DESIGN.md](docs/DESIGN.md) (driver, DMA, risks) · [docs/CLIENT.md](docs/CLIENT.md) (service, client, modes) · [docs/TESTING.md](docs/TESTING.md) (throughput test method).
@@ -341,27 +343,29 @@ nekodrop is built on other open-source projects. This section says exactly what 
 | OpenBSD `iwx(4)`, Linux `iwlwifi` | How the firmware, UMAC scan, station mode and keys work |
 | [seemoo-lab/opendrop](https://github.com/seemoo-lab/opendrop) | The AirDrop protocol (`/Discover`, `/Ask`, `/Upload`, mDNS records) |
 | [microsoft/Windows-driver-samples](https://github.com/microsoft/Windows-driver-samples) | WiFiCx structure for the shelved kernel driver (`kdriver/`) |
-| [t4t5/owly](https://github.com/t4t5/owly), [JungyoKim/WirDrop](https://github.com/JungyoKim/WirDrop) | Other AirDrop-on-other-platforms attempts, compared during design |
+| [t4t5/owly](https://github.com/t4t5/owly), [`YiHoooong/owly`](https://github.com/YiHoooong/owly/tree/feat/windows-mtkradio), [JungyoKim/WirDrop](https://github.com/JungyoKim/WirDrop) | Other AirDrop-on-other-platforms implementations, compared during design (including HE80 + MTU 1500 high-throughput reference) |
 | [ndpyzwy-0w0/DropBridge](https://github.com/ndpyzwy-0w0/DropBridge) | UX design references: system toast hero preview + "Copy to clipboard" button (with Bitmap + FileDrop dual-format copy and received-folder boundary check) and automatic sibling JPG copy for HEIC / Live Photos |
 
 ### Written for nekodrop
 
-- `iwxradio/`: the user-mode port itself, plus everything Windows-specific: running two MACs at once (AWDL listener plus Wi-Fi station on its own PHY), station mode with WPA2 (4-way handshake, keys in firmware, TLC rate control), bridging to TAP, firmware UMAC scan, beacon parsing and security detection.
+- `iwxradio/`: the user-mode port itself, plus everything Windows-specific: running two MACs at once (AWDL listener plus Wi-Fi station on its own PHY), lock-free 4+4 MiB SHM data plane, 8 KiB RX DMA, station mode with WPA2 (4-way handshake, keys in firmware, TLC rate control), bridging to TAP, firmware UMAC scan, beacon parsing and security detection.
 - `app/service/`: the Windows service: card ownership, radio and awdld supervision, the Wi-Fi manager (DPAPI-encrypted saved networks, auto-connect, hidden networks, captive-portal detection).
-- `app/client/`: the tray app (WPF), notifications, the send window, the Wi-Fi window, Chinese/English UI.
+- `app/client/`: the tray app (WPF), notifications, live transfer speed display, the send window, the Wi-Fi window, Apple ID log export, Chinese/English UI.
 - `app/shellext/`: the Windows 11 context-menu handler.
-- `installer/`: the Inno Setup installer, the on-PC driver signing, TAP setup and uninstall.
+- `installer/`: the Inno Setup installer, the on-PC driver signing, TAP setup, diagnostic report (`report.ps1`), BLE beacon (`airdrop-beacon.ps1`), and uninstall.
 
 ## Contributors
 
-Thanks to everyone who sent code and careful test reports:
+Thanks to everyone who contributed code, documentation, and detailed hardware test reports:
 
 - [@BaiBaiAi](https://github.com/BaiBaiAi): Windows → iPhone sending without a client certificate ([#13](../../pull/13)), pipelined AWDL transmit so large uploads finish ([#15](../../pull/15)), and the first AX210 test report ([#14](../../issues/14)).
-- [@XXD051030](https://github.com/XXD051030): the optional balanced Bluetooth coexistence mode for Intel cards, so the PC finds iPhones and Macs in seconds instead of minutes, with a careful before/after study on an AX200 ([#26](../../pull/26)).
-- [@GGBond-cer](https://github.com/GGBond-cer): many detailed AX200 test reports that pinned down the A-MPDU and speed problems ([#4](../../issues/4)), the root cause of the uninstaller leftovers ([#22](../../issues/22)), the throughput testing guide ([#28](../../pull/28)), and the uninstaller fix that keeps Setup from being killed by its own cleanup step ([#38](../../pull/38)), deleting the downloaded installer after an update ([#44](../../pull/44)), and keeping the panel and file dialogs on one screen with mixed-DPI monitors ([#49](../../pull/49)).
-- [@DaiJiequn](https://github.com/DaiJiequn): MediaTek MT7902 support, a user-mode port of Linux mt76 that runs AirDrop both ways on demand ([#34](../../pull/34)), and its Concurrent mode, Wi-Fi beside AirDrop with the router's A-MPDUs, whose shared station code MT7921/MT7922 now use too ([#47](../../pull/47)).
-- [@sh17632](https://github.com/sh17632): the AirDrop-style radar and Share sheet design that became the 2.0 interface ([#36](../../issues/36)), and AX211 test reports ([#35](../../issues/35)).
-- [@YiHoooong](https://github.com/YiHoooong): MediaTek MT7922/MT7921 user-mode radio (mtkradio), tested on an MT7922 / AMD RZ616 ([#40](../../pull/40)).
+- [@XXD051030](https://github.com/XXD051030): the balanced Bluetooth coexistence mode for Intel cards, so the PC finds iPhones and Macs in seconds instead of minutes, with a careful before/after study on an AX200 ([#26](../../pull/26)).
+- [@GGBond-cer](https://github.com/GGBond-cer): detailed AX200 test reports that pinned down A-MPDU and speed issues ([#4](../../issues/4)), uninstaller leftover root cause ([#22](../../issues/22)), the throughput testing guide ([#28](../../pull/28)), uninstaller cleanup fix ([#38](../../pull/38)), deleting the downloaded installer after an update ([#44](../../pull/44)), keeping the panel and file dialogs on the cursor's screen on mixed-DPI monitors ([#49](../../pull/49)), live download speed in Settings updates ([#64](../../pull/64)), and choosing main panel or tray launch after an update ([#71](../../pull/71)).
+- [@DaiJiequn](https://github.com/DaiJiequn): MediaTek MT7902 support, a user-mode port of Linux mt76 that runs AirDrop both ways on demand ([#34](../../pull/34)), and its Concurrent mode (Wi-Fi beside AirDrop with the router's A-MPDUs), whose shared station code MT7921/MT7922 now use too ([#47](../../pull/47)).
+- [@sh17632](https://github.com/sh17632): the AirDrop-style radar and Share sheet design that became the 2.0 interface ([#36](../../issues/36)), AX211 test reports ([#35](../../issues/35)), IPv6-only mDNS answers for macOS ([#55](../../pull/55)), experimental standby BLE beacon (`NEKODROP_BLE_STANDBY=1`, [#69](../../pull/69)), and deep macOS 15 / iOS 18 AWDL & BLE packet analysis ([#51](../../issues/51), [#67](../../issues/67)).
+- [@YiHoooong](https://github.com/YiHoooong): MediaTek MT7922/MT7921 user-mode radio (`mtkradio`, [#40](../../pull/40)), MT7922 channel-switch timeout / RX filter recovery and HE80 2SS LWTBL ([#65](../../pull/65)), and sharing `owly` HE80 + MTU 1500 throughput findings.
+- [@Yanlyn](https://github.com/Yanlyn): documented eduroam PEAP setup on Windows with AX201 ([#58](../../pull/58)) and community MT7927 bring-up research ([#57](../../issues/57)).
+- Plus everyone who shared full diagnostic logs to help track down real-world bugs across AX211, AX411/AX1690i, BE200, RTL8852CE, MT7922, and Apple ID sign-in ([#30](../../issues/30), [#37](../../issues/37), [#42](../../issues/42), [#53](../../issues/53), [#54](../../issues/54), [#61](../../issues/61), [#62](../../issues/62), [#66](../../issues/66)).
 
 ## License
 
