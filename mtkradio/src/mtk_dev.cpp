@@ -205,9 +205,10 @@ bool parse_tx_radiotap(const uint8_t *buf, size_t len, const uint8_t *&frame, si
   frame_len = len - rt_len;
   if (frame_len < 16) return false;
 
-  /* Default fallback if client sends minimal radiotap without RATE/MCS fields. */
+  /* Default fallback if client sends minimal radiotap without RATE/MCS fields.
+   * Use 24 Mbps (not fragile 54 Mbps) for fixed-rate fallback before firmware RA activates. */
   params = TxParams{};
-  params.rate_mbps = ((frame[0] & 0x0cu) == 0x08u) ? 54u : 6u;
+  params.rate_mbps = ((frame[0] & 0x0cu) == 0x08u) ? 24u : 6u;
 
   const uint32_t present0 = read_le32(buf + 4);
   size_t pos = 8;
@@ -491,6 +492,8 @@ bool MtkDevice::alloc_tx_ring(Ring &r, uint32_t reg_base, uint32_t count, bool w
   r.count = count;
   r.head = 0;
   r.tail = 0;
+  r.rx_reasm.clear();
+  r.rx_reasm_drop = false;
   r.desc_buf = _dma.alloc(count * sizeof(MtkDesc), 256);
   if (!r.desc_buf) {
     error = "failed to allocate 32-bit DMA descriptors for TX ring";
@@ -526,6 +529,8 @@ bool MtkDevice::alloc_rx_ring(Ring &r, uint32_t reg_base, uint32_t count, std::s
   r.count = count;
   r.head = 0;
   r.tail = 0;
+  r.rx_reasm.clear();
+  r.rx_reasm_drop = false;
   r.desc_buf = _dma.alloc(count * sizeof(MtkDesc), 256);
   if (!r.desc_buf) {
     error = "failed to allocate 32-bit DMA descriptors for RX ring";
@@ -711,7 +716,9 @@ bool MtkDevice::rx_ring_pop(Ring &r, std::vector<uint8_t> &out, bool commit) {
     const uint32_t len = field_get(MT_DMA_CTL_SD_LEN0, ctrl);
     const bool last_sec = (ctrl & MT_DMA_CTL_LAST_SEC0) != 0;
 
-    if (len > 0 && len <= DmaPool32::kPageBytes) {
+    if (r.rx_reasm_drop) {
+      if (last_sec) r.rx_reasm_drop = false;
+    } else if (len > 0 && len <= DmaPool32::kPageBytes) {
       if (r.rx_reasm.empty() && last_sec) {
         /* Fast path: single-descriptor frame (no extra copy). */
         out.assign(r.bufs[idx].va, r.bufs[idx].va + len);
@@ -719,16 +726,18 @@ bool MtkDevice::rx_ring_pop(Ring &r, std::vector<uint8_t> &out, bool commit) {
         /* Multi-descriptor RX A-MSDU fragment (up to 12 KiB). */
         if (r.rx_reasm.size() + len <= kMaxReasmBytes) {
           r.rx_reasm.insert(r.rx_reasm.end(), r.bufs[idx].va, r.bufs[idx].va + len);
+          if (last_sec && !r.rx_reasm.empty()) {
+            out.swap(r.rx_reasm);
+            r.rx_reasm.clear();
+          }
         } else {
           r.rx_reasm.clear();
-        }
-        if (last_sec && !r.rx_reasm.empty()) {
-          out.swap(r.rx_reasm);
-          r.rx_reasm.clear();
+          if (!last_sec) r.rx_reasm_drop = true;
         }
       }
-    } else if (last_sec) {
+    } else {
       r.rx_reasm.clear();
+      if (!last_sec) r.rx_reasm_drop = true;
     }
 
     /* Re-arm descriptor and advance head/tail; optionally defer cpu_idx MMIO doorbell. */
@@ -1594,8 +1603,12 @@ bool MtkDevice::set_channel(uint8_t channel, unsigned width_mhz, uint8_t switch_
   }
 
   if (!_rx_path_set) {
-    /* Configure RX filter synchronously via MCU so firmware allows beacons/probe responses
-     * and frames from other BSSes without racing against restore_rx_filter() (#54, #65). */
+    /* Configure RX filter synchronously via MCU (matching Linux mt7921_configure_filter
+     * and mt7921_mcu_set_beacon_filter(false)):
+     * 1) mode=1 enables OTHER_BSS reception in firmware;
+     * 2) mode=2 with MT7921_FIF_BIT_CLR clears DROP_OTHER_BEACON / DROP_OTHER_BSS /
+     *    DROP_OTHER_UC / BSSID-drop bits in firmware's cached RFCR so channel switches
+     *    during Wi-Fi scans do not re-enable DROP_OTHER_BEACON (#54, #66). */
 #pragma pack(push, 1)
     struct {
       uint8_t rsv[4];
@@ -1608,7 +1621,18 @@ bool MtkDevice::set_channel(uint8_t channel, unsigned width_mhz, uint8_t switch_
     } rxfilter_req{};
 #pragma pack(pop)
     rxfilter_req.mode = 1;
-    rxfilter_req.fif = MT7921_FILTER_ENABLE | MT7921_FILTER_OTHER_BSS | MT7921_FILTER_BCN_PRBRESP;
+    rxfilter_req.fif = MT7921_FILTER_ENABLE | MT7921_FILTER_OTHER_BSS;
+    (void)mcu_send(MCU_CE_CMD_SET_RX_FILTER, 0, MCU_Q_SET, &rxfilter_req, sizeof(rxfilter_req),
+                   true, nullptr, 500);
+
+    rxfilter_req = {};
+    rxfilter_req.mode = 2;
+    rxfilter_req.fif = 0;
+    rxfilter_req.bit_op = MT7921_FIF_BIT_CLR;
+    rxfilter_req.bit_map = MT_WF_RFCR_DROP_OTHER_BEACON | MT_WF_RFCR_DROP_OTHER_BSS |
+                           MT_WF_RFCR_DROP_OTHER_UC | MT_WF_RFCR_DROP_A2_BSSID |
+                           MT_WF_RFCR_DROP_A3_BSSID | MT_WF_RFCR_DROP_A3_MAC |
+                           MT_WF_RFCR_DROP_BCAST | MT_WF_RFCR_DROP_MCAST;
     (void)mcu_send(MCU_CE_CMD_SET_RX_FILTER, 0, MCU_Q_SET, &rxfilter_req, sizeof(rxfilter_req),
                    true, nullptr, 500);
     _rx_path_set = true;
@@ -2628,11 +2652,16 @@ bool MtkDevice::transmit(const uint8_t *frame, size_t len, const TxParams &param
       (is_qos_data && len >= 26) ? static_cast<uint8_t>(frame[24] & 0x07u) : 0u;
   uint32_t wlan_idx = 0;
   bool use_tx_ba = false;
+  bool use_fw_ra = false;
   if (is_qos_data && !multicast && !no_ack) {
-    const int peer_wcid = find_peer_wcid(frame + 4);
-    if (peer_wcid > 0 && _peers[peer_wcid].tx_ba_active[tid]) {
+    /* Register the peer WTBL entry on first unicast QoS Data frame so Connac2
+     * firmware Rate Adaptation (HE80/VHT80 2SS with automatic fallback on
+     * retries) drives TX instead of a fragile fixed rate on broadcast WCID 0 (#56, #66). */
+    const int peer_wcid = get_or_add_peer_wcid(frame + 4);
+    if (peer_wcid > 0) {
       wlan_idx = static_cast<uint32_t>(peer_wcid);
-      use_tx_ba = true;
+      use_fw_ra = true;
+      use_tx_ba = _peers[peer_wcid].tx_ba_active[tid];
     }
   }
 
@@ -2652,13 +2681,13 @@ bool MtkDevice::transmit(const uint8_t *frame, size_t len, const TxParams &param
   txwi[2] = field_prep(MT_TXD2_FRAME_TYPE, fc_type) |
             field_prep(MT_TXD2_SUB_TYPE, fc_stype) |
             field_prep(MT_TXD2_MULTICAST, multicast ? 1u : 0u) |
-            (use_tx_ba ? 0u : (MT_TXD2_FIX_RATE | MT_TXD2_HTC_VLD));
-  txwi[3] = field_prep(MT_TXD3_REM_TX_COUNT, no_ack ? 1u : 7u) |
+            (use_fw_ra ? 0u : (MT_TXD2_FIX_RATE | MT_TXD2_HTC_VLD));
+  txwi[3] = field_prep(MT_TXD3_REM_TX_COUNT, no_ack ? 1u : 15u) |
             (use_tx_ba ? 0u : MT_TXD3_BA_DISABLE) | MT_TXD3_SN_VALID |
             field_prep(MT_TXD3_SEQ, (sc >> 4) & 0xfffu) |
             (no_ack ? MT_TXD3_NO_ACK : 0u);
-  if (use_tx_ba) {
-    /* Let Connac2 firmware RA select HE80/VHT80 2SS MCS for HW TX BA frames. */
+  if (use_fw_ra) {
+    /* Let Connac2 firmware RA select HE80/VHT80 2SS MCS with automatic fallback. */
     txwi[6] = 0;
   } else if (params.is_vht) {
     txwi[6] = MT_TXD6_FIXED_BW | MT_TXD6_LDPC |
@@ -2748,8 +2777,26 @@ bool MtkDevice::parse_rx_packet(const uint8_t *buf, size_t len, RxFrame &out) {
   ofs += 2 * remove_pad;
   if (ofs >= total_len) return false;
 
-  out.data = buf + ofs;
-  out.len = total_len - ofs;
+  const uint8_t *frame_ptr = buf + ofs;
+  size_t frame_len = total_len - ofs;
+  if (frame_len < 16) return false;
+
+  /* Connac2 raw A-MSDU frames without header translation carry 2 bytes of
+   * padding immediately after the 802.11 header (Linux mt7921_mac_fill_rx). */
+  if (field_get(MT_RXD4_NORMAL_PAYLOAD_FORMAT, rxd[4]) != 0) {
+    const uint16_t fc = read_le16(frame_ptr);
+    const size_t hlen = ieee80211_hdrlen(fc);
+    if (hlen >= 24 && hlen + 2 <= frame_len) {
+      _rx_unpad_buf.resize(frame_len - 2);
+      std::memcpy(_rx_unpad_buf.data(), frame_ptr, hlen);
+      std::memcpy(_rx_unpad_buf.data() + hlen, frame_ptr + hlen + 2, frame_len - hlen - 2);
+      frame_ptr = _rx_unpad_buf.data();
+      frame_len -= 2;
+    }
+  }
+
+  out.data = frame_ptr;
+  out.len = frame_len;
   out.dbm = dbm;
   out.channel = static_cast<uint8_t>(field_get(MT_RXD3_NORMAL_CH_FREQ, rxd3));
   if (out.channel == 0) out.channel = _channel;

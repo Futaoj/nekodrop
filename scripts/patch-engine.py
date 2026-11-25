@@ -16,7 +16,7 @@ import sys
 
 NL = chr(10)
 HELPER = NL.join([
-    'SPARE_PORTS = range(8771, 8780)  # nekodrop: the firewall rule allows these',
+    'SPARE_PORTS = (*range(8771, 8780), *range(18771, 18780), *range(28771, 28780))  # nekodrop: firewall allows these; avoids Hyper-V excluded blocks (#30)',
     '',
     '',
     'def _bind_spare(settings, watcher):',

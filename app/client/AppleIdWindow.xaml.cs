@@ -18,6 +18,7 @@ public partial class AppleIdWindow : Window
     {
         InitializeComponent();
         Native.Chrome(this);
+        ExportLogButton.Visibility = AppleId.HasLog ? Visibility.Visible : Visibility.Collapsed;
         Loaded += (_, _) => EmailBox.Focus();
     }
 
@@ -92,11 +93,33 @@ public partial class AppleIdWindow : Window
             return;
         }
         Say(Explain(failure), true);
+        ExportLogButton.Visibility = AppleId.HasLog ? Visibility.Visible : Visibility.Collapsed;
         Credentials.IsEnabled = true;
         Credentials.Visibility = Visibility.Visible;
         CodePanel.Visibility = Visibility.Collapsed;
         GoButton.Content = L.T("aid.signIn");
         GoButton.IsEnabled = true;
+    }
+
+    void ExportLog_Click(object sender, RoutedEventArgs e)
+    {
+        if (!AppleId.HasLog) { Say(L.T("aid.noLog"), true); return; }
+        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmm");
+        var dlg = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = L.T("aid.exportLog"),
+            Filter = "Log (*.txt)|*.txt",
+            FileName = $"nekodrop-appleid-log-{stamp}.txt",
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+        };
+        if (Native.ShowDialog(this, dlg, dlg.Title) != true) return;
+        try
+        {
+            AppleId.ExportLog(dlg.FileName);
+            Say(L.F("aid.logExported", System.IO.Path.GetFileName(dlg.FileName)));
+            try { System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{dlg.FileName}\""); } catch (Exception) { }
+        }
+        catch (Exception x) { Say(x.Message, true); }
     }
 
     void Cancel_Click(object sender, RoutedEventArgs e)

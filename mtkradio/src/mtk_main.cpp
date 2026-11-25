@@ -138,6 +138,36 @@ void append_rx_wire(const mtk::RxFrame &f, std::vector<uint8_t> &batch) {
   std::memcpy(dst + sizeof(hdr) + sizeof(rt), f.data, f.len);
 }
 
+/* Split an 802.11 QoS Data A-MSDU (QoS Control bit 7 = 0x80) into standard
+ * non-A-MSDU QoS Data MPDUs for awdld (owl does not de-aggregate A-MSDUs). */
+void append_rx_deamsdu(const mtk::RxFrame &f, std::vector<uint8_t> &batch) {
+  if (f.len >= 26 && (f.data[0] & 0x8cu) == 0x88u) {
+    const uint16_t fc = static_cast<uint16_t>(f.data[0] | (f.data[1] << 8));
+    const size_t qos_off = ((fc & 0x0300u) == 0x0300u) ? 30u : 24u;
+    const size_t hdr_len = qos_off + 2u + ((fc & 0x8000u) ? 4u : 0u);
+    if (f.len > hdr_len + 14u && (f.data[qos_off] & 0x80u) != 0) {
+      std::vector<uint8_t> mpdu;
+      size_t off = hdr_len;
+      unsigned emitted = 0;
+      while (off + 14u <= f.len) {
+        const size_t sub_len = (static_cast<size_t>(f.data[off + 12]) << 8) | f.data[off + 13];
+        if (sub_len == 0 || off + 14u + sub_len > f.len) break;
+        mpdu.resize(hdr_len + sub_len);
+        std::memcpy(mpdu.data(), f.data, hdr_len);
+        mpdu[qos_off] &= static_cast<uint8_t>(~0x80u); /* clear A-MSDU Present */
+        std::memcpy(mpdu.data() + hdr_len, f.data + off + 14u, sub_len);
+        append_rx_wire({mpdu.data(), mpdu.size(), f.dbm, f.channel}, batch);
+        emitted++;
+        const size_t step = (14u + sub_len + 3u) & ~size_t(3u);
+        if (off + step > f.len) break;
+        off += step;
+      }
+      if (emitted > 0) return;
+    }
+  }
+  append_rx_wire(f, batch);
+}
+
 bool is_awdl_bssid(const uint8_t *frame, size_t len) {
   if (len < 22) return false;
   static constexpr uint8_t kAwdl[6] = {0x00, 0x25, 0x00, 0xff, 0x94, 0x73};
@@ -416,8 +446,11 @@ int main(int argc, char **argv) {
   Clock::time_point running_since{};
   std::thread tap_thread;
 
+  uint64_t awdl_tx_acked = 0, awdl_tx_failed = 0;
   dev.set_tx_status_handler([&](unsigned token, bool acked, unsigned) {
-    if (sta_dev) (void)sta_dev->on_tx_status(token, acked);
+    if (sta_dev && sta_dev->on_tx_status(token, acked)) return;
+    if (acked) awdl_tx_acked++;
+    else awdl_tx_failed++;
   });
 
   if (!sta_config_path.empty()) {
@@ -539,7 +572,7 @@ int main(int argc, char **argv) {
     size_t next = 0;
     unsigned visits = 0, home_visits = 0;
     Clock::time_point until{}, started{};
-    uint64_t frames = 0, beacons = 0;
+    uint64_t frames = 0, beacons = 0, mgmt = 0, ctrl = 0, data = 0;
     std::map<uint8_t, std::pair<uint64_t, uint64_t>> heard;
   } scan;
 
@@ -552,6 +585,10 @@ int main(int argc, char **argv) {
     if (scan.active) {
       scan.frames++;
       scan.beacons += beacon;
+      const uint8_t ftype = static_cast<uint8_t>((fc >> 2) & 0x3u);
+      if (ftype == 0) scan.mgmt++;
+      else if (ftype == 1) scan.ctrl++;
+      else if (ftype == 2) scan.data++;
       auto &h = scan.heard[f.channel];
       h.first++;
       h.second += beacon;
@@ -644,8 +681,11 @@ int main(int argc, char **argv) {
         heard += " " + std::to_string(ch) + ":" + std::to_string(c.first) + "/" +
                  std::to_string(c.second);
       }
-      log_fmt("scan: %llu frames, %llu beacons or probe responses, %u AWDL home visits (channel:frames/beacons%s)",
+      log_fmt("scan: %llu frames (%llu mgmt, %llu ctrl, %llu data), %llu beacons or probe responses, %u AWDL home visits (channel:frames/beacons%s)",
               static_cast<unsigned long long>(scan.frames),
+              static_cast<unsigned long long>(scan.mgmt),
+              static_cast<unsigned long long>(scan.ctrl),
+              static_cast<unsigned long long>(scan.data),
               static_cast<unsigned long long>(scan.beacons), scan.home_visits, heard.c_str());
       unsigned n = 0;
       for (const auto &[bssid, b] : bss_map) {
@@ -1002,14 +1042,17 @@ int main(int argc, char **argv) {
         const uint16_t seqctl = static_cast<uint16_t>(f.data[31] | (f.data[32] << 8));
         const bool immediate = (req_params & 2u) != 0;
         if (immediate && addba_responses.size() < 8) {
-          const uint16_t amsdu = he80 ? (req_params & 1u) : 0u;
+          /* Keep amsdu=0 in ADDBA Response (awdld does not parse A-MSDU directly;
+           * append_rx_deamsdu still safely splits any A-MSDU a peer might send). */
+          (void)he80;
+          const uint16_t amsdu = 0u;
           const uint8_t tid = static_cast<uint8_t>((req_params >> 2) & 0x0fu);
           uint16_t win = static_cast<uint16_t>((req_params >> 6) & 0x03ffu);
           if (win == 0 || win > 64) win = 64;
           const uint16_t ssn = static_cast<uint16_t>((seqctl >> 4) & 0x0fffu);
           ba_reorder.on_addba(f.data + 10, tid, ssn, win, heard,
                               [&](const uint8_t *d, size_t n, uint8_t ch, int8_t rssi) {
-                                if (pipe.connected()) append_rx_wire({d, n, rssi, ch}, rx_batch);
+                                if (pipe.connected()) append_rx_deamsdu({d, n, rssi, ch}, rx_batch);
                               });
           std::array<uint8_t, 33> resp{};
           resp[0] = 0xd0u;
@@ -1028,6 +1071,7 @@ int main(int argc, char **argv) {
           resp[30] = static_cast<uint8_t>(rsp_params >> 8);
           addba_responses.push_back(resp);
         }
+        return;
       } else if (!no_block_ack && on_awdl_ch && f.len >= 28 && (f.data[0] & 0xfcu) == 0xd0u &&
                  std::memcmp(f.data + 4, own_mac.data(), 6) == 0 && f.data[24] == 3u &&
                  f.data[25] == 2u) {
@@ -1036,15 +1080,17 @@ int main(int argc, char **argv) {
           const uint8_t tid = static_cast<uint8_t>((params >> 12) & 0x0fu);
           ba_reorder.on_delba(f.data + 10, tid,
                               [&](const uint8_t *d, size_t n, uint8_t ch, int8_t rssi) {
-                                if (pipe.connected()) append_rx_wire({d, n, rssi, ch}, rx_batch);
+                                if (pipe.connected()) append_rx_deamsdu({d, n, rssi, ch}, rx_batch);
                               });
         }
+        return;
       } else if (!no_block_ack && on_awdl_ch && f.len >= 20 && f.data[0] == 0x84u &&
                  std::memcmp(f.data + 4, own_mac.data(), 6) == 0) {
         ba_reorder.on_bar(f.data, f.len, heard,
                           [&](const uint8_t *d, size_t n, uint8_t ch, int8_t rssi) {
-                            if (pipe.connected()) append_rx_wire({d, n, rssi, ch}, rx_batch);
+                            if (pipe.connected()) append_rx_deamsdu({d, n, rssi, ch}, rx_batch);
                           });
+        return;
       }
 
       if (!pipe.connected()) return;
@@ -1055,18 +1101,18 @@ int main(int argc, char **argv) {
           std::memcmp(f.data + 4, own_mac.data(), 6) == 0) {
         if (ba_reorder.process(f.data, f.len, f.channel, f.dbm, heard,
                                [&](const uint8_t *d, size_t n, uint8_t ch, int8_t rssi) {
-                                 append_rx_wire({d, n, rssi, ch}, rx_batch);
+                                 append_rx_deamsdu({d, n, rssi, ch}, rx_batch);
                                })) {
           return;
         }
       }
-      append_rx_wire(f, rx_batch);
+      append_rx_deamsdu(f, rx_batch);
     });
 
     if (pipe.connected() && !no_block_ack) {
       ba_reorder.flush_expired(now_us(),
                                [&](const uint8_t *d, size_t n, uint8_t ch, int8_t rssi) {
-                                 append_rx_wire({d, n, rssi, ch}, rx_batch);
+                                 append_rx_deamsdu({d, n, rssi, ch}, rx_batch);
                                });
     }
 
@@ -1133,9 +1179,11 @@ int main(int argc, char **argv) {
     }
 
     if (Clock::now() - last_report > std::chrono::seconds(10)) {
-      log_fmt("rx: %llu frames, %llu awdl, %llu addressed to us",
+      log_fmt("rx: %llu frames, %llu awdl, %llu addressed to us; tx: %llu acked, %llu failed",
               static_cast<unsigned long long>(rx_total), static_cast<unsigned long long>(rx_awdl),
-              static_cast<unsigned long long>(rx_to_us));
+              static_cast<unsigned long long>(rx_to_us),
+              static_cast<unsigned long long>(awdl_tx_acked),
+              static_cast<unsigned long long>(awdl_tx_failed));
       if (sta && sta_dev) {
         const MtkStation::Stats &s = sta_dev->stats();
         unsigned router = 0;

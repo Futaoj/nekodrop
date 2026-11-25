@@ -29,6 +29,8 @@ public static partial class AppleId
     static string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
     public static string Out => Path.Combine(LocalAppData, "nekodrop", "appleid");
     public static string Dir => Path.Combine(Out, "identity");
+    public static string LogFile => Path.Combine(Out, "appleid.log");
+    public static bool HasLog => File.Exists(LogFile);
     static string WirDropDevice => Path.Combine(LocalAppData, "WirDrop", "device.txt");
     static string VirtualStoreAdi => Path.Combine(LocalAppData, "VirtualStore", "ProgramData", "Apple Computer", "iTunes", "adi");
     const string WirDropRegistryKey = @"Software\WirDrop";
@@ -133,13 +135,56 @@ public static partial class AppleId
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
             WorkingDirectory = Path.GetDirectoryName(Exe)!,
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
         psi.Environment["APPLEID_OUT"] = Out;
-        psi.Environment["APPLEID_LOG"] = Path.Combine(Out, "appleid.log");
+        psi.Environment["APPLEID_LOG"] = LogFile;
         psi.Environment["APPLEID_CC"] = CountryCode();
         return psi;
+    }
+
+    static void AppendClientLog(string op, int exitCode, string? failure, string stderr)
+    {
+        try
+        {
+            Directory.CreateDirectory(Out);
+            var sb = new StringBuilder();
+            var ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+            sb.AppendLine($"[{ts}] [client] {op} exit={exitCode}" + (failure is not null ? $" error={failure}" : " ok"));
+            if (!string.IsNullOrWhiteSpace(stderr))
+            {
+                foreach (var line in stderr.Replace("\r\n", "\n").Split('\n'))
+                {
+                    if (line.Length > 0) sb.AppendLine($"[{ts}] [stderr] {line}");
+                }
+            }
+            File.AppendAllText(LogFile, sb.ToString(), new UTF8Encoding(false));
+        }
+        catch (Exception) { }
+    }
+
+    /// <summary>Redacts personal identifiers and auth headers before exporting appleid.log (#42).</summary>
+    public static string RedactLog(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+        text = EmailRegex().Replace(text, "<email>");
+        text = UserPathRegex().Replace(text, "$1<user>");
+        text = SecretHeaderRegex().Replace(text, "$1<redacted>");
+        var user = Environment.UserName;
+        if (user.Length >= 2) text = text.Replace(user, "<user>", StringComparison.OrdinalIgnoreCase);
+        var pc = Environment.MachineName;
+        if (pc.Length >= 2) text = text.Replace(pc, "<pc>", StringComparison.OrdinalIgnoreCase);
+        return text;
+    }
+
+    /// <summary>Writes a redacted copy of appleid.log to <paramref name="destPath"/>.</summary>
+    public static void ExportLog(string destPath)
+    {
+        var raw = File.Exists(LogFile) ? File.ReadAllText(LogFile, Encoding.UTF8) : "";
+        var redacted = RedactLog(raw);
+        File.WriteAllText(destPath, redacted, new UTF8Encoding(false));
     }
 
     /// <summary>
@@ -153,6 +198,7 @@ public static partial class AppleId
         if (!CanSignIn) return L.T("aid.noTool");
         using var p = Process.Start(Info("--json"));
         if (p is null) return L.T("aid.noTool");
+        var errTask = p.StandardError.ReadToEndAsync();
         await p.StandardInput.WriteLineAsync(new JsonObject { ["email"] = email, ["password"] = password, ["model"] = "MacBookPro18,3" }.ToJsonString());
         await p.StandardInput.FlushAsync();
         string? failure = L.T("aid.ended");
@@ -180,6 +226,8 @@ public static partial class AppleId
             }
         }
         await p.WaitForExitAsync();
+        var stderr = (await errTask).Trim();
+        AppendClientLog("sign-in", p.ExitCode, failure, stderr);
         if (failure is null)
         {
             Directory.CreateDirectory(Dir);
@@ -197,12 +245,26 @@ public static partial class AppleId
         {
             using var p = Process.Start(Info("--refresh"));
             if (p is null) return 1;
+            var outTask = p.StandardOutput.ReadToEndAsync();
+            var errTask = p.StandardError.ReadToEndAsync();
             p.StandardInput.Close();
             await p.WaitForExitAsync();
+            await outTask;
+            var stderr = (await errTask).Trim();
+            if (stderr.Length > 0 || p.ExitCode != 0) AppendClientLog("refresh", p.ExitCode, null, stderr);
             if (p.ExitCode == 0)
             {
                 using var c = Process.Start(Info("--contacts"));
-                if (c is not null) { c.StandardInput.Close(); await c.WaitForExitAsync(); }
+                if (c is not null)
+                {
+                    var cOutTask = c.StandardOutput.ReadToEndAsync();
+                    var cErrTask = c.StandardError.ReadToEndAsync();
+                    c.StandardInput.Close();
+                    await c.WaitForExitAsync();
+                    await cOutTask;
+                    var cStderr = (await cErrTask).Trim();
+                    if (cStderr.Length > 0 || c.ExitCode != 0) AppendClientLog("contacts", c.ExitCode, null, cStderr);
+                }
             }
             return p.ExitCode;
         }
@@ -282,6 +344,12 @@ public static partial class AppleId
     private static partial Regex HexString();
     [GeneratedRegex(@"<data>\s*([A-Za-z0-9+/=\s]+?)\s*</data>")]
     private static partial Regex DataBlob();
+    [GeneratedRegex(@"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")]
+    private static partial Regex EmailRegex();
+    [GeneratedRegex(@"(?i)([A-Z]:\\Users\\)[^\\\s""]+")]
+    private static partial Regex UserPathRegex();
+    [GeneratedRegex(@"(?i)((?:X-Apple-GS-Token|X-Apple-I-MD(?:-M|-RINFO)?|X-Apple-Identity-Token|Authorization|security-code|password)\s*[:=]\s*)\S+")]
+    private static partial Regex SecretHeaderRegex();
 
     // ------------------------------------------------------ the contacts
 

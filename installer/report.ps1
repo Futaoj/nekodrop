@@ -377,6 +377,7 @@ function Run-Netsh([string[]]$netshArgs) {
 $serviceLog = @(Read-All (Join-Path $state 'service.log.1')) + @(Read-All (Join-Path $state 'service.log'))
 $engineDir = Join-Path $UserData 'nekodrop'
 $engineLog = @(Read-All (Join-Path $engineDir 'engine.log.old')) + @(Read-All (Join-Path $engineDir 'engine.log'))
+$appleIdLog = Read-All (Join-Path $engineDir 'appleid\appleid.log')
 $installLog = Read-All (Join-Path $state 'install.log')
 $restoreLog = Read-All (Join-Path $state 'restore.log')
 
@@ -413,6 +414,7 @@ function Redact([string]$s) {
     param($m) if (-not $ipMap.ContainsKey($m.Value)) { $ipMap[$m.Value] = "<IP-$($ipMap.Count + 1)>" }
     $ipMap[$m.Value] })
   $s = [regex]::Replace($s, '(?i)\b(?:fe80|f[cd][0-9a-f]{2}|2[0-9a-f]{3}):[0-9a-f:%]{2,}[0-9a-f]', '<IPv6>')
+  $s = [regex]::Replace($s, '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', '<email>')
   $s = [regex]::Replace($s, '(?i)([A-Z]:\\Users\\)[^\\\s"]+', '$1<user>')
   if ($UserName -and $UserName.Length -ge 2) { $s = $s.Replace($UserName, '<user>') }
   if ($env:COMPUTERNAME) { $s = $s.Replace($env:COMPUTERNAME, '<pc>') }
@@ -749,6 +751,15 @@ foreach ($line in $wlanInterfaces) {
 }
 W '```'
 W ''
+$excludedPorts = @(Run-Netsh @('interface', 'ipv6', 'show', 'excludedportrange', 'protocol=tcp') | Where-Object { $_ -match '^\s*\d+\s+\d+' })
+if ($excludedPorts.Count) {
+  W 'TCP IPv6 excluded port ranges (Hyper-V / WinNAT):'
+  W ''
+  W '```'
+  $excludedPorts | Select-Object -First 30 | ForEach-Object { W $_.Trim() }
+  W '```'
+  W ''
+}
 
 W '## Bluetooth'
 W ''
@@ -811,6 +822,7 @@ function Details([string]$title, $lines) {
 }
 Details 'service.log (last 250 lines)' ($serviceLog | Select-Object -Last 250)
 Details 'engine.log (last 150 lines)' ($engineLog | Select-Object -Last 150)
+if ($appleIdLog.Count) { Details 'appleid.log (last 80 lines)' ($appleIdLog | Select-Object -Last 80) }
 Details 'install.log (last 80 lines)' ($installLog | Select-Object -Last 80)
 
 $report = $sb.ToString()
@@ -825,6 +837,7 @@ $full = New-Object System.Text.StringBuilder
 foreach ($part in @(
     @('service.log (+ service.log.1)', $serviceLog),
     @('engine.log (+ engine.log.old)', $engineLog),
+    @('appleid.log', $appleIdLog),
     @('install.log', $installLog),
     @('restore.log', $restoreLog))) {
   [void]$full.AppendLine("===== $($part[0]) =====")

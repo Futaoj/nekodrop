@@ -432,6 +432,7 @@ constexpr uint32_t MT_RXD2_NORMAL_AMSDU_ERR = bit(23);
 constexpr uint32_t MT_RXD2_NORMAL_MAX_LEN_ERROR = bit(24);
 
 constexpr uint32_t MT_RXD3_NORMAL_CH_FREQ = genmask(15, 8);
+constexpr uint32_t MT_RXD4_NORMAL_PAYLOAD_FORMAT = genmask(1, 0);
 constexpr uint32_t MT_PRXV_RCPI0 = genmask(7, 0);
 
 /* --------------------------------------------------------------------------
@@ -469,11 +470,12 @@ constexpr uint8_t MCU_EXT_CMD_SET_RX_PATH = 0x4e;
 constexpr uint8_t MCU_CE_CMD_SET_RX_FILTER = 0x0a;
 constexpr uint8_t MCU_CE_CMD_SET_CHAN_DOMAIN = 0x0f;
 constexpr uint8_t MCU_CE_CMD_SET_EDCA_PARMS = 0x1d;
-constexpr uint32_t MT7921_FILTER_BCN_PRBRESP = bit(1);
 constexpr uint32_t MT7921_FILTER_FCSFAIL = bit(2);
 constexpr uint32_t MT7921_FILTER_CONTROL = bit(5);
 constexpr uint32_t MT7921_FILTER_OTHER_BSS = bit(6);
 constexpr uint32_t MT7921_FILTER_ENABLE = bit(31);
+constexpr uint8_t MT7921_FIF_BIT_SET = 1u; /* BIT(0) in Linux mt7921/mcu.c */
+constexpr uint8_t MT7921_FIF_BIT_CLR = 2u; /* BIT(1) in Linux mt7921/mcu.c */
 
 /* Unified MCU Command IDs */
 constexpr uint16_t MCU_UNI_CMD_DEV_INFO_UPDATE = 0x01;

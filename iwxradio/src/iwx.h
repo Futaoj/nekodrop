@@ -347,7 +347,7 @@ private:
   std::vector<uint32_t> _unhandled_notifs;
   unsigned _ba_foreign_logged = 0;
   static constexpr uint32_t kPrphScratchImrDebugEn = 1u << 1; /* IWX_PRPH_SCRATCH_IMR_DEBUG_EN */
-  uint32_t _lmac_error_table = 0, _umac_error_table = 0;
+  uint32_t _lmac_error_table = 0, _lmac2_error_table = 0, _umac_error_table = 0;
 
   /* NVM */
   uint8_t _nvm_tx_ant = 0, _nvm_rx_ant = 0;

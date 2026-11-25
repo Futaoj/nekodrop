@@ -384,8 +384,8 @@ bool IwxDevice::alloc_rings(std::string &error) {
   const auto make_ring = [&](TxRing &ring, unsigned count, unsigned qid, size_t payload) {
     ring.count = count;
     ring.qid = qid;
-    ring.desc = _dma.alloc(count * sizeof(iwx_tfh_tfd), 256);
-    ring.bc_tbl = _dma.alloc(bc_tbl_size, 1024);
+    ring.desc = _dma.alloc(count * sizeof(iwx_tfh_tfd), bz() ? 4096 : 256);
+    ring.bc_tbl = _dma.alloc(bc_tbl_size, bz() ? 4096 : 1024);
     bool ok = ring.desc && ring.bc_tbl;
     if (payload) {
       /* Data ring: a page per slot for the TX command and one for the
@@ -794,7 +794,8 @@ bool IwxDevice::load_firmware(std::string &error) {
     ctrl.version.mac_id = htole16(static_cast<uint16_t>(rd(IWX_CSR_HW_REV)));
     ctrl.version.size = htole16(sizeof(*scratch) / 4);
     const uint32_t rb_flag =
-        _rx_buf_bytes == 8192 ? IWX_PRPH_SCRATCH_RB_SIZE_EXT_8K : IWX_PRPH_SCRATCH_RB_SIZE_4K;
+        _rx_buf_bytes == 8192 ? (IWX_PRPH_SCRATCH_RB_SIZE_4K | IWX_PRPH_SCRATCH_RB_SIZE_EXT_8K)
+                              : IWX_PRPH_SCRATCH_RB_SIZE_4K;
     uint32_t control_flags = rb_flag | IWX_PRPH_SCRATCH_MTR_MODE |
                              (IWX_PRPH_MTR_FORMAT_256B & IWX_PRPH_SCRATCH_MTR_FORMAT);
     if (_card.imr) control_flags |= kPrphScratchImrDebugEn;
@@ -2076,15 +2077,33 @@ bool IwxDevice::start_monitor(uint8_t channel, unsigned width_mhz, const uint8_t
   _width = width_mhz;
   std::memcpy(_address.data(), address, 6);
   if (!nic_lock()) return false;
+  auto bz_step_check = [&](const char *step) -> bool {
+    if (!bz()) return true;
+    const uint32_t c = rd(IWX_CSR_INT);
+    const uint32_t hw = rd(IWX_CSR_MSIX_HW_INT_CAUSES_AD);
+    const bool bad = (c != 0xffffffffu && (c & (IWX_CSR_INT_BIT_SW_ERR | IWX_CSR_INT_BIT_HW_ERR))) ||
+                     (hw != 0xffffffffu && (hw & (IWX_MSIX_HW_INT_CAUSES_REG_SW_ERR_BZ | IWX_MSIX_HW_INT_CAUSES_REG_HW_ERR)));
+    if (!bad) return true;
+    _log(std::string("Bz error latched after ") + step + ": CSR_INT " + hex(c) + ", MSIX_HW_CAUSES " +
+         hex(hw) + ", MSIX_FH_CAUSES " + hex(rd(IWX_CSR_MSIX_FH_INT_CAUSES_AD)));
+    return false;
+  };
+  if (!bz_step_check("init")) {
+    nic_unlock();
+    check_health();
+    return false;
+  }
   int err = phy_ctxt_cmd(IWX_FW_CTXT_ACTION_ADD);
   if (err) _log("PHY context add failed (" + std::to_string(err) + ")");
   else _phy_added = true;
+  if (!err && !bz_step_check("PHY_CONTEXT_CMD")) err = EIO;
   if (use_mld()) {
     if (!err) {
       err = mld_mac_cmd(IWX_FW_CTXT_ACTION_ADD);
       if (err) _log("MLD MAC config add failed (" + std::to_string(err) + ")");
       else _mac_added = true;
     }
+    if (!err && !bz_step_check("MAC_CONFIG_CMD")) err = EIO;
     if (!err && !_fw.has_api(IWX_UCODE_TLV_API_SMART_FIFO_OFFLOAD)) {
       /* iwlwifi's MLD monitor has no associated station: leave Smart FIFO
        * uninitialized before binding. BE200 API 100 owns Smart FIFO itself. */
@@ -2096,26 +2115,31 @@ bool IwxDevice::start_monitor(uint8_t channel, unsigned width_mhz, const uint8_t
       if (err) _log("MLD link add failed (" + std::to_string(err) + ")");
       else _link_added = true;
     }
+    if (!err && !bz_step_check("LINK_CONFIG_CMD(ADD)")) err = EIO;
     if (!err) {
       /* Bind link 0 to PHY 0 while inactive, then activate with basic rates. */
       err = mld_link_modify(false, 0);
       if (err) _log("MLD link PHY bind failed (" + std::to_string(err) + ")");
     }
+    if (!err && !bz_step_check("LINK_CONFIG_CMD(BIND)")) err = EIO;
     if (!err) {
       err = mld_link_modify(true, IWX_LINK_CONTEXT_MODIFY_ACTIVE | IWX_LINK_CONTEXT_MODIFY_RATES_INFO);
       if (err) _log("MLD link activate failed (" + std::to_string(err) + ")");
       else _link_active = true;
     }
+    if (!err && !bz_step_check("LINK_CONFIG_CMD(ACTIVATE)")) err = EIO;
     if (!err) {
       err = mld_add_monitor_sta();
       if (err) _log("MLD monitor station add failed (" + std::to_string(err) + ")");
       else _sta_added = true;
     }
+    if (!err && !bz_step_check("STA_CONFIG_CMD")) err = EIO;
     if (!err) {
       err = enable_monitor_queue();
       if (err) _log("transmit queue setup failed (" + std::to_string(err) + ")");
       else _queue_enabled = true;
     }
+    if (!err && !bz_step_check("SCD_QUEUE_CONFIG_CMD")) err = EIO;
   } else {
     if (!err) {
       err = mac_ctxt_cmd(IWX_FW_CTXT_ACTION_ADD);
@@ -2171,7 +2195,7 @@ bool IwxDevice::start_monitor(uint8_t channel, unsigned width_mhz, const uint8_t
     err = send_cmd(IWX_MAC_PM_POWER_TABLE, &pm, sizeof(pm), false, nullptr);
     if (err) _log("MAC power table failed (" + std::to_string(err) + ")");
   }
-  if (!err && !_fw.has_capa(IWX_UCODE_TLV_CAPA_DYNAMIC_QUOTA)) {
+  if (!err && !use_mld() && !_fw.has_capa(IWX_UCODE_TLV_CAPA_DYNAMIC_QUOTA)) {
     iwx_time_quota_cmd q{};
     for (unsigned i = 0; i < IWX_MAX_BINDINGS; i++)
       q.quotas[i].id_and_color = htole32(IWX_FW_CTXT_INVALID);
@@ -2181,9 +2205,9 @@ bool IwxDevice::start_monitor(uint8_t channel, unsigned width_mhz, const uint8_t
     if (err) _log("time quota failed (" + std::to_string(err) + ")");
   }
   nic_unlock();
-  if (!err && bz()) {
-    /* A firmware assertion may arrive after the last command completion.
-     * Check before radio_main advertises this listener as ready. */
+  if (bz()) {
+    /* A firmware assertion may arrive during or right after monitor bring-up.
+     * Always dump error tables if a fault latched before returning failure. */
     check_health();
     if (_fw_error) return false;
   }
@@ -2511,11 +2535,13 @@ void IwxDevice::handle_packet(const uint8_t *raw, size_t len) {
       const auto *r = reinterpret_cast<const iwx_alive_resp_v4 *>(payload);
       _alive_ok = le16toh(r->status) == IWX_ALIVE_STATUS_OK;
       _lmac_error_table = le32toh(r->lmac_data[0].dbg_ptrs.error_event_table_ptr);
+      _lmac2_error_table = le32toh(r->lmac_data[1].dbg_ptrs.error_event_table_ptr);
       _umac_error_table = le32toh(r->umac_data.dbg_ptrs.error_info_addr);
     } else if (plen >= sizeof(iwx_alive_resp_v5)) {
       const auto *r = reinterpret_cast<const iwx_alive_resp_v5 *>(payload);
       _alive_ok = le16toh(r->status) == IWX_ALIVE_STATUS_OK;
       _lmac_error_table = le32toh(r->lmac_data[0].dbg_ptrs.error_event_table_ptr);
+      _lmac2_error_table = le32toh(r->lmac_data[1].dbg_ptrs.error_event_table_ptr);
       _umac_error_table = le32toh(r->umac_data.dbg_ptrs.error_info_addr);
       for (int i = 0; i < 3; i++) _sku_id[i] = le32toh(r->sku_id.data[i]);
     }
@@ -2764,8 +2790,10 @@ void IwxDevice::check_health() {
                         (hw_cause & (IWX_MSIX_HW_INT_CAUSES_REG_SW_ERR_BZ | IWX_MSIX_HW_INT_CAUSES_REG_HW_ERR)) != 0;
   if (!csr_err && !msix_err) return;
   _log("firmware/DMA error: CSR_INT " + hex(cause) +
-       (bz() ? ", MSIX_HW_CAUSES " + hex(hw_cause) : "") + ", FH_INT_STATUS " +
-       hex(rd(IWX_CSR_FH_INT_STATUS)));
+       (bz() ? ", MSIX_HW_CAUSES " + hex(hw_cause) + ", MSIX_FH_CAUSES " +
+                   hex(rd(IWX_CSR_MSIX_FH_INT_CAUSES_AD)) + ", GP_CNTRL " + hex(rd(IWX_CSR_GP_CNTRL))
+             : "") +
+       ", FH_INT_STATUS " + hex(rd(IWX_CSR_FH_INT_STATUS)));
   _fw_error = true;
   dump_error_tables();
 }
@@ -2787,26 +2815,35 @@ void IwxDevice::dump_error_tables() {
     _log(b);
   }
   const uint32_t min_tbl = bz() ? 0xD0000u : 0x400000u;
-  if (_lmac_error_table >= min_tbl) {
+  auto dump_lmac = [&](const char *label, uint32_t addr) {
+    if (addr < min_tbl) return;
     uint32_t t[38] = {};
-    if (read_mem(_lmac_error_table, t, 38) && t[0]) {
-      _log("LMAC error " + hex(t[1]) + " " + error_name(t[1]) + ": blink2 " + hex(t[4]) +
-           " ilink1 " + hex(t[5]) + " ilink2 " + hex(t[6]) + " data1 " + hex(t[7]) +
-           " data2 " + hex(t[8]) + " data3 " + hex(t[9]) + " hcmd " + hex(t[23]) +
-           " last_cmd " + hex(t[29]));
+    if (!read_mem(addr, t, 38)) {
+      _log(std::string(label) + " error log unreadable (read_mem failed at " + hex(addr) + ")");
+    } else if (t[0]) {
+      _log(std::string(label) + " error " + hex(t[1]) + " " + error_name(t[1]) + ": blink2 " +
+           hex(t[4]) + " ilink1 " + hex(t[5]) + " ilink2 " + hex(t[6]) + " data1 " + hex(t[7]) +
+           " data2 " + hex(t[8]) + " data3 " + hex(t[9]) + " hcmd " + hex(t[23]) + " last_cmd " +
+           hex(t[29]));
     } else {
-      _log("LMAC error log empty or unreadable (at " + hex(_lmac_error_table) + ")");
+      _log(std::string(label) + " error log valid=0 (at " + hex(addr) + ", raw " + hex(t[1]) +
+           " " + hex(t[2]) + " " + hex(t[3]) + ")");
     }
-  }
+  };
+  dump_lmac("LMAC", _lmac_error_table);
+  if (_lmac2_error_table >= min_tbl && _lmac2_error_table != _lmac_error_table)
+    dump_lmac("LMAC1", _lmac2_error_table);
   if (_umac_error_table >= min_tbl) {
     uint32_t t[15] = {};
-    if (read_mem(_umac_error_table, t, 15) && t[0]) {
+    if (!read_mem(_umac_error_table, t, 15)) {
+      _log("UMAC error log unreadable (read_mem failed at " + hex(_umac_error_table) + ")");
+    } else if (t[0]) {
       _log("UMAC error " + hex(t[1]) + " " + error_name(t[1]) + ": blink1 " + hex(t[2]) +
-           " blink2 " + hex(t[3]) + " ilink1 " + hex(t[4]) + " ilink2 " + hex(t[5]) +
-           " data1 " + hex(t[6]) + " data2 " + hex(t[7]) + " data3 " + hex(t[8]) +
-           " cmd_header " + hex(t[13]));
+           " blink2 " + hex(t[3]) + " ilink1 " + hex(t[4]) + " ilink2 " + hex(t[5]) + " data1 " +
+           hex(t[6]) + " data2 " + hex(t[7]) + " data3 " + hex(t[8]) + " cmd_header " + hex(t[13]));
     } else {
-      _log("UMAC error log empty or unreadable (at " + hex(_umac_error_table) + ")");
+      _log("UMAC error log valid=0 (at " + hex(_umac_error_table) + ", raw " + hex(t[1]) + " " +
+           hex(t[2]) + " " + hex(t[3]) + ")");
     }
   }
   if (nic_lock()) {

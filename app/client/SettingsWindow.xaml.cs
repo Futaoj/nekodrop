@@ -389,6 +389,7 @@ public partial class SettingsWindow : Window
         if (!present) ReceiveEveryone.IsChecked = true;
         SignInButton.IsEnabled = AppleId.CanSignIn;
         SignInButton.ToolTip = AppleId.CanSignIn ? null : L.T("aid.noTool");
+        ExportAppleIdLogButton.Visibility = AppleId.HasLog ? Visibility.Visible : Visibility.Collapsed;
         SignOutButton.Visibility = present || AppleId.HasLocalState ? Visibility.Visible : Visibility.Collapsed;
         ContactsButton.Visibility = AppleId.Source == "appleid" ? Visibility.Collapsed : Visibility.Visible;
         if (!present) { IdentityText.Text = L.T("aid.none"); return; }
@@ -411,6 +412,31 @@ public partial class SettingsWindow : Window
             IdentityChanged();
             SavedText.Text = "✓ " + L.T("aid.done");
         }
+        else
+        {
+            ShowIdentity();
+        }
+    }
+
+    void ExportAppleIdLog_Click(object sender, RoutedEventArgs e)
+    {
+        if (!AppleId.HasLog) { MessageBox.Show(this, L.T("aid.noLog"), "nekodrop", MessageBoxButton.OK, MessageBoxImage.Information); return; }
+        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmm");
+        var dlg = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = L.T("aid.exportLog"),
+            Filter = "Log (*.txt)|*.txt",
+            FileName = $"nekodrop-appleid-log-{stamp}.txt",
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+        };
+        if (Native.ShowDialog(this, dlg, dlg.Title) != true) return;
+        try
+        {
+            AppleId.ExportLog(dlg.FileName);
+            SavedText.Text = "✓ " + L.F("aid.logExported", System.IO.Path.GetFileName(dlg.FileName));
+            try { System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{dlg.FileName}\""); } catch (Exception) { }
+        }
+        catch (Exception x) { MessageBox.Show(this, x.Message, "nekodrop", MessageBoxButton.OK, MessageBoxImage.Warning); }
     }
 
     void ImportMac_Click(object sender, RoutedEventArgs e)

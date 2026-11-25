@@ -43,11 +43,15 @@
     </StackPanel>
 
     <Border Grid.Row="2" Background="{DynamicResource Card}" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Padding="16,0">
-      <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" VerticalAlignment="Center">
-        <Button Style="{StaticResource WinButton}" Content="{local:T set.cancel}" Click="Cancel_Click" Padding="16,8" IsCancel="True"/>
-        <Button x:Name="GoButton" Style="{StaticResource WinPrimary}" Content="{local:T aid.signIn}" Click="Go_Click" Padding="16,8"
-                Margin="8,0,0,0" IsDefault="True"/>
-      </StackPanel>
+      <DockPanel VerticalAlignment="Center">
+        <Button x:Name="ExportLogButton" DockPanel.Dock="Left" Style="{StaticResource QuietButton}" Content="{local:T aid.exportLog}"
+                Click="ExportLog_Click" Padding="10,8" Visibility="Collapsed"/>
+        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button Style="{StaticResource WinButton}" Content="{local:T set.cancel}" Click="Cancel_Click" Padding="16,8" IsCancel="True"/>
+          <Button x:Name="GoButton" Style="{StaticResource WinPrimary}" Content="{local:T aid.signIn}" Click="Go_Click" Padding="16,8"
+                  Margin="8,0,0,0" IsDefault="True"/>
+        </StackPanel>
+      </DockPanel>
     </Border>
   </Grid>
 </Window>

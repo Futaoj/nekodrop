@@ -6,6 +6,53 @@
 
 ---
 
+## v2.2.9 (Preview / 预览版) — 2026-11-26
+
+### 中文
+
+- **吞吐性能里程碑（AX201 实测双向 50+ MiB/s，约 53 MB/s，0 丢包 / 0 警告）**：
+  - 无线与数据面联合优化：零管道无锁共享内存数据面（4+4 MiB SHM + 手动复位事件）、8 KiB 接收 DMA 缓冲区、`ev_win.c` 公平轮询与 `pcap_dispatch` 32 帧批处理（消除接收侧 TCP ACK 饥饿）、8 MiB Wintun 环、流式 DVZip→CPIO 解包与 4 MiB 异步缓冲写入；
+  - 修复 Intel AX201（22000 家族）开启高吞吐模式（HE80）时 `TLC_MNG_CONFIG_CMD` 触发 `UMAC SYSASSERT` 的问题，并同步修复 Gen3（AX210 / AX211 / AX411 / BE200）8 KiB 接收 DMA 需同时置位 `RB_SIZE_4K | RB_SIZE_EXT_8K` 的掩码缺陷。
+- **MediaTek MT7922 / RZ616 深度修复（[#66](https://github.com/zheznanohana/nekodrop/issues/66)、[#54](https://github.com/zheznanohana/nekodrop/issues/54)）**：
+  - 修复并发扫描 0 信标 / 找不到 Wi-Fi 的问题：将无效的 `MT7921_FILTER_BCN_PRBRESP` 位替换为与 Linux `mt7921_mcu_set_beacon_filter(false)` 一致的 `MCU_CE_CMD_SET_RX_FILTER` `mode=2 / FIF_BIT_CLR` 显式清位；
+  - 修复 MT7922 单播数据发送卡死：首次向对端发送单播 QoS Data 帧时自动注册对端 WTBL 并启用 Connac2 固件速率自适应（RA），将重传上限 `REM_TX_COUNT` 从 `7` 提升至 `15`，避免广播 WCID 0 固定 54 Mbps 丢包；
+  - 修复 RX A-MSDU 解包与环形缓冲区溢出保护：在 `MT_RXD4_NORMAL_PAYLOAD_FORMAT != 0` 时剥离 Connac2 头部 2 字节填充并在 `mtk_main.cpp` 中将 A-MSDU 拆分为标准 QoS Data MPDU 送给 `awdld`，同时拦截已处理的 Category 3 Block Ack / BAR 帧以消除 `awdld` 无关告警，并在日志中新增帧类型与发送统计。
+- **Intel BE200（Wi-Fi 7）Bring-up 加固与诊断增强（[#53](https://github.com/zheznanohana/nekodrop/issues/53)）**：
+  - Bz 架构 TX/RX 环描述符与字节计数表（`bc_tbl`）改为 4096 字节页对齐，MLD 模式跳过旧版 `IWX_TIME_QUOTA_CMD`；
+  - 在 `start_monitor()` 各初始化命令后逐项检查 `CSR_INT` / `MSIX_HW_CAUSES` / `MSIX_FH_CAUSES`，并从 `ALIVE v4/v5/v7` 读取并完整转储双 LMAC（`LMAC0` + `LMAC1`）与 `UMAC` 错误表。
+- **Hyper-V / WinNAT 保留端口冲突回退与诊断（[#30](https://github.com/zheznanohana/nekodrop/issues/30)）**：
+  - 当 Hyper-V / WSL2 / Docker 占用覆盖 `8771-8779` 的 100 端口排除段导致 `WinError 10013` 时，AirDrop 接收端自动回退至 `18771-18779` 与 `28771-28779` 端口段（同步放行对应的链路本地入站防火墙规则）；
+  - 诊断报告 `report.ps1` 新增 IPv6 TCP 排除端口段输出（`netsh interface ipv6 show excludedportrange protocol=tcp`）。
+- **Apple ID 登录日志脱敏导出与标准错误捕获（[#42](https://github.com/zheznanohana/nekodrop/issues/42)）**：
+  - 修复 `AppleId.cs` 异步排空并记录 `appleid.exe` / `appleid-anisette.exe` 的 `stderr` 输出与退出码至 `appleid.log`；
+  - 在「Apple ID 登录弹窗」和「设置 → Apple ID」页新增「导出登录日志…」按钮（自动脱敏邮箱、用户名、电脑名与认证头），同时由 `report.ps1` 自动收录脱敏后的 `appleid.log`。
+- **实验性功能：待机 BLE 广播（[#69](https://github.com/zheznanohana/nekodrop/pull/69)，感谢 `@sh17632`）**：
+  - 新增环境变量开关 `NEKODROP_BLE_STANDBY=1`（默认关闭），开启后可在待机时维持低占空比 BLE AirDrop 广播以便快速唤醒。
+- **客户端自动接收状态同步**：修复自动接收文件时主界面雷达与传输列表进度不同步的问题。
+
+### English
+
+- **Throughput milestone (50+ MiB/s / ~53 MB/s bidirectional on Intel AX201, 0 drops / 0 warnings):**
+  - Lock-free zero-pipe SHM data plane (4+4 MiB SHM + manual-reset event), 8 KiB RX DMA buffers, fair polling in `ev_win.c` + 32-frame batching in `pcap_dispatch` (eliminating RX-side TCP ACK starvation), 8 MiB Wintun ring, streaming DVZip→CPIO extraction, and 4 MiB async buffered file writer;
+  - Fixed AX201 (22000 family) `UMAC SYSASSERT` on `TLC_MNG_CONFIG_CMD` under HE80 mode, and fixed Gen3 (AX210 / AX211 / AX411 / BE200) 8 KiB RX DMA to set `RB_SIZE_4K | RB_SIZE_EXT_8K` matching Linux `ctxt-info-v2.c`.
+- **MediaTek MT7922 / RZ616 fixes ([#66](https://github.com/zheznanohana/nekodrop/issues/66), [#54](https://github.com/zheznanohana/nekodrop/issues/54)):**
+  - Fixed 0-beacon scan failures by replacing invalid `MT7921_FILTER_BCN_PRBRESP` with Linux-matching `MCU_CE_CMD_SET_RX_FILTER` `mode=2` (`MT7921_FIF_BIT_CLR`) explicit flag clearing;
+  - Fixed unicast TX stalls by auto-registering peer WTBL entries on first unicast QoS Data frame so Connac2 firmware Rate Adaptation drives retries (raising `REM_TX_COUNT` from 7 to 15) instead of fixed 54 Mbps on broadcast WCID 0;
+  - Added Connac2 2-byte A-MSDU pad stripping (`MT_RXD4_NORMAL_PAYLOAD_FORMAT`), RX A-MSDU de-aggregation into standard QoS Data MPDUs for `awdld`, RX reassembly overflow drop guard, suppression of already-handled Category 3 Block Ack / BAR forwarding, and richer scan/TX counters.
+- **Intel BE200 (Wi-Fi 7) bring-up hardening & diagnostics ([#53](https://github.com/zheznanohana/nekodrop/issues/53)):**
+  - Page-aligned (4096 B) Bz ring descriptors and `bc_tbl`, skipped legacy `IWX_TIME_QUOTA_CMD` on MLD firmware, added per-command `CSR_INT` / `MSIX` fault checks in `start_monitor()`, and dumped both LMAC0 and LMAC1 (`lmac_data[1]`) plus UMAC error tables.
+- **Hyper-V / WinNAT excluded port fallback & diagnostics ([#30](https://github.com/zheznanohana/nekodrop/issues/30)):**
+  - Added separated fallback port ranges `18771-18779` and `28771-28779` (in both `engine.py` and the link-local Windows Firewall rule) so a 100-port Hyper-V exclusion block over `8771-8779` (`WinError 10013`) no longer prevents the AirDrop receiver from starting;
+  - Added `netsh interface ipv6 show excludedportrange protocol=tcp` output to `report.ps1`.
+- **Apple ID sign-in log capture & redacted export ([#42](https://github.com/zheznanohana/nekodrop/issues/42)):**
+  - Concurrently drains and logs `appleid.exe` / `appleid-anisette.exe` `stderr` and exit codes into `appleid.log`;
+  - Added an **Export sign-in log…** button in both the Apple ID sign-in dialog and Settings → Apple ID (automatically redacting e-mails, usernames, computer names, and auth headers), and included redacted `appleid.log` in `report.ps1`.
+- **Experimental standby BLE beacon ([#69](https://github.com/zheznanohana/nekodrop/pull/69), thanks `@sh17632`):**
+  - Opt-in via `NEKODROP_BLE_STANDBY=1` (off by default) to keep low-duty-cycle BLE AirDrop advertising active while on standby.
+- **Client UI:** Synced auto-accepted incoming transfers with the radar and transfer list progress views.
+
+---
+
 ## v2.2.8 (Stable / 稳定版) — 2026-11-25
 
 ### 中文

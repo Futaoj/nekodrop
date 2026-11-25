@@ -578,7 +578,8 @@ Step "nekodrop's own TAP adapter (DHCP) for Wi-Fi beside AirDrop" {
 Step 'firewall: AirDrop receiver and discovery, from link-local addresses only' {
   Get-NetFirewallRule -Group $FirewallGroup -ErrorAction SilentlyContinue | Remove-NetFirewallRule
   $common = @{ Group = $FirewallGroup; Direction = 'Inbound'; Action = 'Allow'; Profile = 'Any'; RemoteAddress = 'fe80::/64' }
-  New-NetFirewallRule @common -DisplayName 'nekodrop AirDrop receiver' -Protocol TCP -LocalPort 8771-8779 | Out-Null
+  # Three separated ranges so a 100-port Hyper-V/WinNAT excluded block (#30) cannot cover all of them.
+  New-NetFirewallRule @common -DisplayName 'nekodrop AirDrop receiver' -Protocol TCP -LocalPort '8771-8779', '18771-18779', '28771-28779' | Out-Null
   New-NetFirewallRule @common -DisplayName 'nekodrop AirDrop discovery' -Protocol UDP -LocalPort 5353 | Out-Null
 }
 

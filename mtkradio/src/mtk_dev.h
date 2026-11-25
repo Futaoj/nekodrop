@@ -52,6 +52,7 @@ struct Ring {
   std::vector<DmaBuf> bufs; /* per-slot 4 KiB payload buffer */
   std::vector<DmaBuf> txwi; /* per-slot 64-byte TXD+TXP buffer (TX data only) */
   std::vector<uint8_t> rx_reasm; /* multi-descriptor RX A-MSDU reassembly (up to 12 KiB) */
+  bool rx_reasm_drop = false;    /* discard trailing descriptors of an oversized/corrupt frame */
 
   MtkDesc *descs() const { return reinterpret_cast<MtkDesc *>(desc_buf.va); }
 };
@@ -272,6 +273,7 @@ private:
   std::array<PendingAddba, 32> _pending_addba{};
   std::array<PendingAddba, 32> _pending_tx_addba{};
   std::vector<uint8_t> _rx_pkt_buf;
+  std::vector<uint8_t> _rx_unpad_buf;
   std::deque<DeferredRx> _deferred_rx;
 };
 

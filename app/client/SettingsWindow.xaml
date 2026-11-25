@@ -232,6 +232,8 @@
                 <Button Style="{StaticResource WinButton}" Content="{local:T aid.importMac}" Click="ImportMac_Click" Padding="12,6" Margin="0,0,8,8"/>
                 <Button x:Name="ContactsButton" Style="{StaticResource WinButton}" Content="{local:T aid.importContacts}" Click="ImportContacts_Click"
                         Padding="12,6" Margin="0,0,8,8"/>
+                <Button x:Name="ExportAppleIdLogButton" Style="{StaticResource QuietButton}" Content="{local:T aid.exportLog}" Click="ExportAppleIdLog_Click"
+                        Padding="12,6" Margin="0,0,8,8"/>
                 <Button x:Name="SignOutButton" Style="{StaticResource QuietButton}" Content="{local:T aid.signOut}" Click="SignOut_Click"
                         Padding="12,6" Margin="0,0,0,8"/>
               </WrapPanel>
