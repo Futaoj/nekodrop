@@ -269,7 +269,11 @@ public partial class SettingsWindow : Window
                     Status(res.NewerTag is not null ? L.F("update.rateLimitedFound", res.NewerTag) : L.T("update.rateLimited"), releases: true);
                     return;
                 case Updater.CheckStatus.Failed:
-                    Status(L.T("update.checkFailed") + (string.IsNullOrEmpty(res.Detail) ? "" : ": " + res.Detail));
+                    _releasesUrl = res.PageUrl ?? Updater.ReleasesPage;
+                    Status(res.NewerTag is not null
+                        ? L.F("update.checkFailedFound", res.NewerTag)
+                        : L.T("update.checkFailed") + (string.IsNullOrEmpty(res.Detail) ? "" : ": " + res.Detail),
+                        releases: true);
                     return;
             }
             var found = res.Release;
@@ -279,7 +283,11 @@ public partial class SettingsWindow : Window
             var progress = new Progress<Updater.DownloadProgress>(p =>
                 Status($"{text} {p.Percent}% · {FormatSpeed(p.BytesPerSecond)}", progress: p.Percent / 100.0));
             var why = await A.InstallUpdate(progress);
-            if (why != "") Status(L.T("update.failed") + ": " + why);
+            if (why != "")
+            {
+                _releasesUrl = string.IsNullOrWhiteSpace(found.Page) ? Updater.ReleasesPage : found.Page;
+                Status(L.T("update.failed") + ": " + why, releases: true);
+            }
         }
         finally { CheckNowButton.IsEnabled = true; }
     }

@@ -1,8 +1,30 @@
 # Changelog / 更新日志
 
 > Release channels / 发布通道：
-> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.2.6`**（首个稳定基线为 `v0.1.22`）。
+> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.2.7`**（首个稳定基线为 `v0.1.22`）。
 > - **Hourly（每时预览版 / Pre-release）**：持续迭代的预览版（客户端默认也会收到；取消勾选「包括预览版」就只收稳定版）；GitHub Releases 仅滚动保留最新 4 个每时版 + 稳定版（最多 5 个 Release），历史 Git Tag 全部保留。
+
+---
+
+## v2.2.7 (Stable / 稳定版) — 2026-11-25
+
+### 中文
+
+- **更新器实时下载速率显示（[#64](https://github.com/zheznanohana/nekodrop/pull/64)，感谢 `@GGBond-cer`）**：
+  - 设置页检查并下载更新时，在进度百分比旁以约 500 ms 间隔实时显示当前下载速率（自动在 `KB/s` 与 `MB/s` 间切换），并在下载完成时汇报平均速率。
+- **更新器动态系统代理、浏览器同源 Web 回退与手动下载兜底（[#62](https://github.com/zheznanohana/nekodrop/issues/62)）**：
+  - 不再复用启动时固化的静态 `HttpClient`，改为每次检查与下载时实时读取当前 Windows 系统代理（含开机自启后才开启 Clash / v2rayN / VPN 代理的场景，以及 `HTTPS_PROXY` / PAC / TUN 模式）；
+  - 当 `api.github.com` 失败、超时或被限流时，自动回退到与浏览器相同的 `github.com/zheznanohana/nekodrop/releases/latest` 及 `releases.atom` 网页通道，并在校验发布页公布的 64 位 SHA-256 摘要后直接支持一键更新；
+  - 无论检查更新失败、API 限流还是下载失败，设置页状态栏均始终展示「打开下载页」兜底按钮，一键跳转到 GitHub Releases 手动下载。
+
+### English
+
+- **Live update download speed in Settings ([#64](https://github.com/zheznanohana/nekodrop/pull/64), thanks `@GGBond-cer`):**
+  - Displays live download throughput (`KB/s` / `MB/s`, sampled every ~500 ms) next to the download percentage in Settings, plus the overall average on completion.
+- **Dynamic system proxy, browser-style web fallback, and manual Releases fallback in Updater ([#62](https://github.com/zheznanohana/nekodrop/issues/62)):**
+  - Replaced the long-lived static `HttpClient` with fresh per-operation `SocketsHttpHandler` clients that dynamically resolve the current Windows user proxy (`HKCU\...\Internet Settings`, plus `HttpClient.DefaultProxy` for env vars / PAC / TUN VPNs) so enabling a VPN after boot works immediately;
+  - Automatically falls back to browser-accessible `github.com` release endpoints (`/releases/latest` and `releases.atom`) whenever `api.github.com` fails, times out, or is rate-limited, still verifying the published 64-hex SHA-256 digest before running any installer;
+  - Always surfaces the "Open Releases" fallback button in Settings on update check or download failures.
 
 ---
 

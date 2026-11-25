@@ -6,7 +6,10 @@ using System.Net.Http;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+using System.Threading;
 using System.Xml.Linq;
+using Microsoft.Win32;
 
 namespace NekoDrop;
 
@@ -20,7 +23,9 @@ public static class Updater
 {
     const string ReleasesApi = "https://api.github.com/repos/zheznanohana/nekodrop/releases?per_page=15";
     const string ReleasesAtom = "https://github.com/zheznanohana/nekodrop/releases.atom";
+    const string ReleasesLatest = "https://github.com/zheznanohana/nekodrop/releases/latest";
     const string TagUrlPrefix = "https://github.com/zheznanohana/nekodrop/releases/tag/";
+    const string DownloadUrlPrefix = "https://github.com/zheznanohana/nekodrop/releases/download/";
     public const string ReleasesPage = "https://github.com/zheznanohana/nekodrop/releases";
 
     public enum CheckStatus { UpToDate, Available, RateLimited, Failed }
@@ -36,13 +41,68 @@ public static class Updater
         string? PageUrl = null,
         string? Detail = null);
 
-    static readonly HttpClient Http = MakeClient();
-
-    static HttpClient MakeClient()
+    /// <summary>
+    /// Reads the current Windows user proxy (Clash/v2rayN/VPN system proxy enabled
+    /// after boot, #62), falling back to HttpClient.DefaultProxy (env vars, PAC/WPAD,
+    /// TUN-mode VPNs). Built fresh per check/download so toggling a VPN takes effect
+    /// immediately without restarting nekodrop.
+    /// </summary>
+    static IWebProxy ResolveSystemProxy()
     {
-        var c = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Internet Settings");
+            if (key is not null && Convert.ToInt32(key.GetValue("ProxyEnable", 0)) != 0)
+            {
+                var raw = (key.GetValue("ProxyServer") as string)?.Trim();
+                if (!string.IsNullOrEmpty(raw))
+                {
+                    var picked = PickProxyEndpoint(raw);
+                    if (picked is not null && Uri.TryCreate(picked, UriKind.Absolute, out var uri))
+                    {
+                        var overrideRaw = (key.GetValue("ProxyOverride") as string) ?? "";
+                        var bypassLocal = overrideRaw.Contains("<local>", StringComparison.OrdinalIgnoreCase);
+                        return new WebProxy(uri, bypassLocal);
+                    }
+                }
+            }
+        }
+        catch (Exception) { }
+        return HttpClient.DefaultProxy;
+    }
+
+    static string? PickProxyEndpoint(string raw)
+    {
+        if (!raw.Contains('='))
+            return raw.Contains("://", StringComparison.Ordinal) ? raw : "http://" + raw;
+
+        string? https = null, http = null, socks = null;
+        foreach (var part in raw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var eq = part.IndexOf('=');
+            if (eq <= 0 || eq >= part.Length - 1) continue;
+            var scheme = part[..eq].Trim().ToLowerInvariant();
+            var host = part[(eq + 1)..].Trim();
+            if (string.IsNullOrEmpty(host)) continue;
+            if (scheme == "https") https ??= host.Contains("://", StringComparison.Ordinal) ? host : "http://" + host;
+            else if (scheme == "http") http ??= host.Contains("://", StringComparison.Ordinal) ? host : "http://" + host;
+            else if (scheme is "socks" or "socks5") socks ??= host.Contains("://", StringComparison.Ordinal) ? host : "socks5://" + host;
+        }
+        return https ?? http ?? socks;
+    }
+
+    static HttpClient MakeClient(TimeSpan timeout)
+    {
+        var handler = new SocketsHttpHandler
+        {
+            UseProxy = true,
+            Proxy = ResolveSystemProxy(),
+            AllowAutoRedirect = true,
+            AutomaticDecompression = DecompressionMethods.All,
+            ConnectTimeout = TimeSpan.FromSeconds(15),
+        };
+        var c = new HttpClient(handler, disposeHandler: true) { Timeout = timeout };
         c.DefaultRequestHeaders.UserAgent.ParseAdd("nekodrop-updater");
-        c.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return c;
     }
 
@@ -99,19 +159,92 @@ public static class Updater
     }
 
     /// <summary>
-    /// Fallback when api.github.com is rate-limited (e.g. shared proxy IP, #4):
-    /// reads releases.atom (outside the 60/hr REST API quota) only to detect if a
-    /// newer tag exists. Never auto-installs because Atom carries no SHA-256 digest.
+    /// Browser-style HTTPS fallback on github.com when api.github.com is rate-limited
+    /// or unreachable (#4, #62). Resolves the latest release via /releases/latest (Stable)
+    /// or releases.atom (including previews) and parses the published 64-hex SHA-256 from
+    /// the release page; never auto-installs without a valid published SHA-256.
     /// </summary>
-    static async Task<(string? Tag, string? Url)> FindNewerFromAtom(CancellationToken ct)
+    static async Task<(bool Reached, Release? Release, string? Tag, string? Url)> FindNewerFromWeb(
+        HttpClient http, bool includePreview, CancellationToken ct)
+    {
+        bool reached = false;
+        string? tag = null;
+        string? pageUrl = null;
+        string? html = null;
+
+        if (!includePreview)
+        {
+            try
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, ReleasesLatest);
+                req.Headers.Accept.ParseAdd("text/html");
+                using var resp = await http.SendAsync(req, ct);
+                var finalUrl = resp.RequestMessage?.RequestUri?.AbsoluteUri ?? "";
+                if (resp.IsSuccessStatusCode && finalUrl.StartsWith(TagUrlPrefix, StringComparison.Ordinal))
+                {
+                    reached = true;
+                    var candidate = finalUrl[TagUrlPrefix.Length..].Split('?', '#')[0];
+                    if (Version.TryParse(candidate.TrimStart('v'), out var v) && v > Current)
+                    {
+                        tag = candidate;
+                        pageUrl = TagUrlPrefix + candidate;
+                        html = await resp.Content.ReadAsStringAsync(ct);
+                    }
+                    else
+                    {
+                        return (true, null, null, null);
+                    }
+                }
+            }
+            catch (Exception) { }
+        }
+
+        if (tag is null)
+        {
+            var (atomOk, atomTag, atomUrl) = await FindNewerFromAtom(http, ct);
+            reached |= atomOk;
+            tag = atomTag;
+            pageUrl = atomUrl;
+        }
+
+        if (tag is null || pageUrl is null || !Version.TryParse(tag.TrimStart('v'), out var ver) || ver <= Current)
+            return (reached, null, null, null);
+
+        try
+        {
+            if (html is null)
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, pageUrl);
+                req.Headers.Accept.ParseAdd("text/html");
+                using var resp = await http.SendAsync(req, ct);
+                if (resp.IsSuccessStatusCode) html = await resp.Content.ReadAsStringAsync(ct);
+            }
+            if (!string.IsNullOrEmpty(html))
+            {
+                var isPreview = html.Contains(">Pre-release<", StringComparison.OrdinalIgnoreCase);
+                if (isPreview && !includePreview) return (true, null, null, null);
+                var m = Regex.Match(html, @"SHA-256:\s*(?:<code[^>]*>)?([0-9a-fA-F]{64})", RegexOptions.IgnoreCase);
+                if (m.Success)
+                {
+                    var sha = m.Groups[1].Value.ToLowerInvariant();
+                    var dlUrl = $"{DownloadUrlPrefix}{tag}/nekodrop-{ver}-setup.exe";
+                    return (true, new Release(ver, tag, dlUrl, sha, isPreview, pageUrl), tag, pageUrl);
+                }
+            }
+        }
+        catch (Exception) { }
+
+        return (reached, null, tag, pageUrl);
+    }
+
+    static async Task<(bool Reached, string? Tag, string? Url)> FindNewerFromAtom(HttpClient http, CancellationToken ct)
     {
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, ReleasesAtom);
-            req.Headers.Accept.Clear();
             req.Headers.Accept.ParseAdd("application/atom+xml");
-            using var resp = await Http.SendAsync(req, ct);
-            if (!resp.IsSuccessStatusCode) return (null, null);
+            using var resp = await http.SendAsync(req, ct);
+            if (!resp.IsSuccessStatusCode) return (false, null, null);
             var xml = await resp.Content.ReadAsStringAsync(ct);
             var doc = XDocument.Parse(xml);
             XNamespace atom = "http://www.w3.org/2005/Atom";
@@ -130,9 +263,9 @@ public static class Updater
                     bestUrl = href;
                 }
             }
-            return (bestTag, bestUrl);
+            return (true, bestTag, bestUrl);
         }
-        catch (Exception) { return (null, null); }
+        catch (Exception) { return (false, null, null); }
     }
 
     /// <summary>This build's version (0.1.16 of "0.1.16+commit").</summary>
@@ -148,18 +281,23 @@ public static class Updater
 
     /// <summary>
     /// Checks GitHub releases with ETag caching (304 responses do not consume the
-    /// 60/hr unauthenticated quota) and distinguishes HTTP 403 rate limits behind
-    /// shared proxies from "already up to date" (#4).
+    /// 60/hr unauthenticated quota), dynamic Windows proxy resolution, and a
+    /// browser-style github.com web fallback when api.github.com fails (#4, #62).
     /// </summary>
     public static async Task<CheckResult> Check(bool includePreview)
     {
         var (cachedEtag, cachedJson) = ReadCache();
+        using var http = MakeClient(TimeSpan.FromSeconds(20));
+        bool rateLimited = false;
+        string? failureDetail = null;
+
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             using var req = new HttpRequestMessage(HttpMethod.Get, ReleasesApi);
+            req.Headers.Accept.ParseAdd("application/vnd.github+json");
             if (!string.IsNullOrWhiteSpace(cachedEtag)) req.Headers.IfNoneMatch.TryParseAdd(cachedEtag);
-            using var resp = await Http.SendAsync(req, cts.Token);
+            using var resp = await http.SendAsync(req, cts.Token);
 
             if (resp.StatusCode == HttpStatusCode.NotModified && !string.IsNullOrEmpty(cachedJson))
             {
@@ -177,26 +315,40 @@ public static class Updater
 
             if (resp.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests)
             {
-                var rateLimited = resp.StatusCode == HttpStatusCode.TooManyRequests ||
+                rateLimited = resp.StatusCode == HttpStatusCode.TooManyRequests ||
                     (resp.Headers.TryGetValues("X-RateLimit-Remaining", out var rem) && rem.FirstOrDefault() == "0");
-                if (rateLimited)
-                {
-                    if (!string.IsNullOrEmpty(cachedJson) && ParseReleases(cachedJson, includePreview) is { } cached)
-                        return new CheckResult(CheckStatus.Available, cached);
-                    var (tag, url) = await FindNewerFromAtom(cts.Token);
-                    return new CheckResult(CheckStatus.RateLimited, NewerTag: tag, PageUrl: url ?? ReleasesPage);
-                }
             }
-
-            return new CheckResult(CheckStatus.Failed, Detail: $"HTTP {(int)resp.StatusCode} ({resp.ReasonPhrase})");
+            failureDetail = $"HTTP {(int)resp.StatusCode} ({resp.ReasonPhrase})";
         }
         catch (OperationCanceledException)
         {
-            return new CheckResult(CheckStatus.Failed, Detail: "timeout");
+            failureDetail = "timeout";
         }
         catch (Exception e)
         {
-            return new CheckResult(CheckStatus.Failed, Detail: e.Message);
+            failureDetail = e.Message;
+        }
+
+        if (rateLimited && !string.IsNullOrEmpty(cachedJson) && ParseReleases(cachedJson, includePreview) is { } cached)
+            return new CheckResult(CheckStatus.Available, cached);
+
+        try
+        {
+            using var webCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var (webOk, webRelease, webTag, webUrl) = await FindNewerFromWeb(http, includePreview, webCts.Token);
+            if (webRelease is not null)
+                return new CheckResult(CheckStatus.Available, webRelease);
+            if (webOk && webTag is null)
+                return new CheckResult(CheckStatus.UpToDate);
+            if (rateLimited)
+                return new CheckResult(CheckStatus.RateLimited, NewerTag: webTag, PageUrl: webUrl ?? ReleasesPage);
+            return new CheckResult(CheckStatus.Failed, NewerTag: webTag, PageUrl: webUrl ?? ReleasesPage, Detail: failureDetail);
+        }
+        catch (Exception)
+        {
+            return rateLimited
+                ? new CheckResult(CheckStatus.RateLimited, PageUrl: ReleasesPage)
+                : new CheckResult(CheckStatus.Failed, PageUrl: ReleasesPage, Detail: failureDetail);
         }
     }
 
@@ -209,7 +361,8 @@ public static class Updater
         var dir = Path.Combine(Path.GetTempPath(), "nekodrop-update");
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, $"nekodrop-{r.Version}-setup.exe");
-        using (var resp = await Http.GetAsync(r.Url, HttpCompletionOption.ResponseHeadersRead))
+        using var http = MakeClient(TimeSpan.FromMinutes(10));
+        using (var resp = await http.GetAsync(r.Url, HttpCompletionOption.ResponseHeadersRead))
         {
             resp.EnsureSuccessStatusCode();
             var total = resp.Content.Headers.ContentLength ?? 0;
@@ -217,18 +370,21 @@ public static class Updater
             await using var dst = File.Create(path);
             var buf = new byte[1 << 16];
             long done = 0;
+            int finished = 0;
             int n;
             var clock = Stopwatch.StartNew();
             long lastDone = 0;
             long lastMs = 0;
             void Report()
             {
+                if (Volatile.Read(ref finished) != 0) return;
                 var now = clock.ElapsedMilliseconds;
                 var elapsed = now - lastMs;
                 if (elapsed < 1) return;
-                var bps = (done - lastDone) * 1000 / elapsed;
-                if (total > 0) progress?.Report(new((int)(done * 100 / total), bps));
-                lastDone = done;
+                var curDone = Volatile.Read(ref done);
+                var bps = Math.Max(0, (curDone - lastDone) * 1000 / elapsed);
+                if (total > 0) progress?.Report(new((int)Math.Min(100, curDone * 100 / total), bps));
+                lastDone = curDone;
                 lastMs = now;
             }
             System.Threading.Timer? timer = null;
@@ -239,16 +395,18 @@ public static class Updater
                 while ((n = await src.ReadAsync(buf)) > 0)
                 {
                     await dst.WriteAsync(buf.AsMemory(0, n));
-                    done += n;
+                    Interlocked.Add(ref done, n);
                 }
             }
             finally
             {
+                Interlocked.Exchange(ref finished, 1);
                 timer?.Dispose();
             }
             if (progress is not null && total > 0)
             {
-                var avg = clock.ElapsedMilliseconds > 0 ? done * 1000 / clock.ElapsedMilliseconds : 0;
+                var finalDone = Volatile.Read(ref done);
+                var avg = clock.ElapsedMilliseconds > 0 ? finalDone * 1000 / clock.ElapsedMilliseconds : 0;
                 progress.Report(new(100, avg));
             }
         }

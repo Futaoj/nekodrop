@@ -380,6 +380,7 @@ public static class L
         ["update.found"] = ("发现 {0}，正在下载…", "Found {0}, downloading…"),
         ["update.failed"] = ("更新失败", "Update failed"),
         ["update.checkFailed"] = ("检查更新失败", "Update check failed"),
+        ["update.checkFailedFound"] = ("发现 {0}，但自动检查失败，请前往下载页手动安装", "Found {0}, but automatic check failed; download from Releases"),
         ["update.rateLimited"] = ("GitHub API 限流（代理共享配额），请稍后再试或手动下载", "GitHub API rate-limited (shared proxy IP); try later or download manually"),
         ["update.rateLimitedFound"] = ("发现 {0}，但 GitHub API 限流，请前往下载页手动安装", "Found {0}, but GitHub API is rate-limited; download from Releases"),
         ["update.openReleases"] = ("打开下载页", "Open Releases"),
