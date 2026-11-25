@@ -5,7 +5,7 @@ name: engine-test
 on:
   workflow_dispatch:
   push:
-    paths: ['scripts/patch-engine.py', 'scripts/test-mdns-compat.py', 'scripts/fetch-deps.ps1', '.github/workflows/engine-test.yml']
+    paths: ['scripts/patch-engine.py', 'scripts/test-mdns-compat.py', 'scripts/test-engine-features.py', 'scripts/fetch-deps.ps1', '.github/workflows/engine-test.yml']
 permissions:
   contents: read
 jobs:
@@ -50,6 +50,9 @@ jobs:
       - name: Check IPv6-only mDNS replies
         shell: pwsh
         run: python -I scripts/test-mdns-compat.py "$env:RUNNER_TEMP\patched" -v
+      - name: Check link extraction and media capabilities
+        shell: pwsh
+        run: python -I scripts/test-engine-features.py "$env:RUNNER_TEMP\patched" -v
       - uses: actions/upload-artifact@v4
         if: always()
         with:

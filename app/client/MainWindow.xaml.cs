@@ -30,9 +30,8 @@ public partial class MainWindow : Window
         // or the tray menu (windows of nekodrop) keeps it out.
         Application.Current.Deactivated += OnAppDeactivated;
         DataContext = A.Model;
-        ReceivedList.ItemsSource = A.Model.ReceivedFiles;
         A.Model.Files.CollectionChanged += OnFiles;
-        A.Model.ReceivedFiles.CollectionChanged += OnReceived;
+        A.Model.History.CollectionChanged += OnHistory;
         A.Model.PropertyChanged += OnModel;
         Drop += OnDrop;
         DragEnter += (_, _) => _dragAt = DateTime.UtcNow;
@@ -40,14 +39,14 @@ public partial class MainWindow : Window
         Closed += (_, _) =>
         {
             A.Model.Files.CollectionChanged -= OnFiles;
-            A.Model.ReceivedFiles.CollectionChanged -= OnReceived;
+            A.Model.History.CollectionChanged -= OnHistory;
             A.Model.PropertyChanged -= OnModel;
             Application.Current.Deactivated -= OnAppDeactivated;
             A.WindowClosed();
         };
         FolderChanged();
         OnFiles(null, null);
-        OnReceived(null, null);
+        OnHistory(null, null);
         ShowState();
     }
 
@@ -174,12 +173,18 @@ public partial class MainWindow : Window
         FilesOutline.StrokeDashArray = n == 0 ? new DoubleCollection { 4, 3 } : null;
     }
 
-    void OnReceived(object? s, NotifyCollectionChangedEventArgs? e)
+    void OnHistory(object? s, NotifyCollectionChangedEventArgs? e)
     {
-        NothingReceived.Visibility = A.Model.ReceivedFiles.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        // The latest three, as in the design.
-        ReceivedList.ItemsSource = A.Model.ReceivedFiles.Take(3).ToList();
+        if (ReceivedList is null) return;
+        var sent = RecentSentTab?.IsChecked == true;
+        var shown = A.Model.History.Where(r => sent ? r.IsSent : r.IsReceived).Take(3).ToList();
+        NothingReceived.Text = L.T(sent ? "main.sentNone" : "main.receivedNone");
+        NothingReceived.Visibility = shown.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        ReceivedList.ItemsSource = shown;
     }
+
+    void RecentTab_Checked(object sender, RoutedEventArgs e) => OnHistory(null, null);
+    void History_Click(object sender, RoutedEventArgs e) => A.ShowHistory();
 
     void OnDrop(object sender, DragEventArgs e)
     {
@@ -352,8 +357,21 @@ public partial class MainWindow : Window
 
     void Open_Click(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.Tag is string path && File.Exists(path))
-            Process.Start("explorer.exe", $"/select,\"{path}\"");
+        if ((sender as FrameworkElement)?.Tag is TransferRecord record)
+            MediaHelper.OpenRecord(record);
+    }
+
+    async void Copy_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is not TransferRecord record) return;
+        if (MediaHelper.CopyToClipboard(record.Paths, record.Url, out _, out _) &&
+            sender is Button btn && btn.Content is TextBlock tb)
+        {
+            var prev = tb.Text;
+            tb.Text = "\uE73E";
+            await Task.Delay(1200);
+            tb.Text = prev;
+        }
     }
 }
 

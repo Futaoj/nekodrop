@@ -153,6 +153,31 @@
           </Border>
           <Border Style="{StaticResource CardPad}">
             <StackPanel>
+              <TextBlock Text="{local:T set.mediaTitle}" Style="{StaticResource T13S}" Margin="0,0,0,10"/>
+              <DockPanel>
+                <Border DockPanel.Dock="Right" Style="{StaticResource SegmentBox}" VerticalAlignment="Center" Margin="12,0,0,0">
+                  <StackPanel Orientation="Horizontal">
+                    <RadioButton x:Name="MediaCompatible" Style="{StaticResource Segment}" Content="{local:T set.media.compatible}" GroupName="mediafmt"/>
+                    <RadioButton x:Name="MediaOriginal" Style="{StaticResource Segment}" Content="{local:T set.media.original}" GroupName="mediafmt"/>
+                  </StackPanel>
+                </Border>
+                <StackPanel VerticalAlignment="Center">
+                  <TextBlock Text="{local:T set.mediaFormat}" FontSize="13" FontWeight="Medium"/>
+                  <TextBlock Text="{local:T set.mediaFormatHint}" Style="{StaticResource Sub12}" Margin="0,2,0,0"/>
+                </StackPanel>
+              </DockPanel>
+              <Border Style="{StaticResource Rule}" Margin="0,12"/>
+              <DockPanel>
+                <CheckBox x:Name="AutoConvertHeicBox" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Margin="12,0,0,0"/>
+                <StackPanel>
+                  <TextBlock Text="{local:T set.autoHeic}" FontSize="13" FontWeight="Medium" TextWrapping="Wrap"/>
+                  <TextBlock Text="{local:T set.autoHeicHint}" Style="{StaticResource Sub12}" Margin="0,2,0,0"/>
+                </StackPanel>
+              </DockPanel>
+            </StackPanel>
+          </Border>
+          <Border Style="{StaticResource CardPad}">
+            <StackPanel>
               <DockPanel>
                 <Button x:Name="TrustedAdd" DockPanel.Dock="Right" Style="{StaticResource WinButton}" Content="{local:T set.trustedAdd}"
                         Padding="10,4,10,4" Click="TrustedAdd_Click"/>

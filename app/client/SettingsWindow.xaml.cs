@@ -29,6 +29,8 @@ public partial class SettingsWindow : Window
         _folder = s.SaveFolder;
         FolderText.Text = _folder;
         AskBox.IsChecked = s.Ask;
+        (s.MediaFormat == "original" ? MediaOriginal : MediaCompatible).IsChecked = true;
+        AutoConvertHeicBox.IsChecked = s.AutoConvertHeic;
         StartupBox.IsChecked = s.StartWithWindows;
         HotkeyBox.IsChecked = s.Hotkey;
         AppleIdOnBox.IsChecked = s.AppleIdOn;
@@ -292,6 +294,10 @@ public partial class SettingsWindow : Window
         if (name.Length > 0) s.DeviceName = name;
         s.SaveFolder = _folder;
         s.Ask = AskBox.IsChecked == true;
+        var mediaFormat = MediaOriginal.IsChecked == true ? "original" : "compatible";
+        var mediaChanged = mediaFormat != s.MediaFormat;
+        s.MediaFormat = mediaFormat;
+        s.AutoConvertHeic = AutoConvertHeicBox.IsChecked == true;
         s.StartWithWindows = StartupBox.IsChecked == true;
         var appleIdOn = AppleIdOnBox.IsChecked == true;
         var receive = appleIdOn && ReceiveContacts.IsChecked == true && AppleId.Present ? "contacts" : "everyone";
@@ -323,7 +329,7 @@ public partial class SettingsWindow : Window
         if (coexPlan != ((bool?)A.Service.Last?["coexPlan"] ?? false)) A.Service.SetCoexPlan(coexPlan);
         A.Window?.FolderChanged();
         var hotkeyTaken = hotkeyChanged && !A.ApplyHotkey();
-        if (receiveChanged) A.RestartEngine();
+        if (receiveChanged || mediaChanged) A.RestartEngine();
         A.Window?.ShowMark();
         if (accentChanged) A.ApplyTheme();
         if (languageChanged) { A.ApplyLanguage(); Close(); return; }

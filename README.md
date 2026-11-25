@@ -342,6 +342,7 @@ nekodrop is built on other open-source projects. This section says exactly what 
 | [seemoo-lab/opendrop](https://github.com/seemoo-lab/opendrop) | The AirDrop protocol (`/Discover`, `/Ask`, `/Upload`, mDNS records) |
 | [microsoft/Windows-driver-samples](https://github.com/microsoft/Windows-driver-samples) | WiFiCx structure for the shelved kernel driver (`kdriver/`) |
 | [t4t5/owly](https://github.com/t4t5/owly), [JungyoKim/WirDrop](https://github.com/JungyoKim/WirDrop) | Other AirDrop-on-other-platforms attempts, compared during design |
+| [ndpyzwy-0w0/DropBridge](https://github.com/ndpyzwy-0w0/DropBridge) | UX design references: system toast hero preview + "Copy to clipboard" button (with Bitmap + FileDrop dual-format copy and received-folder boundary check) and automatic sibling JPG copy for HEIC / Live Photos |
 
 ### Written for nekodrop
 

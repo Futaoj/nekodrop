@@ -215,6 +215,74 @@ public static class Shell
         catch (Exception) { }
     }
 
+    /// <summary>
+    /// Rich notification after receiving files or links: optional hero image preview,
+    /// one-click Copy to clipboard / Copy link, and Open link / Open folder.
+    /// Hero preview + Copy to clipboard button UX inspired by DropBridge.
+    /// </summary>
+    public static void ReceivedToast(string id, string title, string body, string folder,
+                                     string? recordId, string? heroImagePath = null, bool isLink = false, string? batchId = null)
+    {
+        var launch = isLink && recordId is not null
+            ? $"nekodrop:openurl?id={Uri.EscapeDataString(recordId)}"
+            : $"nekodrop:folder?path={Uri.EscapeDataString(folder)}";
+        var heroXml = "";
+        if (!string.IsNullOrEmpty(heroImagePath) && File.Exists(heroImagePath) && MediaHelper.IsToastPreviewable(heroImagePath))
+            heroXml = $"\n                <image placement=\"hero\" src=\"{X(new Uri(heroImagePath).AbsoluteUri)}\"/>";
+
+        var actionsXml = "";
+        if (recordId is not null)
+        {
+            var copyArg = batchId is not null
+                ? X($"nekodrop:copy?batch={Uri.EscapeDataString(batchId)}")
+                : X($"nekodrop:copy?id={Uri.EscapeDataString(recordId)}");
+            if (isLink)
+            {
+                var openUrlArg = X($"nekodrop:openurl?id={Uri.EscapeDataString(recordId)}");
+                actionsXml = $"""
+                  <actions>
+                    <action content="{X(L.T("toast.openLink"))}" arguments="{openUrlArg}" activationType="protocol"/>
+                    <action content="{X(L.T("toast.copyLink"))}" arguments="{copyArg}" activationType="protocol"/>
+                  </actions>
+                """;
+            }
+            else
+            {
+                var folderArg = X($"nekodrop:folder?path={Uri.EscapeDataString(folder)}");
+                actionsXml = $"""
+                  <actions>
+                    <action content="{X(L.T("toast.copy"))}" arguments="{copyArg}" activationType="protocol"/>
+                    <action content="{X(L.T("main.openFolder"))}" arguments="{folderArg}" activationType="protocol"/>
+                  </actions>
+                """;
+            }
+        }
+
+        Show($"""
+            <toast launch="{X(launch)}" activationType="protocol">
+              <visual><binding template="ToastGeneric">
+                <text>{X(title)}</text>
+                <text>{X(body)}</text>{heroXml}
+              </binding></visual>
+              {actionsXml}
+            </toast>
+            """);
+        try { ToastNotificationManager.History.Remove("ask-" + id, "nekodrop", Aumid); }
+        catch (Exception) { }
+    }
+
+    public static void CopiedToast(string title, string body)
+    {
+        Show($"""
+            <toast launch="{X("nekodrop:open")}" activationType="protocol">
+              <visual><binding template="ToastGeneric">
+                <text>{X(title)}</text>
+                <text>{X(body)}</text>
+              </binding></visual>
+            </toast>
+            """, "copied");
+    }
+
     [DllImport("user32.dll")]
     static extern IntPtr GetForegroundWindow();
 

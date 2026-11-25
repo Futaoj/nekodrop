@@ -69,23 +69,12 @@ public sealed class Request : Observable
     public string Wants => L.F("ask.wants", What);
 }
 
-public sealed class Received
-{
-    public required string Name { get; init; }
-    public required string Path { get; init; }
-    public required string From { get; init; }
-    public DateTime When { get; init; } = DateTime.Now;
-    /// <summary>The transfer broke off: shown in red, nothing to open.</summary>
-    public bool Failed { get; init; }
-    public string WhenText => When.ToString("HH:mm");
-}
-
 public sealed class AppModel : Observable
 {
     public ObservableCollection<Device> Devices { get; } = [];
     public ObservableCollection<Request> Requests { get; } = [];
     public ObservableCollection<string> Files { get; } = [];
-    public ObservableCollection<Received> ReceivedFiles { get; } = [];
+    public ObservableCollection<TransferRecord> History { get; } = [];
     /// <summary>Files sent to this PC were saved: the radar's hub turns green for a moment.</summary>
     public event EventHandler? Stored;
     public void RaiseStored() => Stored?.Invoke(this, EventArgs.Empty);

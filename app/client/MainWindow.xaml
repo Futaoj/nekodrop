@@ -117,16 +117,16 @@
     <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
       <StackPanel Margin="16,12,16,12">
         <!-- Nearby devices -->
-        <local:RadarView Height="440"/>
+        <local:RadarView Height="420"/>
 
         <!-- Files to send: dashed while empty -->
-        <Grid Margin="0,14,0,0">
+        <Grid Margin="0,12,0,0">
           <Rectangle x:Name="FilesOutline" RadiusX="8" RadiusY="8" Stroke="{DynamicResource BorderStrong}" StrokeThickness="1"
                      Fill="{DynamicResource Card}"/>
-          <StackPanel Margin="12">
+          <StackPanel Margin="12,10">
             <DockPanel>
-              <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                <Button Style="{StaticResource WinButton}" Content="{local:T main.add}" Click="Add_Click"/>
+              <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Style="{StaticResource WinButton}" Content="{local:T main.add}" Click="Add_Click" Padding="10,5"/>
                 <Button x:Name="ClearButton" Style="{StaticResource QuietButton}" Content="{local:T main.clear}" Click="Clear_Click" Margin="4,0,0,0"/>
               </StackPanel>
               <TextBlock DockPanel.Dock="Left" Style="{StaticResource Icon}" Text="&#xE8A5;" Foreground="{DynamicResource Text2}" Margin="0,0,8,0"
@@ -134,7 +134,7 @@
               <TextBlock Text="{local:T main.dropHint}" FontSize="12" Foreground="{DynamicResource Text2}" TextWrapping="Wrap"
                          VerticalAlignment="Center" Margin="0,0,8,0"/>
             </DockPanel>
-            <DockPanel x:Name="FilesRow" Margin="0,10,0,0">
+            <DockPanel x:Name="FilesRow" Margin="0,8,0,0">
               <TextBlock x:Name="FilesCount" DockPanel.Dock="Right" Style="{StaticResource Dim11}" VerticalAlignment="Bottom" Margin="8,0,0,4"/>
               <ItemsControl ItemsSource="{Binding Files}">
                 <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
@@ -158,30 +158,57 @@
           </StackPanel>
         </Grid>
 
-        <!-- Recently received -->
-        <TextBlock Text="{local:T main.received}" Style="{StaticResource T13S}" Margin="0,16,0,8"/>
-        <TextBlock x:Name="NothingReceived" Text="{local:T main.receivedNone}" Style="{StaticResource Dim11}" FontSize="12" Margin="0,0,0,4"/>
+        <!-- Recent transfers: received / sent switcher + all history link -->
+        <DockPanel Margin="0,12,0,8">
+          <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Content="{local:T main.allHistory}"
+                  Click="History_Click" VerticalAlignment="Center" FontSize="12"/>
+          <Border Style="{StaticResource SegmentBox}" HorizontalAlignment="Left">
+            <StackPanel Orientation="Horizontal">
+              <RadioButton x:Name="RecentReceivedTab" Style="{StaticResource Segment}" Content="{local:T main.received}"
+                           GroupName="recentTab" IsChecked="True" Checked="RecentTab_Checked"/>
+              <RadioButton x:Name="RecentSentTab" Style="{StaticResource Segment}" Content="{local:T main.sent}"
+                           GroupName="recentTab" Checked="RecentTab_Checked"/>
+            </StackPanel>
+          </Border>
+        </DockPanel>
+        <TextBlock x:Name="NothingReceived" Text="{local:T main.receivedNone}" Style="{StaticResource Dim11}" FontSize="12" Margin="2,2,0,4"/>
         <ItemsControl x:Name="ReceivedList">
           <ItemsControl.ItemTemplate>
-            <DataTemplate DataType="local:Received">
-              <Border x:Name="card" Style="{StaticResource WinCard}" Padding="12,8" Margin="0,0,0,6">
+            <DataTemplate DataType="local:TransferRecord">
+              <Border x:Name="card" Style="{StaticResource WinCard}" Padding="10,7" Margin="0,0,0,6" ToolTip="{Binding TooltipText}">
                 <DockPanel>
-                  <Button x:Name="open" DockPanel.Dock="Right" Style="{StaticResource WinButton}" Content="{local:T main.open}"
-                          Tag="{Binding Path}" Click="Open_Click" Padding="10,4" FontSize="11" Margin="8,0,0,0"/>
-                  <TextBlock x:Name="glyph" DockPanel.Dock="Left" Style="{StaticResource Icon}" Text="&#xE896;" Foreground="{DynamicResource Accent}" Margin="0,0,10,0"/>
+                  <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
+                    <Button x:Name="copy" Style="{StaticResource TitleButton}" Width="26" Height="26"
+                            Tag="{Binding}" Click="Copy_Click" ToolTip="{local:T hist.copy}" Margin="0,0,4,0">
+                      <TextBlock Style="{StaticResource Icon}" Text="&#xE8C8;" FontSize="12"/>
+                    </Button>
+                    <Button x:Name="open" Style="{StaticResource WinButton}" Content="{local:T main.open}"
+                            Tag="{Binding}" Click="Open_Click" Padding="10,4" FontSize="11"/>
+                  </StackPanel>
+                  <TextBlock x:Name="glyph" DockPanel.Dock="Left" Style="{StaticResource Icon}" Text="{Binding Glyph}" Foreground="{DynamicResource Accent}" Margin="0,0,10,0" VerticalAlignment="Center"/>
                   <TextBlock FontSize="12" TextTrimming="CharacterEllipsis" VerticalAlignment="Center">
-                    <Run Text="{Binding From, Mode=OneWay}" FontWeight="SemiBold"/><Run Text=" · " Foreground="{DynamicResource Text3}"/><Run
-                         Text="{Binding Name, Mode=OneWay}" Foreground="{DynamicResource Text3}"/><Run Text=" · " Foreground="{DynamicResource Text3}"/><Run
+                    <Run Text="{Binding PeerLabel, Mode=OneWay}" FontWeight="SemiBold"/><Run Text=" · " Foreground="{DynamicResource Text3}"/><Run
+                         Text="{Binding Name, Mode=OneWay}" Foreground="{DynamicResource Text2}"/><Run Text=" · " Foreground="{DynamicResource Text3}"/><Run
                          x:Name="tail" Text="{Binding WhenText, Mode=OneWay}" Foreground="{DynamicResource Text3}"/>
                   </TextBlock>
                 </DockPanel>
               </Border>
               <DataTemplate.Triggers>
-                <DataTrigger Binding="{Binding Failed}" Value="True">
+                <DataTrigger Binding="{Binding CanCopy}" Value="False">
+                  <Setter TargetName="copy" Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding CanOpen}" Value="False">
                   <Setter TargetName="open" Property="Visibility" Value="Collapsed"/>
-                  <Setter TargetName="glyph" Property="Text" Value="&#xE783;"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsLink}" Value="True">
+                  <Setter TargetName="open" Property="Content" Value="{local:T hist.openLink}"/>
+                  <Setter TargetName="copy" Property="ToolTip" Value="{local:T hist.copyLink}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Failed}" Value="True">
+                  <Setter TargetName="copy" Property="Visibility" Value="Collapsed"/>
+                  <Setter TargetName="open" Property="Visibility" Value="Collapsed"/>
                   <Setter TargetName="glyph" Property="Foreground" Value="{DynamicResource Error}"/>
-                  <Setter TargetName="tail" Property="Text" Value="{local:T main.incomplete}"/>
+                  <Setter TargetName="tail" Property="Text" Value="{Binding StatusText, Mode=OneWay}"/>
                   <Setter TargetName="tail" Property="Foreground" Value="{DynamicResource Error}"/>
                 </DataTrigger>
               </DataTemplate.Triggers>

@@ -12,6 +12,10 @@ public sealed class Settings
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "nekodrop");
     /// <summary>Ask before storing what someone sends (an AirDrop receiver's default).</summary>
     public bool Ask { get; set; } = true;
+    /// <summary>Media format negotiated with senders: "compatible" (JPEG/H.264) or "original" (HEIC/HEVC).</summary>
+    public string MediaFormat { get; set; } = "compatible";
+    /// <summary>When a .heic/.heif photo (e.g. Live Photo or original format) arrives, save a sibling .jpg copy.</summary>
+    public bool AutoConvertHeic { get; set; } = true;
     /// <summary>Senders accepted without asking, by the name and model they give.</summary>
     public List<string> AlwaysAccept { get; set; } = [];
     /// <summary>The last senders that asked ("name|model", newest first), offered by Settings' Add (#45).</summary>

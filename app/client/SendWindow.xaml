@@ -9,7 +9,7 @@
     <Grid.RowDefinitions>
       <RowDefinition Height="40"/>
       <RowDefinition Height="*"/>
-      <RowDefinition Height="48"/>
+      <RowDefinition Height="52"/>
     </Grid.RowDefinitions>
 
     <!-- Title bar -->
@@ -26,14 +26,14 @@
       </DockPanel>
     </Border>
 
-    <DockPanel Grid.Row="1" Margin="16">
+    <DockPanel Grid.Row="1" Margin="16,14,16,14">
       <!-- What is being sent -->
-      <Border DockPanel.Dock="Top" Style="{StaticResource WinCard}" Padding="12,10" Margin="0,0,0,14">
+      <Border DockPanel.Dock="Top" Style="{StaticResource WinCard}" Padding="12,10" Margin="0,0,0,12">
         <DockPanel>
-          <Border DockPanel.Dock="Right" CornerRadius="10" Padding="8,1" Background="{DynamicResource AccentSubtle}" VerticalAlignment="Center">
-            <TextBlock x:Name="CountText" FontSize="11" Foreground="{DynamicResource Accent}"/>
+          <Border DockPanel.Dock="Right" CornerRadius="10" Padding="8,2" Margin="10,0,0,0" Background="{DynamicResource AccentSubtle}" VerticalAlignment="Center">
+            <TextBlock x:Name="CountText" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" VerticalAlignment="Center"/>
           </Border>
-          <TextBlock DockPanel.Dock="Left" Style="{StaticResource Icon}" Text="&#xE8A5;" Foreground="{DynamicResource Accent}" Margin="0,0,10,0"/>
+          <TextBlock DockPanel.Dock="Left" Style="{StaticResource Icon}" Text="&#xE8A5;" Foreground="{DynamicResource Accent}" Margin="0,0,10,0" VerticalAlignment="Center"/>
           <TextBlock x:Name="SummaryText" FontSize="13" FontWeight="Medium" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
         </DockPanel>
       </Border>
@@ -45,10 +45,11 @@
     <Border Grid.Row="2" Background="{DynamicResource Card}" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Padding="16,0">
       <DockPanel>
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-          <Button Style="{StaticResource WinButton}" Content="{local:T send.more}" Click="More_Click"/>
-          <Button Style="{StaticResource WinButton}" Content="{local:T send.close}" Click="Close_Click" IsCancel="True" Margin="8,0,0,0"/>
+          <Button Style="{StaticResource WinButton}" Content="{local:T send.more}" Click="More_Click" Padding="12,6"/>
+          <Button Style="{StaticResource WinButton}" Content="{local:T send.close}" Click="Close_Click" IsCancel="True" Padding="12,6" Margin="8,0,0,0"/>
         </StackPanel>
-        <TextBlock x:Name="HintText" FontSize="12" Foreground="{DynamicResource Text3}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+        <TextBlock x:Name="HintText" FontSize="12" Foreground="{DynamicResource Text3}" TextTrimming="CharacterEllipsis"
+                   VerticalAlignment="Center" Margin="0,0,12,0"/>
       </DockPanel>
     </Border>
   </Grid>

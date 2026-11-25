@@ -6,6 +6,40 @@
 
 ---
 
+## v2.2.0 (Preview / 预览版) — 2026-11-25
+
+### 中文
+
+- **传输历史**：
+  - 主面板底部升级为 `最近收到 / 最近发送` 切换，右侧新增 **全部历史** 入口，打开独立历史窗口（支持按全部 / 收到 / 发送筛选、搜索、一键复制、打开、再次发送与清空），记录持久化保存在 `%LocalAppData%\nekodrop\history.json`（最多保留 200 条）。
+  - 修复此前客户端读取引擎 `stored` 事件字段名不匹配（`files` vs `names`）导致主面板「最近收到」始终为空的问题。
+- **通知栏「复制到剪贴板」与大图预览**（交互思路参考 [DropBridge](https://github.com/ndpyzwy-0w0/DropBridge)）：
+  - 收到图片时，Windows 系统通知支持大图预览（Hero Image）以及 **复制到剪贴板** / **打开文件夹** 按钮；复制图片时同时写入位图（`Bitmap`，微信/QQ 可直接粘贴图片）与文件列表（`FileDrop`，资源管理器可直接粘贴文件），多文件接收支持整批复制到剪贴板。
+  - 收到链接时，通知支持一键 **打开链接** / **复制链接**。
+  - `nekodrop:copy` 协议仅允许访问历史记录或接收目录内的文件，避免外部链接滥用。
+- **App 链接分享增强（B 站等）**：
+  - 扩展 `airdrop/transfer.py`、`receiver.py` 与 `engine.py`：除纯 URL 外，也能从带标题文案的分享内容（如 B 站 App 分享文本+链接）及字典条目中安全提取 `http(s)://` 链接并保存为 `.url`，询问弹窗和雷达气泡会直接显示链接域名（如 `1 个链接 (b23.tv)`）。
+- **HEIC / 实况照片自动转换与格式选项**（实况图/HEIC 自动生成 JPG 副本思路参考 [DropBridge](https://github.com/ndpyzwy-0w0/DropBridge)）：
+  - 设置 → 网络与接收新增 **接收与自动转换** 卡片：支持切换 **照片与视频格式**（`兼容 (JPG)` 让 iPhone 发送前自动转码 / `原格式 (HEIC)` 保留原始 HEIC 与 HEVC），并新增 **收到 HEIC / 实况照片时自动生成 JPG** 开关（通过 Windows WIC 在同目录生成 `.jpg` 副本并保留原文件，同时合并实况照片的 `.HEIC + .MOV` 为单条历史记录和单条通知）。
+- **文档**：合并 [@Yanlyn](https://github.com/Yanlyn) 的 [#58](https://github.com/zheznanohana/nekodrop/pull/58)（Windows + Intel AX201 校园网 eduroam PEAP/MSCHAPv2 基线记录）。
+
+### English
+
+- **Transfer history:**
+  - Upgraded the bottom section of the main panel to a **Received / Sent** switcher with an **All history** button opening a dedicated History window (filter by All / Received / Sent, search, copy to clipboard, open, resend, and clear), persisted to `%LocalAppData%\nekodrop\history.json` (up to 200 entries).
+  - Fixed a field-name mismatch (`files` vs `names`) when reading the engine's `stored` event that left the main panel's "Recently received" list empty.
+- **Toast "Copy to clipboard" & hero image preview** (UX inspired by [DropBridge](https://github.com/ndpyzwy-0w0/DropBridge)):
+  - Received photos now show a hero preview in Windows notifications with **Copy to clipboard** (writing both `Bitmap` for chat apps and `FileDrop` for Explorer) and **Open folder** buttons; multi-file batches copy the entire batch.
+  - Received web links show **Open link** and **Copy link** buttons.
+  - `nekodrop:copy` restricts protocol access to recorded transfers or files inside the configured SaveFolder.
+- **App link sharing (Bilibili, etc.):**
+  - Extended `airdrop/transfer.py`, `receiver.py`, and `engine.py` to safely extract `http(s)://` URLs even when apps wrap links with title text or omit `TransferType.links` on file-less asks, and display the link host (e.g., `1 link(s) (b23.tv)`) in Ask notifications.
+- **HEIC / Live Photo auto-conversion & media format toggle** (sibling JPG copy UX inspired by [DropBridge](https://github.com/ndpyzwy-0w0/DropBridge)):
+  - Added a **Receiving & conversion** card in *Settings → Network*: choose **Compatible (JPG)** vs **Original (HEIC)** media negotiation, and toggle **Auto-create JPG for HEIC / Live Photos** (generates a sibling `.jpg` via Windows WIC while keeping originals intact, and merges Live Photo `.HEIC + .MOV` pairs into a single history entry and notification).
+- **Docs:** Merged [#58](https://github.com/zheznanohana/nekodrop/pull/58) from [@Yanlyn](https://github.com/Yanlyn) (eduroam PEAP/MSCHAPv2 baseline on Windows + Intel AX201).
+
+---
+
 ## v2.1.6 (Preview / 预览版)
 
 ### 中文

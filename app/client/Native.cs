@@ -267,17 +267,32 @@ public static class Native
     static void FitWorkArea(Window w)
     {
         if (w.Left < -10000) return; // drawn off screen for a snapshot
+        if (w.WindowStartupLocation == WindowStartupLocation.CenterScreen)
+        {
+            var cursor = System.Windows.Forms.Cursor.Position;
+            var screen = System.Windows.Forms.Screen.FromPoint(cursor);
+            var scale = DpiScaleAt(cursor, w);
+            var maxW = Math.Max(1, (screen.WorkingArea.Width - 16) / scale);
+            var maxH = Math.Max(1, (screen.WorkingArea.Height - 16) / scale);
+            var width = Math.Min(w.Width, maxW);
+            var height = Math.Min(w.Height, maxH);
+            if (w.MinWidth > width) w.MinWidth = width;
+            if (w.MinHeight > height) w.MinHeight = height;
+            w.Width = width;
+            w.Height = height;
+            var wPx = (int)Math.Round(width * scale);
+            var hPx = (int)Math.Round(height * scale);
+            var left = screen.WorkingArea.Left + (screen.WorkingArea.Width - wPx) / 2;
+            var top = screen.WorkingArea.Top + (screen.WorkingArea.Height - hPx) / 2;
+            SetWindowPos(new WindowInteropHelper(w).Handle, IntPtr.Zero, left, top, wPx, hPx,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+            return;
+        }
         var a = WorkArea(w);
-        var fit = false;
-        if (w.Height > a.Height - 16) { w.Height = a.Height - 16; fit = true; }
-        if (w.Width > a.Width - 16) { w.Width = a.Width - 16; fit = true; }
+        if (w.Height > a.Height - 16) w.Height = a.Height - 16;
+        if (w.Width > a.Width - 16) w.Width = a.Width - 16;
         if (w.MinHeight > w.Height) w.MinHeight = w.Height;
         if (w.MinWidth > w.Width) w.MinWidth = w.Width;
-        if (fit && w.WindowStartupLocation == WindowStartupLocation.CenterScreen)
-        {
-            w.Left = a.Left + (a.Width - w.Width) / 2;
-            w.Top = a.Top + (a.Height - w.Height) / 2;
-        }
     }
 
     /// <summary>The user's accent color (DWM colorization), opaque.</summary>

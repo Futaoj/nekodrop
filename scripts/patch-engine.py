@@ -560,3 +560,175 @@ def question_names(packet):
         text = text.replace(old, new, 1)
     mdns.write_text(text, encoding='utf-8')
     print('mdns.py: IPv6-only host answers for macOS address queries')
+
+# Link sharing & media format support:
+# - Extract http(s) URLs from AirDrop Ask Items even when an app (e.g. Bilibili,
+#   Xiaohongshu, WeChat) wraps the link with title text or omits TransferType.links
+#   when Files is empty, while keeping is_web_link() strict for safety.
+# - Allow opting into original HEIC/HEVC media via NEKODROP_MEDIA_MODE=original
+#   (default stays compatible JPEG/H.264).
+transfer_path = pathlib.Path(sys.argv[1]) / 'transfer.py'
+text = transfer_path.read_text(encoding='utf-8')
+if 'def extract_web_links(ask):' not in text:
+    old = NL.join([
+        'def is_web_link(item):',
+        "    return (isinstance(item, str) and item.startswith(('http://', 'https://'))",
+        '            and not LINK_BREAKING_CHAR.search(item))',
+    ])
+    new = NL.join([
+        'def is_web_link(item):',
+        "    return (isinstance(item, str) and item.startswith(('http://', 'https://'))",
+        '            and not LINK_BREAKING_CHAR.search(item))',
+        '',
+        '',
+        "WEB_LINK_RE = re.compile(r'https?://[^\\s<>\"\\'\\x00-\\x1f\\x7f]+')",
+        "LINK_TRAILING_PUNCT = '.,;:!?)]}）】》。，；：！？'",
+        '',
+        '',
+        'def extract_web_links(ask):',
+        '    """Return safe http(s) URLs carried in an Ask\'s Items (plain URLs, share',
+        '    strings such as Bilibili shares containing a URL, or dict values)."""',
+        "    items = ask.get('Items') or []",
+        "    kinds = ask.get('TransferType') or {}",
+        "    files = ask.get('Files') or []",
+        "    if 'links' not in kinds and (files or not items):",
+        '        return []',
+        '    found = []',
+        '    for item in items:',
+        '        if is_web_link(item):',
+        '            if item not in found:',
+        '                found.append(item)',
+        '            continue',
+        '        candidates = []',
+        '        if isinstance(item, str):',
+        '            candidates = WEB_LINK_RE.findall(item)',
+        '        elif isinstance(item, dict):',
+        '            for val in item.values():',
+        '                if isinstance(val, str):',
+        '                    candidates.extend(WEB_LINK_RE.findall(val))',
+        '        for raw in candidates:',
+        '            cleaned = raw.rstrip(LINK_TRAILING_PUNCT)',
+        '            if is_web_link(cleaned) and cleaned not in found:',
+        '                found.append(cleaned)',
+        '    return found',
+    ])
+    if text.count(old) != 1:
+        sys.exit('transfer.py: is_web_link moved; update patch-engine.py')
+    text = text.replace(old, new, 1)
+    transfer_path.write_text(text, encoding='utf-8')
+    print('transfer.py: extract_web_links for app share strings')
+
+receiver_path = pathlib.Path(sys.argv[1]) / 'receiver.py'
+text = receiver_path.read_text(encoding='utf-8')
+if 'def _media_capabilities():' not in text:
+    pairs = [
+        (
+            "MEDIA_CAPABILITIES = json.dumps({'Version': 1}).encode()",
+            NL.join([
+                "MEDIA_CAPABILITIES = json.dumps({'Version': 1}).encode()",
+                'MEDIA_CAPABILITIES_ORIGINAL = json.dumps({',
+                "    'Version': 1,",
+                "    'Codecs': {'hvc1': {'Profiles': {'HEVCMain': {}, 'HEVCMain10': {}}}},",
+                "    'ContainerFormats': {'public.heic': {}, 'public.heif': {}, 'public.avci': {}},",
+                '}).encode()',
+                '',
+                '',
+                'def _media_capabilities():',
+                "    if os.environ.get('NEKODROP_MEDIA_MODE') == 'original':",
+                '        return MEDIA_CAPABILITIES_ORIGINAL',
+                '    return MEDIA_CAPABILITIES',
+            ]),
+        ),
+        (
+            "            'ReceiverMediaCapabilities': MEDIA_CAPABILITIES,",
+            "            'ReceiverMediaCapabilities': _media_capabilities(),",
+        ),
+        (
+            NL.join([
+                "        if 'links' in kinds:",
+                '            links = []',
+                '            for item in items:',
+                '                if not transfer.is_web_link(item):',
+                "                    logging.warning('ask: ignoring non-web item %.80r', item)",
+                '                    continue',
+                '                stored = transfer.store_link(item, self.server.settings.dest)',
+                "                logging.info('link stored as %s', stored)",
+                '                links.append(stored)',
+                '            watcher.stored(self.accepted, links)',
+            ]),
+            NL.join([
+                '        extracted = transfer.extract_web_links(ask)',
+                "        if 'links' in kinds or extracted:",
+                '            links = []',
+                '            for url in extracted:',
+                '                stored = transfer.store_link(url, self.server.settings.dest)',
+                "                logging.info('link stored as %s', stored)",
+                '                links.append(stored)',
+                '            if not extracted and items:',
+                '                for item in items:',
+                "                    logging.warning('ask: ignoring non-web item %.80r', item)",
+                '            watcher.stored(self.accepted, links)',
+            ]),
+        ),
+    ]
+    for old, new in pairs:
+        if text.count(old) != 1:
+            sys.exit(f'receiver.py: {old[:60]!r} moved; update patch-engine.py')
+        text = text.replace(old, new, 1)
+    receiver_path.write_text(text, encoding='utf-8')
+    print('receiver.py: app link extraction + configurable media capabilities')
+
+engine_path = pathlib.Path(sys.argv[1]) / 'engine.py'
+text = engine_path.read_text(encoding='utf-8')
+if 'urls=urls' not in text:
+    pairs = [
+        (
+            NL.join([
+                '    def _open(self, sender_name, model, files, links, waits):',
+                '        with self._lock:',
+                '            key = next(self._keys)',
+                '            if waits:',
+                '                # Before the request is said: its answer may come back at once.',
+                "                self._waiting[key] = {'made': threading.Event(), 'accept': False}",
+                "        sizes = [file['size'] for file in files]",
+                '        total = sum(sizes) if sizes and None not in sizes else None',
+                "        self.events.say('asked', id=key, sender=sender_name, model=model, files=files,",
+                '                        links=links, total=total, waits=waits)',
+                '        return Accepted(key, total)',
+                '',
+                '    def asked(self, ask, address, left):',
+                "        kinds = ask.get('TransferType') or {}",
+                "        links = sum(1 for item in ask.get('Items') or [] if transfer.is_web_link(item)) \\",
+                "            if 'links' in kinds else 0",
+                '        waits = self.settings.ask',
+                "        accepted = self._open(ask.get('SenderComputerName'), ask.get('SenderModelName'),",
+                '                              announced_files(ask), links, waits)',
+            ]),
+            NL.join([
+                '    def _open(self, sender_name, model, files, links, waits, urls=None):',
+                '        with self._lock:',
+                '            key = next(self._keys)',
+                '            if waits:',
+                '                # Before the request is said: its answer may come back at once.',
+                "                self._waiting[key] = {'made': threading.Event(), 'accept': False}",
+                "        sizes = [file['size'] for file in files]",
+                '        total = sum(sizes) if sizes and None not in sizes else None',
+                "        self.events.say('asked', id=key, sender=sender_name, model=model, files=files,",
+                '                        links=links, urls=urls or [], total=total, waits=waits)',
+                '        return Accepted(key, total)',
+                '',
+                '    def asked(self, ask, address, left):',
+                '        urls = transfer.extract_web_links(ask)',
+                '        links = len(urls)',
+                '        waits = self.settings.ask',
+                "        accepted = self._open(ask.get('SenderComputerName'), ask.get('SenderModelName'),",
+                '                              announced_files(ask), links, waits, urls=urls)',
+            ]),
+        ),
+    ]
+    for old, new in pairs:
+        if text.count(old) != 1:
+            sys.exit(f'engine.py: {old[:60]!r} moved; update patch-engine.py')
+        text = text.replace(old, new, 1)
+    engine_path.write_text(text, encoding='utf-8')
+    print('engine.py: include extracted link URLs in asked events')

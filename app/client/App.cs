@@ -71,8 +71,11 @@ public sealed class App : Application
     readonly Wake _wake = new();
     Forms.NotifyIcon? _tray;
     MainWindow? _window;
+    HistoryWindow? _history;
     readonly Dictionary<string, Request> _requests = [];
-    readonly Dictionary<string, string> _sendTarget = [];
+    readonly Dictionary<string, string> _askSender = [];
+    readonly Dictionary<string, List<string>> _recentBatches = [];
+    readonly Dictionary<string, (string DeviceId, string DeviceName, List<string> Files)> _sendInfo = [];
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -80,6 +83,7 @@ public sealed class App : Application
         L.Use(Settings.Language);
         var snap = Array.IndexOf(_startArgs, "--snapshot");
         if (snap >= 0 && snap + 1 < _startArgs.Length) { Snapshot(_startArgs[snap + 1]); return; }
+        foreach (var rec in TransferHistory.Load()) Model.History.Add(rec);
         Shell.SetIdentity();
         try { Shell.Register(Settings.StartWithWindows); } catch (Exception) { }
         ApplyTheme();
@@ -299,8 +303,10 @@ public sealed class App : Application
         var asking = new Request { Id = "r", Sender = "iPhone", Model = "iPhone15,2", What = L.F("what.photos", 3) };
         Model.Requests.Add(asking);
         Model.Devices[0].Ask = asking; // the bubble under its icon
-        Model.ReceivedFiles.Add(new Received { Name = "IMG_0042.HEIC", Path = "", From = "iPhone" });
-        Model.ReceivedFiles.Add(new Received { Name = L.F("what.videos", 1), Path = "", From = "MacBook Air", Failed = true });
+        Model.History.Add(new TransferRecord { Direction = "received", Name = "IMG_0042.jpg", Paths = [@"C:\Users\me\Downloads\nekodrop\IMG_0042.jpg"], Peer = "iPhone", LivePhoto = true, Bytes = 3_420_000 });
+        Model.History.Add(new TransferRecord { Direction = "received", Name = "b23.tv/BV1xx411c7mD", Url = "https://b23.tv/BV1xx411c7mD", Peer = "iPhone" });
+        Model.History.Add(new TransferRecord { Direction = "received", Name = L.F("what.videos", 1), Peer = "MacBook Air", Status = "failed" });
+        Model.History.Add(new TransferRecord { Direction = "sent", Name = "Plan.pdf", Paths = [@"C:\Users\me\Documents\Plan.pdf"], Peer = "iPad Pro", Bytes = 1_240_000 });
         Model.Files.Add(@"C:\Users\me\Pictures\IMG_2048.HEIC");
         Model.Files.Add(@"C:\Users\me\Documents\Plan.pdf");
         var wifiState = new JsonObject
@@ -329,6 +335,7 @@ public sealed class App : Application
             ("settings-appleid", () => new SettingsWindow("appleid"), 0),
             ("settings-hardware", () => new SettingsWindow("hardware"), 0),
             ("settings-updates", () => new SettingsWindow("updates"), 0),
+            ("history", () => new HistoryWindow(), 0),
             ("wifi", () => { var w = new WifiWindow(); w.Render(wifiState); return w; }, 0),
             ("wifi-windows", () => { var w = new WifiWindow(); wifiState["mode"] = "ondemand"; w.Render(wifiState); return w; }, 0),
             ("tray", () => { var m = new TrayMenu(); m.Loaded += (_, _) => m.OpenModes(); return m; }, 0),
@@ -363,6 +370,8 @@ public sealed class App : Application
             var height = tall > 0 ? tall : root.ActualHeight;
             if (tall > 0)
             {
+                w.Height = tall;
+                w.UpdateLayout();
                 root.Measure(new Size(width, height));
                 root.Arrange(new Rect(0, 0, width, height));
                 root.UpdateLayout();
@@ -523,6 +532,39 @@ public sealed class App : Application
         _settings.Closed += (s, _) => { if (_settings == s) _settings = null; };
         _settings.Show();
         _settings.Activate();
+    }
+
+    public void ShowHistory()
+    {
+        if (_history is null)
+        {
+            var w = new HistoryWindow();
+            w.Closed += (s, _) => { if (_history == s) _history = null; };
+            _history = w;
+        }
+        _history.Show();
+        if (_history.WindowState == WindowState.Minimized) _history.WindowState = WindowState.Normal;
+        _history.Activate();
+    }
+
+    public void AddHistory(TransferRecord record)
+    {
+        Model.History.Insert(0, record);
+        while (Model.History.Count > TransferHistory.MaxEntries)
+            Model.History.RemoveAt(Model.History.Count - 1);
+        TransferHistory.Save(Model.History);
+    }
+
+    public void RemoveHistory(TransferRecord record)
+    {
+        if (Model.History.Remove(record))
+            TransferHistory.Save(Model.History);
+    }
+
+    public void ClearHistory()
+    {
+        Model.History.Clear();
+        TransferHistory.Save(Model.History);
     }
 
     /// <summary>Starts NekoDropService (Windows asks for administrator rights).</summary>
@@ -747,6 +789,44 @@ public sealed class App : Application
                 var path = q["path"];
                 if (path is not null && Directory.Exists(path)) Process.Start("explorer.exe", $"\"{path}\"");
                 break;
+            case "copy":
+            {
+                var recId = q["id"];
+                var batchId = q["batch"];
+                var filePath = q["path"];
+                bool ok;
+                string label, error;
+                if (!string.IsNullOrEmpty(batchId) && _recentBatches.TryGetValue(batchId, out var batchPaths))
+                {
+                    ok = MediaHelper.CopyToClipboard(batchPaths, null, out label, out error);
+                }
+                else if (!string.IsNullOrEmpty(recId) && Model.History.FirstOrDefault(r => r.Id == recId) is { } rec)
+                {
+                    ok = MediaHelper.CopyToClipboard(rec.Paths, rec.Url, out label, out error);
+                }
+                else if (!string.IsNullOrEmpty(filePath) && MediaHelper.IsInsideFolder(filePath, Settings.SaveFolder))
+                {
+                    ok = MediaHelper.CopyToClipboard([filePath], null, out label, out error);
+                }
+                else
+                {
+                    EngineLog("ui: refused copy activation outside history/save folder");
+                    break;
+                }
+                if (ok) Shell.CopiedToast(L.T("clip.copiedTitle"), L.F("clip.copied", label));
+                else Shell.CopiedToast(L.T("clip.failedTitle"), error);
+                break;
+            }
+            case "openurl":
+            {
+                var recId = q["id"];
+                if (!string.IsNullOrEmpty(recId) && Model.History.FirstOrDefault(r => r.Id == recId) is { IsLink: true } rec)
+                    MediaHelper.OpenUrl(rec.Url);
+                break;
+            }
+            case "history":
+                ShowHistory();
+                break;
             default:
                 ShowWindow();
                 break;
@@ -830,13 +910,14 @@ public sealed class App : Application
     {
         if (Model.Files.Count == 0) return;
         var id = Guid.NewGuid().ToString("N")[..12];
-        _sendTarget[id] = d.Id;
+        var files = Model.Files.ToList();
+        _sendInfo[id] = (d.Id, d.Name, files);
         d.Busy = true;
         d.State = "asking";
         d.Status = L.T("send.asking");
         d.Progress = 0;
         Service.Touch();
-        Engine.SendFiles(id, d.Id, Model.Files.ToList());
+        Engine.SendFiles(id, d.Id, files);
     }
 
     string _lastRadio = "", _lastWifi = "";
@@ -967,7 +1048,11 @@ public sealed class App : Application
                 var sender = (string?)o["sender"] ?? L.T("dev.someone");
                 var model = (string?)o["model"] ?? "";
                 var files = o["files"] as JsonArray;
-                var what = Describe(files);
+                var linkCount = (int?)o["links"] ?? 0;
+                var urls = o["urls"] as JsonArray;
+                var waits = (bool?)o["waits"] ?? true;
+                var what = Describe(files, linkCount, urls);
+                _askSender[id] = sender;
                 var key = $"{sender}|{model}";
                 // Remembered for Settings > Always accept from > Add (#45).
                 if (Settings.RecentSenders.FirstOrDefault() != key)
@@ -977,6 +1062,7 @@ public sealed class App : Application
                     if (Settings.RecentSenders.Count > 8) Settings.RecentSenders.RemoveRange(8, Settings.RecentSenders.Count - 8);
                     Settings.Save();
                 }
+                if (!waits) break;
                 if (Settings.AlwaysAccept.Contains(key)) { Engine.Answer(id, true); break; }
                 var r = new Request { Id = id, Sender = sender, Model = model, What = what };
                 _requests[id] = r;
@@ -998,59 +1084,106 @@ public sealed class App : Application
             case "stored":
             {
                 var folder = (string?)o["folder"] ?? Settings.SaveFolder;
-                var from = _requests.TryGetValue(id, out var st) ? st.Sender : "AirDrop";
+                var from = _requests.TryGetValue(id, out var st) ? st.Sender : _askSender.GetValueOrDefault(id, "AirDrop");
+                _askSender.Remove(id);
                 if (st is not null) { _requests.Remove(id); Model.Requests.Remove(st); DetachAsk(st); }
-                if (o["files"] is JsonArray stored)
+                var names = new List<string>();
+                if ((o["names"] as JsonArray ?? o["files"] as JsonArray) is { } stored)
                     foreach (var f in stored)
                     {
                         var name = f is JsonObject fo ? (string?)fo["name"] ?? "" : (string?)f ?? "";
-                        Model.ReceivedFiles.Insert(0, new Received { Name = name, Path = Path.Combine(folder, name), From = from });
+                        if (!string.IsNullOrEmpty(name)) names.Add(name);
                     }
-                Model.RaiseStored();
-                Shell.DoneToast(id, L.F("done.received", from), L.F("done.savedTo", folder), folder);
+                var livePairs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var pairedMovies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (o["live"] is JsonArray liveArr)
+                    foreach (var entry in liveArr)
+                        if (entry is JsonArray pair && pair.Count >= 2 &&
+                            (string?)pair[0] is { Length: > 0 } still && (string?)pair[1] is { Length: > 0 } mov)
+                        {
+                            livePairs[still] = mov;
+                            pairedMovies.Add(mov);
+                        }
+                // Also pair same-stem still + .mov/.mp4 within the same transfer if engine didn't tag .pvt.
+                foreach (var n in names)
+                {
+                    if (!MediaHelper.IsImage(n) || livePairs.ContainsKey(n)) continue;
+                    var stem = Path.GetFileNameWithoutExtension(n);
+                    var mov = names.FirstOrDefault(m => MediaHelper.IsMotion(m) &&
+                                                        string.Equals(Path.GetFileNameWithoutExtension(m), stem, StringComparison.OrdinalIgnoreCase));
+                    if (mov is not null && pairedMovies.Add(mov)) livePairs[n] = mov;
+                }
+                _ = HandleStoredAsync(id, from, folder, names, livePairs, pairedMovies);
                 break;
             }
             case "lost":
+                _askSender.Remove(id);
                 if (_requests.Remove(id, out var lost))
                 {
                     Model.Requests.Remove(lost);
                     DetachAsk(lost);
-                    Model.ReceivedFiles.Insert(0, new Received { Name = lost.What, Path = "", From = lost.Sender, Failed = true });
-                    Shell.DoneToast(id, L.F("done.lost", lost.Sender), (string?)o["reason"] ?? "", null);
+                    var reason = (string?)o["reason"] ?? "";
+                    AddHistory(new TransferRecord
+                    {
+                        Direction = "received",
+                        Peer = lost.Sender,
+                        Name = lost.What,
+                        Status = "failed",
+                        Error = reason,
+                    });
+                    Shell.DoneToast(id, L.F("done.lost", lost.Sender), reason, null);
                 }
                 break;
             case "send":
             {
-                var target = _sendTarget.GetValueOrDefault(id);
-                var d = Model.Devices.FirstOrDefault(x => x.Id == target);
-                if (d is null) break;
+                if (!_sendInfo.TryGetValue(id, out var info)) break;
+                var d = Model.Devices.FirstOrDefault(x => x.Id == info.DeviceId);
                 var state = (string?)o["state"];
-                d.State = state is "done" ? "sent" : state ?? "";
-                var total = (double?)o["total"] ?? 0;
-                var done = (double?)o["done"] ?? (double?)o["sent"] ?? 0;
-                d.Progress = total > 0 ? done / total : d.Progress;
-                d.Status = state switch
+                if (d is not null)
                 {
-                    "asking" => L.T("send.asking"),
-                    "sending" => L.F("send.sending", d.Progress),
-                    "sent" or "done" => L.T("send.sent"),
-                    "declined" => L.T("send.declined"),
-                    "failed" => L.T("send.failed") + ((string?)o["reason"] ?? ""),
-                    _ => state ?? "",
-                };
+                    d.State = state is "done" ? "sent" : state ?? "";
+                    var total = (double?)o["total"] ?? 0;
+                    var done = (double?)o["done"] ?? (double?)o["sent"] ?? 0;
+                    d.Progress = total > 0 ? done / total : d.Progress;
+                    d.Status = state switch
+                    {
+                        "asking" => L.T("send.asking"),
+                        "sending" => L.F("send.sending", d.Progress),
+                        "sent" or "done" => L.T("send.sent"),
+                        "declined" => L.T("send.declined"),
+                        "failed" => L.T("send.failed") + ((string?)o["reason"] ?? ""),
+                        _ => state ?? "",
+                    };
+                }
                 if (state is "sent" or "done" or "declined" or "failed")
                 {
-                    d.Busy = false;
-                    // A device that took the files is ready for more a moment later.
-                    if (state is "sent" or "done")
-                        _ = Task.Delay(TimeSpan.FromSeconds(3.5)).ContinueWith(_ => Dispatcher.BeginInvoke(() =>
-                        {
-                            if (d.State != "sent") return;
-                            d.State = "";
-                            d.Progress = 0;
-                            d.Status = L.T("dev.ready");
-                        }));
-                    if (state is "sent" or "done") Shell.DoneToast(id, L.F("done.sent", d.Name), L.F("done.items", Model.Files.Count), null);
+                    _sendInfo.Remove(id);
+                    if (d is not null)
+                    {
+                        d.Busy = false;
+                        // A device that took the files is ready for more a moment later.
+                        if (state is "sent" or "done")
+                            _ = Task.Delay(TimeSpan.FromSeconds(3.5)).ContinueWith(_ => Dispatcher.BeginInvoke(() =>
+                            {
+                                if (d.State != "sent") return;
+                                d.State = "";
+                                d.Progress = 0;
+                                d.Status = L.T("dev.ready");
+                            }));
+                    }
+                    var firstName = info.Files.Count > 0 ? Path.GetFileName(info.Files[0].TrimEnd('\\')) : L.T("what.some");
+                    var summary = info.Files.Count <= 1 ? firstName : L.F("send.summary", firstName, info.Files.Count, info.Files.Count - 1);
+                    AddHistory(new TransferRecord
+                    {
+                        Direction = "sent",
+                        Peer = d?.Name ?? info.DeviceName,
+                        Name = summary,
+                        Paths = [.. info.Files],
+                        Bytes = MediaHelper.SumBytes(info.Files),
+                        Status = state is "sent" or "done" ? "done" : state,
+                        Error = state == "failed" ? (string?)o["reason"] ?? "" : "",
+                    });
+                    if (state is "sent" or "done") Shell.DoneToast(id, L.F("done.sent", d?.Name ?? info.DeviceName), summary, null);
                 }
                 Service.Touch();
                 break;
@@ -1068,21 +1201,110 @@ public sealed class App : Application
         }
     }
 
-    static string Describe(JsonArray? files)
+    async Task HandleStoredAsync(string id, string from, string folder, List<string> names,
+                                 Dictionary<string, string> livePairs, HashSet<string> pairedMovies)
     {
-        if (files is null || files.Count == 0) return L.T("what.some");
-        int photos = 0, videos = 0, other = 0;
-        foreach (var f in files)
+        var convertHeic = Settings.AutoConvertHeic;
+        var built = await Task.Run(() =>
         {
-            var type = (f as JsonObject)?["type"]?.ToString() ?? "";
-            if (type.Contains("image") || type.Contains("jpeg") || type.Contains("png") || type.Contains("heic")) photos++;
-            else if (type.Contains("movie") || type.Contains("video") || type.Contains("mpeg")) videos++;
-            else other++;
+            var records = new List<TransferRecord>();
+            string? hero = null;
+            foreach (var name in names)
+            {
+                if (pairedMovies.Contains(name)) continue;
+                var full = Path.Combine(folder, name);
+                var url = TransferHistory.TryReadUrlFile(full);
+                var paths = new List<string>();
+                var displayName = name;
+                var isLive = livePairs.TryGetValue(name, out var movName);
+
+                if (string.IsNullOrEmpty(url) && convertHeic && MediaHelper.IsHeic(full))
+                {
+                    if (MediaHelper.TryConvertHeicToJpg(full, out var jpgPath, out var convErr))
+                    {
+                        EngineLog($"heic: converted {name} -> {Path.GetFileName(jpgPath)}");
+                        paths.Add(jpgPath);
+                        displayName = Path.GetFileName(jpgPath);
+                        hero ??= jpgPath;
+                    }
+                    else if (!string.IsNullOrEmpty(convErr))
+                    {
+                        EngineLog($"heic: skipped {name}: {convErr}");
+                    }
+                }
+
+                paths.Add(full);
+                if (isLive && movName is not null) paths.Add(Path.Combine(folder, movName));
+                if (hero is null && string.IsNullOrEmpty(url) && MediaHelper.IsToastPreviewable(full)) hero = full;
+
+                records.Add(new TransferRecord
+                {
+                    Direction = "received",
+                    Peer = from,
+                    Name = string.IsNullOrEmpty(url) ? displayName : TransferHistory.ShortUrlLabel(url),
+                    Paths = paths,
+                    Url = url,
+                    Bytes = string.IsNullOrEmpty(url) ? MediaHelper.SumBytes(paths) : 0,
+                    LivePhoto = isLive,
+                });
+            }
+            return (records, hero);
+        });
+
+        await Dispatcher.InvokeAsync(() =>
+        {
+            foreach (var rec in built.records) AddHistory(rec);
+            Model.RaiseStored();
+            if (built.records.Count == 0)
+            {
+                Shell.DoneToast(id, L.F("done.received", from), L.F("done.savedTo", folder), folder);
+                return;
+            }
+            var first = built.records[0];
+            if (built.records.Count == 1 && first.IsLink)
+            {
+                Shell.ReceivedToast(id, L.F("done.receivedLink", from), first.Url, folder, first.Id, isLink: true);
+                return;
+            }
+            var body = built.records.Count == 1
+                ? (first.SizeText.Length > 0 ? $"{first.Name} · {first.SizeText}" : first.Name)
+                : L.F("send.summary", first.Name, built.records.Count, built.records.Count - 1);
+            if (built.records.Count > 1)
+            {
+                _recentBatches[id] = built.records.SelectMany(r => r.Paths).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                if (_recentBatches.Count > 24) _recentBatches.Remove(_recentBatches.Keys.First());
+                Shell.ReceivedToast(id, L.F("done.received", from), body, folder, first.Id, built.hero, batchId: id);
+            }
+            else
+            {
+                Shell.ReceivedToast(id, L.F("done.received", from), body, folder, first.Id, built.hero);
+            }
+        });
+    }
+
+    static string Describe(JsonArray? files, int linkCount = 0, JsonArray? urls = null)
+    {
+        int photos = 0, videos = 0, other = 0;
+        if (files is not null)
+        {
+            foreach (var f in files)
+            {
+                var type = (f as JsonObject)?["type"]?.ToString() ?? "";
+                if (type.Contains("image") || type.Contains("jpeg") || type.Contains("png") || type.Contains("heic")) photos++;
+                else if (type.Contains("movie") || type.Contains("video") || type.Contains("mpeg")) videos++;
+                else other++;
+            }
         }
         var parts = new List<string>();
         if (photos > 0) parts.Add(L.F("what.photos", photos));
         if (videos > 0) parts.Add(L.F("what.videos", videos));
+        if (linkCount > 0)
+        {
+            var host = urls is { Count: 1 } && (string?)urls[0] is { } u && Uri.TryCreate(u, UriKind.Absolute, out var uri)
+                ? $" ({uri.Host})" : "";
+            parts.Add(L.F("what.links", linkCount) + host);
+        }
         if (other > 0) parts.Add(L.F("what.files", other));
-        return string.Join(L.T("what.join"), parts);
+        return parts.Count == 0 ? L.T("what.some") : string.Join(L.T("what.join"), parts);
     }
 }
