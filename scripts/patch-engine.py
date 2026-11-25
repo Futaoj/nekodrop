@@ -1312,3 +1312,195 @@ _hook('engine.py', [
         '        if self.announcer:' + NL,
     ),
 ], 'NEKODROP_BLE_STANDBY')
+
+# sender.py + engine.py: keep a peer alive during active bulk sends (so a >20 s
+# upload does not falsely expire PEER_SILENCE_SECONDS mid-transfer), and
+# automatically re-pulse the BLE beacon (2.5 s stop -> fresh start) when a
+# named peer disappears while still looking — so iOS sharingd wakes its
+# _airdrop._tcp receiver again after a large transfer without locking/unlocking
+# the iPhone screen.
+_hook('sender.py', [
+    (
+        'import subprocess' + NL,
+        'import subprocess' + NL + 'import tempfile' + NL,
+    ),
+    (
+        '        self.on = False' + NL +
+        "        self.said = ''  # why it is off" + NL,
+        '        self.on = False' + NL +
+        "        self.said = ''  # why it is off" + NL +
+        '        self._pulse_file = None  # nekodrop: BLE re-pulse trigger' + NL,
+    ),
+    (
+        '            self.process = subprocess.Popen(' + NL +
+        "                [shell, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass'," + NL +
+        "                 '-File', self.script]," + NL +
+        '                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,' + NL +
+        '                stderr=subprocess.STDOUT, text=True)' + NL,
+        "            self._pulse_file = os.path.join(tempfile.gettempdir(), f'nekodrop-beacon-{os.getpid()}-{id(self)}.pulse')" + NL +
+        '            env = os.environ.copy()' + NL +
+        "            env['NEKODROP_BEACON_PULSE'] = self._pulse_file" + NL +
+        '            self.process = subprocess.Popen(' + NL +
+        "                [shell, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass'," + NL +
+        "                 '-File', self.script]," + NL +
+        '                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,' + NL +
+        '                stderr=subprocess.STDOUT, text=True, env=env)' + NL,
+    ),
+    (
+        '    def __exit__(self, *_):' + NL +
+        '        if self.process:' + NL +
+        '            self.process.terminate()' + NL +
+        '            self.process.wait()' + NL,
+        '    def repulse(self):' + NL +
+        '        """Signal airdrop-beacon.ps1 to stop for 2.5 s and restart advertising."""' + NL +
+        '        if not self.on or not self._pulse_file:' + NL +
+        '            return False' + NL +
+        '        try:' + NL +
+        "            with open(self._pulse_file, 'w', encoding='ascii') as handle:" + NL +
+        "                handle.write(f'{time.time():.6f}\\n')" + NL +
+        '            return True' + NL +
+        '        except OSError:' + NL +
+        '            return False' + NL +
+        '' + NL +
+        '    def __exit__(self, *_):' + NL +
+        '        if self.process:' + NL +
+        '            self.process.terminate()' + NL +
+        '            self.process.wait()' + NL +
+        '        if self._pulse_file:' + NL +
+        '            try:' + NL +
+        '                os.unlink(self._pulse_file)' + NL +
+        '            except OSError:' + NL +
+        '                pass' + NL +
+        '            self._pulse_file = None' + NL,
+    ),
+], 'NEKODROP_BEACON_PULSE')
+
+_hook('engine.py', [
+    (
+        'FOLLOW_SECONDS = 15  # nekodrop: wait for a receiver that announces itself again' + NL,
+        'FOLLOW_SECONDS = 15  # nekodrop: wait for a receiver that announces itself again' + NL +
+        'BEACON_REPULSE_COOLDOWN_S = 15.0  # nekodrop: min gap between BLE re-pulses' + NL,
+    ),
+    (
+        '        self._gone_names = {}  # nekodrop: key -> name of receivers that went away' + NL,
+        '        self._gone_names = {}  # nekodrop: key -> name of receivers that went away' + NL +
+        '        self._beacon = None  # nekodrop: active BLE beacon for re-pulse' + NL +
+        '        self._hold_until = {}  # nekodrop: key -> deadline while transfer is active' + NL +
+        '        self._last_repulse = 0.0' + NL,
+    ),
+    (
+        '    def peer(self, key):' + NL +
+        '        with self._lock:' + NL +
+        '            peer = self._peers.get(key)' + NL +
+        '            return peer if peer and peer.name else None' + NL,
+        '    def peer(self, key):' + NL +
+        '        with self._lock:' + NL +
+        '            peer = self._peers.get(key)' + NL +
+        '            return peer if peer and peer.name else None' + NL +
+        '' + NL +
+        '    def keep_alive(self, key, seconds=6.0):' + NL +
+        '        if not key:' + NL +
+        '            return' + NL +
+        '        deadline = time.monotonic() + seconds' + NL +
+        '        with self._lock:' + NL +
+        '            if deadline > self._hold_until.get(key, 0.0):' + NL +
+        '                self._hold_until[key] = deadline' + NL +
+        '' + NL +
+        '    def release_hold(self, key):' + NL +
+        '        with self._lock:' + NL +
+        '            self._hold_until.pop(key, None)' + NL +
+        '' + NL +
+        "    def repulse_beacon(self, reason='peer_gone'):" + NL +
+        '        now = time.monotonic()' + NL +
+        '        with self._lock:' + NL +
+        '            beacon = self._beacon' + NL +
+        '            if not beacon or not beacon.on or now - self._last_repulse < BEACON_REPULSE_COOLDOWN_S:' + NL +
+        '                return False' + NL +
+        '            self._last_repulse = now' + NL +
+        '        if beacon.repulse():' + NL +
+        "            logging.info('Bluetooth beacon re-pulsed (%s)', reason)" + NL +
+        '            return True' + NL +
+        '        return False' + NL,
+    ),
+    (
+        '            with sender.Beacon() as beacon:' + NL +
+        "                self.events.say('looking', on=True, beacon=beacon.on, why=beacon.said)" + NL +
+        '                while not stop.is_set():' + NL +
+        '                    browser.poll()' + NL +
+        '                    self._reconcile(browser.instances.devices(PEER_SILENCE_SECONDS),' + NL +
+        '                                    scope, stop)' + NL,
+        '            with sender.Beacon() as beacon:' + NL +
+        '                with self._lock:' + NL +
+        '                    self._beacon = beacon' + NL +
+        '                try:' + NL +
+        "                    self.events.say('looking', on=True, beacon=beacon.on, why=beacon.said)" + NL +
+        '                    while not stop.is_set():' + NL +
+        '                        browser.poll()' + NL +
+        '                        self._reconcile(browser.instances.devices(PEER_SILENCE_SECONDS),' + NL +
+        '                                        scope, stop)' + NL +
+        '                finally:' + NL +
+        '                    with self._lock:' + NL +
+        '                        self._beacon = None' + NL,
+    ),
+    (
+        '    def _reconcile(self, located, scope, stop):' + NL +
+        '        now = time.monotonic()' + NL +
+        '        gone, probes = [], []' + NL +
+        '        with self._lock:' + NL,
+        '    def _reconcile(self, located, scope, stop):' + NL +
+        '        now = time.monotonic()' + NL +
+        '        gone, probes = [], []' + NL +
+        '        with self._lock:' + NL +
+        '            held = [k for k, t in list(self._hold_until.items()) if now < t]' + NL +
+        '            for k in [k for k, t in list(self._hold_until.items()) if now >= t]:' + NL +
+        '                self._hold_until.pop(k, None)' + NL +
+        '            if held:' + NL +
+        '                located = {**located, **{k: (self._peers[k].address, self._peers[k].port) for k in held if k in self._peers and k not in located}}' + NL,
+    ),
+    (
+        '        for key in gone:' + NL +
+        "            self.events.say('peer_gone', id=key)" + NL,
+        '        for key in gone:' + NL +
+        "            self.events.say('peer_gone', id=key)" + NL +
+        '        if gone and not stop.is_set():' + NL +
+        "            self.repulse_beacon('peer_gone')" + NL,
+    ),
+    (
+        '    def progress(self, done):' + NL +
+        '        now = time.monotonic()' + NL +
+        '        if now - self._said >= PROGRESS_GAP_SECONDS:' + NL +
+        '            self._said = now' + NL +
+        "            self.state('sending', done=min(done, self.total))" + NL,
+        '    def progress(self, done):' + NL +
+        "        keep = getattr(self, 'keep_alive', None)" + NL +
+        '        if keep:' + NL +
+        '            keep()' + NL +
+        '        now = time.monotonic()' + NL +
+        '        if now - self._said >= PROGRESS_GAP_SECONDS:' + NL +
+        '            self._said = now' + NL +
+        "            self.state('sending', done=min(done, self.total))" + NL,
+    ),
+    (
+        '            self._watches[key] = watch' + NL +
+        '        threading.Thread(target=self._run, args=(watch, peer, files, scope),' + NL,
+        '            self._watches[key] = watch' + NL +
+        '        watch.keep_alive = lambda: self.looking.keep_alive(peer_key, 6.0)' + NL +
+        '        threading.Thread(target=self._run, args=(watch, peer, files, scope),' + NL,
+    ),
+    (
+        "        watch.state('asking')" + NL +
+        '        try:' + NL,
+        '        self.looking.keep_alive(watch.peer_key, 15.0)' + NL +
+        "        watch.state('asking')" + NL +
+        '        try:' + NL,
+    ),
+    (
+        '        finally:' + NL +
+        '            with self._lock:' + NL +
+        '                del self._watches[watch.key]' + NL,
+        '        finally:' + NL +
+        '            self.looking.release_hold(watch.peer_key)' + NL +
+        '            with self._lock:' + NL +
+        '                del self._watches[watch.key]' + NL,
+    ),
+], 'BEACON_REPULSE_COOLDOWN_S')

@@ -6,6 +6,33 @@
 
 ---
 
+## v2.2.10 (Preview / 预览版) — 2026-11-26
+
+### 中文
+
+- **发送/接收实时传输速率显示（带设置开关）**：
+  - 在雷达视图与设备列表中，发送和接收进度旁按 250 ms 平滑窗口实时显示传输速率（如 `发送中 42% · 48.5 MB/s` / `接收中 60% · 46.2 MB/s`，自动在 `KB/s` 与 `MB/s` 间切换，窄雷达节点支持自动折行）；
+  - 在 **设置 → 常规** 新增 **「传输时显示实时速率」** 开关（默认开启）。
+- **发完大文件后 iPhone 消失自动重唤醒修复**：
+  - 发送大文件进行中持续为目标对端保活，避免超过 20 秒的传输期间撞上 `PEER_SILENCE_SECONDS` 误判掉线；
+  - 当已知对端在传输结束后撤掉 mDNS（`peer_gone`）且窗口仍处于查找状态时，自动触发一次 BLE 广播重脉冲（暂停 2.5 秒后以新广播事件重启，并在「所有人」模式下刷新随机哈希），让 iOS `sharingd` 无需息屏再亮屏即可重新响应并回到列表（15 秒冷却防抖）。
+- **更新完成后启动方式可选（[#71](https://github.com/zheznanohana/nekodrop/pull/71)，感谢 `@GGBond-cer`）**：
+  - 在 **设置 → 关于与更新** 新增 **「更新完成后启动」** 选项，可选择打开 **主面板**（默认）或静默启动到 **托盘**；
+  - 安装脚本同步加入 `RestartApplications=no`，避免静默更新时 Inno Setup Restart Manager 与单实例交接竞态。
+
+### English
+
+- **Live AirDrop transfer speed display (with Settings toggle):**
+  - Displays smoothed (250 ms window) real-time throughput (`KB/s` / `MB/s`) next to both send and receive progress in Radar and List views (with centered wrapping on narrow radar nodes);
+  - Added **Show live transfer speed** toggle under **Settings → General** (on by default).
+- **Post-transfer peer re-wake & active-transfer keepalive:**
+  - Keeps the peer alive in `Looking` throughout active bulk uploads so transfers exceeding 20 s do not trigger premature `PEER_SILENCE_SECONDS` expiry;
+  - Automatically re-pulses the Windows BLE AirDrop beacon (2.5 s pause + fresh `Start`, refreshing random bytes when not using Apple ID hashes, 15 s cooldown) whenever a known peer withdraws mDNS (`peer_gone`) while still looking, so iOS `sharingd` re-opens `_airdrop._tcp` without locking/unlocking the iPhone screen.
+- **Choose main panel or tray after update ([#71](https://github.com/zheznanohana/nekodrop/pull/71), thanks `@GGBond-cer`):**
+  - Added **After an update** (**Main panel** / **Tray**) under **Settings → About & updates**, passing `/SHOWAPP` to Inno Setup and setting `RestartApplications=no` to avoid Restart Manager race conditions.
+
+---
+
 ## v2.2.9 (Preview / 预览版) — 2026-11-26
 
 ### 中文
