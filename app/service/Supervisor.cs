@@ -1316,6 +1316,19 @@ public sealed class Supervisor : IDisposable
             {
                 if (p is { HasExited: false })
                 {
+                    // MT7921/MT7922 must run MtkDevice::close() -> wfsys_reset() before Windows
+                    // rebinds the MediaTek driver, otherwise the chip can stay stuck on Linux FW (#54).
+                    if (ReferenceEquals(p, _radio) && _profile.Backend == RadioBackendKind.MtkRadio)
+                    {
+                        try
+                        {
+                            p.StandardInput.WriteLine("quit");
+                            p.StandardInput.Flush();
+                            p.StandardInput.Close();
+                        }
+                        catch (Exception) { }
+                        if (p.WaitForExit(2000)) continue;
+                    }
                     p.Kill();
                     p.WaitForExit(5000);
                 }

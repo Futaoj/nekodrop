@@ -456,10 +456,14 @@ int main(int argc, char **argv) {
     }
   }
 
-  /* Service commands on stdin: "scan[-bg] [SSID hex]" and "rejoin". */
+  /* Service commands on stdin: "scan[-bg] [SSID hex]", "rejoin", and "quit". */
   std::thread([&push_cmd] {
     char line[128];
     while (!stopping() && std::fgets(line, sizeof(line), stdin)) {
+      if (std::strncmp(line, "quit", 4) == 0) {
+        g_stop = true;
+        break;
+      }
       if (std::strncmp(line, "rejoin", 6) == 0) {
         push_cmd({kRejoinRequest, {}, now_us()});
         continue;
@@ -1132,6 +1136,7 @@ int main(int argc, char **argv) {
   if (tap_thread.joinable()) tap_thread.join();
   if (timer.joinable()) timer.join();
   if (sta) sta->stop();
+  log_line("closing MTK radio (WFSYS reset)");
   dev.close();
   timeEndPeriod(1);
   return 0;

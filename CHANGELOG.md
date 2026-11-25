@@ -1,8 +1,30 @@
 # Changelog / 更新日志
 
 > Release channels / 发布通道：
-> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.2.4`**（首个稳定基线为 `v0.1.22`）。
+> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.2.5`**（首个稳定基线为 `v0.1.22`）。
 > - **Hourly（每时预览版 / Pre-release）**：持续迭代的预览版（客户端默认也会收到；取消勾选「包括预览版」就只收稳定版）；GitHub Releases 仅滚动保留最新 4 个每时版 + 稳定版（最多 5 个 Release），历史 Git Tag 全部保留。
+
+---
+
+## v2.2.5 (Stable / 稳定版) — 2026-11-25
+
+### 中文
+
+- **Realtek RTL8852CE 切 5 GHz 80 MHz 信道彻底修复（[#32](https://github.com/zheznanohana/nekodrop/issues/32)）**：
+  - 定位到 `winawdl_radio` 在进入会话前将日志级别提高到 `Warn`，导致此前用 `logger->info()` 输出的 `event: peer-channel` 与 `peer sequence` 被全部静默丢弃，RTL8852CE 一直锁死在 2.4 GHz 信道 6（20 MHz）无法切至 5 GHz 信道 44 / 149（80 MHz）；
+  - 改为 `logger->warn()` 并在解析 TLV 18 前剔除尾部 4 字节 FCS，RTL8852CE 现可正常识别 iPhone 5 GHz 信道、记住信道并在按需唤醒时直接启动在 5 GHz 80 MHz，大幅提升传输速率与发现速度。
+- **MediaTek MT7922 / MT7921 归还网卡前执行优雅 WFSYS 复位（[#54](https://github.com/zheznanohana/nekodrop/issues/54)）**：
+  - 此前关闭 AirDrop 时服务直接强杀 `nekodrop-radio-mtk.exe`，导致 `MtkDevice::close()` 中的 `wfsys_reset()` 从未执行，Linux 固件残留在网卡芯片 RAM 中，Windows 重新绑定 MediaTek 官方驱动后偶发「Wi-Fi 不可用 / 找不到网络」；
+  - 现支持通过标准输入发送 `quit` 命令优雅退出（最长等待 2 秒），在把网卡交还给 Windows 前完整执行 `dma_disable()` 与 `wfsys_reset()` 恢复至干净 ROM 状态。
+
+### English
+
+- **Fixed Realtek RTL8852CE 5 GHz 80 MHz channel switching ([#32](https://github.com/zheznanohana/nekodrop/issues/32)):**
+  - `winawdl_radio` raises its logger level to `Warn` before entering `serve_client()`, silently dropping the `logger->info()` lines for `event: peer-channel` and `peer sequence` and leaving RTL8852CE stuck on 2.4 GHz channel 6 (20 MHz);
+  - Switched both notifications to `logger->warn()` and stripped trailing 4-byte FCS before walking AWDL TLV 18, allowing RTL8852CE to move to 5 GHz channel 44 / 149 (80 MHz) and remember it across OnDemand wakes.
+- **Graceful WFSYS reset before MediaTek MT7922 / MT7921 driver handback ([#54](https://github.com/zheznanohana/nekodrop/issues/54)):**
+  - Previously `KillDaemons()` terminated `nekodrop-radio-mtk.exe` immediately without running `MtkDevice::close()` / `wfsys_reset()`, leaving Linux firmware resident in chip RAM and occasionally causing Windows' MediaTek driver to report "Wi-Fi unavailable / no networks found";
+  - `Supervisor` now sends `quit` over stdin and waits up to 2 s for `mtkradio` to run `dma_disable()` + `wfsys_reset()` cleanly before handing the card back to Windows.
 
 ---
 

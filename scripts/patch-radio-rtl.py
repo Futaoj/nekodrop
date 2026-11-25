@@ -89,7 +89,8 @@ HELPER = NL.join([
 RX_OLD = '  if (packet.RxAtrib.crc_err) return;' + NL + '  note_station(frame, session);' + NL
 RX_NEW = NL.join([
     '  if (packet.RxAtrib.crc_err) return;',
-    '  if (const unsigned ch = nekodrop::peer_channel(frame);',
+    '  const auto body = (packet.RxAtrib.fcs_present && frame.size() >= 44) ? frame.first(frame.size() - 4) : frame;',
+    '  if (const unsigned ch = nekodrop::peer_channel(body);',
     '      ch && ch != nekodrop::peer_channel_told) { /* nekodrop (#32) */',
     '    nekodrop::peer_channel_told = ch;',
     '    nekodrop::peer_channel_news = ch;',
@@ -102,15 +103,16 @@ LOOP_OLD = '    messages++;' + NL + '    untold++;' + NL
 LOOP_NEW = NL.join([
     '    messages++;',
     '    untold++;',
+    '    /* Must be warn: winawdl_radio raises logger level to Warn during serve_client (#32). */',
     '    if (const unsigned ch = nekodrop::peer_channel_news.exchange(0)) /* nekodrop (#32) */',
-    '      logger->info("radio: event: peer-channel {}", ch);',
+    '      logger->warn("radio: event: peer-channel {}", ch);',
     '    if (nekodrop::seq_news.exchange(false) && nekodrop::seq_logged < 20) { /* nekodrop (#32) */',
     '      nekodrop::seq_logged++;',
     '      const uint64_t lo = nekodrop::seq_lo, hi = nekodrop::seq_hi;',
     '      std::string seq;',
     '      for (unsigned n = 0; n < 16; ++n)',
     '        seq += (n ? " " : "") + std::to_string(unsigned(((n < 8 ? lo : hi) >> (8 * (n & 7))) & 0xff));',
-    '      logger->info("radio: peer sequence {}", seq);',
+    '      logger->warn("radio: peer sequence {}", seq);',
     '    }',
     '',
 ])
