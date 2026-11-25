@@ -344,6 +344,45 @@ if new_s not in text:
     sender_path.write_text(text, encoding='utf-8')
     print('sender: 2 MiB socket buffers + TCP_NODELAY')
 
+text = sender_path.read_text(encoding='utf-8')
+if "self._phase = 'tcp'" not in text:
+    phase_pairs = [
+        (
+            NL.join([
+                '        self.scope = scope',
+                '        self.context = context',
+            ]),
+            NL.join([
+                '        self.scope = scope',
+                '        self.context = context',
+                "        self._phase = 'init'",
+            ]),
+        ),
+        (
+            NL.join([
+                '            sock.connect((self.host, self.port, 0, self.scope))',
+                '            self.sock = self.context.wrap_socket(sock)',
+            ]),
+            NL.join([
+                "            self._phase = 'tcp'",
+                '            sock.connect((self.host, self.port, 0, self.scope))',
+                "            self._phase = 'tls'",
+                '            self.sock = self.context.wrap_socket(sock)',
+                "            self._phase = 'http'",
+            ]),
+        ),
+        (
+            '        raise Unreachable(str(error) or type(error).__name__) from None',
+            "        raise Unreachable(f'{connection._phase}:{port} {error or type(error).__name__}') from None",
+        ),
+    ]
+    for old_p, new_p in phase_pairs:
+        if text.count(old_p) != 1:
+            sys.exit(f'sender.py: {old_p[:50]!r} moved; update patch-engine.py')
+        text = text.replace(old_p, new_p, 1)
+    sender_path.write_text(text, encoding='utf-8')
+    print('sender: phase-tagged Unreachable diagnostics')
+
 receiver_path = pathlib.Path(sys.argv[1]) / 'receiver.py'
 text = receiver_path.read_text(encoding='utf-8')
 old_r = NL.join([
@@ -478,13 +517,14 @@ if 'def address_response(self, types):' not in text:
         return names
     except (IndexError, struct.error, ValueError):
         return set()""",
-            """def questions_in(packet):
-    \"\"\"(name, type) from IN-class mDNS questions, including QU questions.\"\"\"
+            """def questions_in_with_qu(packet):
+    \"\"\"((name, type) set, any_qu) from IN-class mDNS questions.\"\"\"
     try:
         _, flags, questions, _, _, _ = struct.unpack_from('!HHHHHH', packet)
         if flags & FLAG_RESPONSE:
-            return set()
+            return set(), False
         found = set()
+        any_qu = False
         offset = HEADER_BYTES
         for _ in range(questions):
             name, offset = decode_name(packet, offset)
@@ -492,9 +532,16 @@ if 'def address_response(self, types):' not in text:
             offset += 4
             if rclass & ~CACHE_FLUSH == CLASS_IN:
                 found.add((name.lower(), rtype))
-        return found
+                if rclass & CACHE_FLUSH:
+                    any_qu = True
+        return found, any_qu
     except (IndexError, struct.error, ValueError):
-        return set()
+        return set(), False
+
+
+def questions_in(packet):
+    \"\"\"(name, type) from IN-class mDNS questions, including QU questions.\"\"\"
+    return questions_in_with_qu(packet)[0]
 
 
 def question_names(packet):
@@ -517,16 +564,34 @@ def question_names(packet):
     def response(self, alive=True):""",
         ),
         (
+            """    def _send(self, packet):
+        try:
+            self.sock.sendto(packet, (GROUP, PORT, 0, self.interface_index))
+        except OSError as error:
+            logging.warning('mdns: send failed: %s', error)""",
+            """    def _send(self, packet):
+        self._send_to(packet, (GROUP, PORT, 0, self.interface_index))
+
+    def _send_to(self, packet, target):
+        try:
+            self.sock.sendto(packet, target)
+        except OSError as error:
+            logging.warning('mdns: send failed: %s', error)""",
+        ),
+        (
             """        asked = question_names(packet) & self.service.names()
         if asked:
             logging.info('mdns: %s asked for %s', sender[0].split('%')[0],
                          ', '.join(sorted(asked)))
         return bool(asked)""",
             """        names = self.service.names()
-        asked = {(name, rtype) for name, rtype in questions_in(packet) if name in names}
+        raw_asked, any_qu = questions_in_with_qu(packet)
+        asked = {(name, rtype) for name, rtype in raw_asked if name in names}
+        self._last_qu_sender = (sender[0], sender[1], 0, self.interface_index) if (asked and any_qu) else None
         if asked:
-            logging.info('mdns: %s asked for %s', sender[0].split('%')[0],
-                         ', '.join(f'{name} (type {rtype})' for name, rtype in sorted(asked)))
+            logging.info('mdns: %s asked for %s%s', sender[0].split('%')[0],
+                         ', '.join(f'{name} (type {rtype})' for name, rtype in sorted(asked)),
+                         ' (QU)' if any_qu else '')
         return asked""",
         ),
         (
@@ -549,10 +614,14 @@ def question_names(packet):
                 continue
             host = self.service.host_name.lower()
             if all(name == host and rtype in (TYPE_A, TYPE_AAAA) for name, rtype in asked):
-                self._send(self.service.address_response({rtype for _, rtype in asked}))
+                reply = self.service.address_response({rtype for _, rtype in asked})
             else:
-                self._send(announcement)
+                reply = announcement
                 last_announce = now
+            qu_target = getattr(self, '_last_qu_sender', None)
+            if qu_target is not None:
+                self._send_to(reply, qu_target)
+            self._send(reply)
             last_reply = now""",
         ),
     ]
@@ -671,8 +740,55 @@ if 'def _media_capabilities():' not in text:
             ]),
         ),
         (
-            "            'ReceiverMediaCapabilities': MEDIA_CAPABILITIES,",
-            "            'ReceiverMediaCapabilities': _media_capabilities(),",
+            NL.join([
+                '    def answer(self, body):',
+                '        self.send_response(200)',
+                "        self.send_header('Content-Length', str(len(body)))",
+                '        self.end_headers()',
+                '        self.wfile.write(body)',
+            ]),
+            NL.join([
+                '    def answer(self, body, close=False):',
+                '        self.send_response(200)',
+                "        self.send_header('Content-Type', 'application/octet-stream')",
+                "        self.send_header('Content-Length', str(len(body)))",
+                '        if close:',
+                "            self.send_header('Connection', 'close')",
+                '            self.close_connection = True',
+                '        self.end_headers()',
+                '        self.wfile.write(body)',
+            ]),
+        ),
+        (
+            "        if self.path == '/Discover':" + NL + '            self.answer(self.identity_plist())',
+            "        if self.path == '/Discover':" + NL
+            + '            status_code = 200 if nekodrop_identity.is_contact(sender_record) else 100' + NL
+            + '            self.answer(self.identity_plist(status_code=status_code))',
+        ),
+        (
+            NL.join([
+                '    def identity_plist(self):',
+                '        settings = self.server.settings',
+                '        return plistlib.dumps({',
+                "            'ReceiverMediaCapabilities': MEDIA_CAPABILITIES,",
+                "            'ReceiverComputerName': settings.name,",
+                "            'ReceiverModelName': settings.model,",
+                '            **nekodrop_identity.receiver_extra(),',
+                '        }, fmt=plistlib.FMT_BINARY)',
+            ]),
+            NL.join([
+                '    def identity_plist(self, status_code=None):',
+                '        settings = self.server.settings',
+                '        payload = {',
+                "            'ReceiverMediaCapabilities': _media_capabilities(),",
+                "            'ReceiverComputerName': settings.name,",
+                "            'ReceiverModelName': settings.model,",
+                '            **nekodrop_identity.receiver_extra(),',
+                '        }',
+                '        if status_code is not None:',
+                "            payload['StatusCode'] = status_code",
+                '        return plistlib.dumps(payload, fmt=plistlib.FMT_BINARY)',
+            ]),
         ),
         (
             NL.join([
@@ -686,11 +802,14 @@ if 'def _media_capabilities():' not in text:
                 "                logging.info('link stored as %s', stored)",
                 '                links.append(stored)',
                 '            watcher.stored(self.accepted, links)',
+                '        self.answer(self.identity_plist())',
             ]),
             NL.join([
                 '        if items:',
-                "            logging.info('ask extras: keys=%s items=%d', sorted(ask.keys()), len(items))",
+                "            logging.info('ask extras: keys=%s items=%d types=%s bundle=%s files=%d',",
+                "                         sorted(ask.keys()), len(items), sorted(kinds), ask.get('BundleID'), len(files))",
                 '        extracted = transfer.extract_web_links(ask)',
+                '        links_stored = False',
                 "        if 'links' in kinds or extracted:",
                 '            links = []',
                 '            for url in extracted:',
@@ -701,6 +820,19 @@ if 'def _media_capabilities():' not in text:
                 '                for item in items:',
                 "                    logging.warning('ask: ignoring non-web item %.80r', item)",
                 '            watcher.stored(self.accepted, links)',
+                '            links_stored = bool(links)',
+                '            if links_stored and hasattr(self.accepted, "__dict__"):',
+                '                self.accepted.links_already_stored = True',
+                '        self.answer(self.identity_plist(), close=(links_stored and not files))',
+            ]),
+        ),
+        (
+            '        watcher.stored(token, written)',
+            NL.join([
+                "        if not getattr(token, 'links_already_stored', False):",
+                '            watcher.stored(token, written)',
+                '        else:',
+                "            logging.info('upload %s: sidecar file(s) accepted after mixed link ask: %s', tid, ', '.join(written))",
             ]),
         ),
     ]

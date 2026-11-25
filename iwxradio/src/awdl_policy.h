@@ -309,10 +309,11 @@ struct BaFilter {
 
 /* ------------------------------------------------------- send policy */
 
-/* A failed frame to one station is sent again for 400 ms (the peer may be on
- * another channel for a few slots), with a growing gap. */
-constexpr uint64_t kResendWindowUS = 400000;
-constexpr unsigned kResendMaxAttempts = 100;
+/* A failed frame to one station is sent again for 600 ms (>2 full 16-slot
+ * AWDL cycles, so a 2/16-slot peer that skips one AW still gets TCP SYN /
+ * mDNS QU replies, #30), with a growing gap. */
+constexpr uint64_t kResendWindowUS = 600000;
+constexpr unsigned kResendMaxAttempts = 120;
 constexpr uint64_t kTxStatusTimeoutUS = 1000000;
 constexpr uint64_t resend_backoff_us(unsigned attempts) {
   return attempts <= 1U ? 0U : attempts == 2U ? 2000U : 5000U;

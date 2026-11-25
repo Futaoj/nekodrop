@@ -6,6 +6,28 @@
 
 ---
 
+## v2.2.4 (Preview / 预览版) — 2026-11-25
+
+### 中文
+
+- **AirDrop `/Discover` & `/Ask` 协议头与混合链接分享修复**：
+  - 为 `/Discover` 与 `/Ask` 的二进制 plist 响应补齐 `Content-Type: application/octet-stream` 头，并在 `/Discover` 响应中返回规范的 `StatusCode`（所有人 `100` / 联系人匹配 `200`）；
+  - 纯链接分享（无文件上传）在回复 `/Ask 200` 时携带 `Connection: close` 避免连接悬挂 30 秒超时；针对 B 站等同时携带 `Files` 与 `Items` 的混合分享，若手机端后续发起附属封面 `/Upload`，服务端正常接收并回复 `200 OK`（且不重复弹出多余通知），缓解手机端显示「失败」的问题。
+- **低占空比 AWDL（2/16 槽位）与 mDNS QU 单播回复优化（[#30](https://github.com/zheznanohana/nekodrop/issues/30)、[#51](https://github.com/zheznanohana/nekodrop/issues/51)）**：
+  - `mdns.py` 支持 RFC 6762 `QU`（单播响应请求）标志：当苹果设备带 `QU` 位查询 `_airdrop._tcp.local` 或主机地址时，除组播外额外向查询端直发单播响应（走 AWDL 802.11 L2 ACK + 重传队列），显著提升对端仅在 2/16 槽位在信道时的发现与解析成功率；
+  - `iwxradio` 将单播重传窗口从 `400 ms` 放宽至 `600 ms`（覆盖超过两个完整的 16 槽位 AWDL 周期），并在 `sender.py` 超时日志中标明具体阶段与端口（`tcp:<port>` / `tls:<port>` / `http:<port>`）便于进一步排查。
+
+### English
+
+- **AirDrop `/Discover` & `/Ask` HTTP headers and mixed link/file share handling:**
+  - Added `Content-Type: application/octet-stream` to `/Discover` and `/Ask` binary plist responses and included `StatusCode` (`100` for Everyone / `200` for contact match) in `/Discover`;
+  - Close pure link-only `/Ask` connections cleanly (`Connection: close`) instead of idling 30 s to timeout; for mixed `Files + Items` app shares (e.g. Bilibili), cleanly accept any follow-up sidecar `/Upload` with `200 OK` without firing a duplicate toast.
+- **Low-duty AWDL (2/16 slots) & mDNS QU unicast reply improvements ([#30](https://github.com/zheznanohana/nekodrop/issues/30), [#51](https://github.com/zheznanohana/nekodrop/issues/51)):**
+  - Added RFC 6762 `QU` unicast-response support in `mdns.py` so queries from Apple peers with the `QU` bit set receive a L2-ACKed unicast reply in addition to multicast;
+  - Extended `iwxradio` unicast resend window from `400 ms` to `600 ms` (> 2 full 16-slot AWDL cycles) and tagged `sender.py` `Unreachable` timeouts with exact phase and port (`tcp:<port>` / `tls:<port>` / `http:<port>`).
+
+---
+
 ## v2.2.3 (Stable / 稳定版) — 2026-11-25
 
 ### 中文

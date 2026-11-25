@@ -95,6 +95,37 @@ class AddressQueries(unittest.TestCase):
         self.assertEqual(sent, [SERVICE.response(), SERVICE.address_response({1}),
                                 SERVICE.response()])
 
+    def test_qu_query_sends_unicast_and_multicast_reply(self):
+        packet = mdns.query([(HOST, 28)])
+        qu = packet[:-2] + b'\x80\x01'
+        qs, any_qu = mdns.questions_in_with_qu(qu)
+        self.assertEqual(qs, {(HOST, 28)})
+        self.assertTrue(any_qu)
+        _, no_qu = mdns.questions_in_with_qu(packet)
+        self.assertFalse(no_qu)
+
+        announcer = mdns.Announcer.__new__(mdns.Announcer)
+        announcer.service = SERVICE
+        announcer.interface_index = 7
+        announcer.stopping = threading.Event()
+        mcast, ucast = [], []
+        announcer._send = mcast.append
+        announcer._send_to = lambda pkt, target: ucast.append((pkt, target))
+
+        def asked():
+            if len(mcast) == 1:
+                announcer._last_qu_sender = ('fe80::1', 5353, 0, 7)
+                return {('_airdrop._tcp.local', 12)}
+            announcer.stopping.set()
+            return set()
+
+        announcer._asked = asked
+        with patch.object(mdns.time, 'monotonic', side_effect=[0, 0.1, 0.2, 0.3]):
+            announcer._run()
+        self.assertEqual(len(ucast), 1)
+        self.assertEqual(ucast[0], (SERVICE.response(), ('fe80::1', 5353, 0, 7)))
+        self.assertEqual(mcast, [SERVICE.response(), SERVICE.response()])
+
 
 if __name__ == '__main__':
     unittest.main()
