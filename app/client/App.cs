@@ -1280,8 +1280,17 @@ public sealed class App : Application
         });
 
         var hero = built.hero ?? askIcon;
-        if (hero is null && built.records.FirstOrDefault(r => r.IsLink) is { } linkRec)
-            hero = await MediaHelper.TryFetchYoutubeThumbnailAsync(linkRec.Url);
+        string? linkTitle = null;
+        if (built.records.FirstOrDefault(r => r.IsLink) is { } linkRec)
+        {
+            var (fetchedTitle, fetchedThumb) = await MediaHelper.TryFetchLinkPreviewAsync(linkRec.Url, hero);
+            if (!string.IsNullOrEmpty(fetchedTitle))
+            {
+                linkTitle = fetchedTitle;
+                linkRec.Name = fetchedTitle;
+            }
+            if (!string.IsNullOrEmpty(fetchedThumb)) hero = fetchedThumb;
+        }
 
         await Dispatcher.InvokeAsync(() =>
         {
@@ -1295,7 +1304,9 @@ public sealed class App : Application
             var first = built.records[0];
             if (built.records.Count == 1 && first.IsLink)
             {
-                Shell.ReceivedToast(id, L.F("done.receivedLink", from), first.Url, folder, first.Id, hero, isLink: true);
+                var linkBody = linkTitle ?? first.Url;
+                var sub = linkTitle is not null ? TransferHistory.ShortUrlLabel(first.Url) : null;
+                Shell.ReceivedToast(id, L.F("done.receivedLink", from), linkBody, folder, first.Id, hero, isLink: true, subtitle: sub);
                 return;
             }
             var body = built.records.Count == 1

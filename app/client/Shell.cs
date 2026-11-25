@@ -226,7 +226,8 @@ public static class Shell
     /// Hero preview + Copy to clipboard button UX inspired by DropBridge.
     /// </summary>
     public static void ReceivedToast(string id, string title, string body, string folder,
-                                     string? recordId, string? heroImagePath = null, bool isLink = false, string? batchId = null)
+                                     string? recordId, string? heroImagePath = null, bool isLink = false,
+                                     string? batchId = null, string? subtitle = null)
     {
         var launch = isLink && recordId is not null
             ? $"nekodrop:openurl?id={Uri.EscapeDataString(recordId)}"
@@ -234,6 +235,7 @@ public static class Shell
         var heroXml = "";
         if (!string.IsNullOrEmpty(heroImagePath) && File.Exists(heroImagePath) && MediaHelper.IsToastPreviewable(heroImagePath))
             heroXml = $"\n                <image placement=\"hero\" src=\"{X(new Uri(heroImagePath).AbsoluteUri)}\"/>";
+        var subXml = string.IsNullOrEmpty(subtitle) ? "" : $"\n                <text>{X(subtitle)}</text>";
 
         var actionsXml = "";
         if (recordId is not null)
@@ -267,7 +269,7 @@ public static class Shell
             <toast launch="{X(launch)}" activationType="protocol">
               <visual><binding template="ToastGeneric">
                 <text>{X(title)}</text>
-                <text>{X(body)}</text>{heroXml}
+                <text>{X(body)}</text>{subXml}{heroXml}
               </binding></visual>
               {actionsXml}
             </toast>

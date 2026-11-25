@@ -1,12 +1,30 @@
 # Changelog / 更新日志
 
 > Release channels / 发布通道：
-> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.2.2`**（首个稳定基线为 `v0.1.22`）。
+> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.2.3`**（首个稳定基线为 `v0.1.22`）。
 > - **Hourly（每时预览版 / Pre-release）**：持续迭代的预览版（客户端默认也会收到；取消勾选「包括预览版」就只收稳定版）；GitHub Releases 仅滚动保留最新 4 个每时版 + 稳定版（最多 5 个 Release），历史 Git Tag 全部保留。
 
 ---
 
-## v2.2.2 (Stable / 稳定版) — 2026-11-25
+## v2.2.3 (Stable / 稳定版) — 2026-11-25
+
+### 中文
+
+- **苹果 JPEG 2000（`.jp2`）封面图原生解码**：引入纯托管 .NET 的 `CoreJ2K.Windows` 解码器，解决 Windows WIC 不支持苹果 AirDrop `FileIcon`（`.jp2`）导致 B 站、视频和询问通知不显示封面图的问题。
+- **YouTube 16:9 无黑边封面 & B 站 / YouTube 视频标题显示**：
+  - YouTube 封面改用纯 16:9 接口（优先 `maxresdefault.jpg`，回退 `mqdefault.jpg`），消除此前 `hqdefault.jpg`（4:3）在通知顶部的黑边；
+  - 收到 YouTube / B 站链接时自动获取视频标题与高清宽屏封面（YouTube oEmbed + `16:9` 封面 / B 站页面 OpenGraph 标题与宽屏封面，3.5 秒超时静默降级至本地 `.jp2` 封面），在系统通知与传输历史中直接显示标题与无黑边封面图。
+
+### English
+
+- **Native Apple JPEG 2000 (`.jp2`) `FileIcon` decoding:** Added pure-managed `CoreJ2K.Windows` to decode Apple's `.jp2` AirDrop preview icons (unsupported by Windows WIC), enabling hero cover previews for Bilibili shares, videos, and Ask prompts.
+- **16:9 letterbox-free YouTube covers & video titles:**
+  - Switched YouTube cover fetching to pure 16:9 thumbnails (`maxresdefault.jpg` with `mqdefault.jpg` fallback), removing the black bars from 4:3 `hqdefault.jpg`;
+  - Automatically fetch video titles and HD widescreen covers for YouTube (oEmbed + 16:9) and Bilibili (OpenGraph, with automatic fallback to decoded local `.jp2` `FileIcon` if offline), displaying them in both toast notifications and transfer history.
+
+---
+
+## v2.2.2 (Preview / 预览版) — 2026-11-25
 
 ### 中文
 

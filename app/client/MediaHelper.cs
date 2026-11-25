@@ -260,11 +260,26 @@ public static partial class MediaHelper
         return total;
     }
 
-    static readonly HttpClient ThumbHttp = new() { Timeout = TimeSpan.FromMilliseconds(2500) };
+    static readonly HttpClient ThumbHttp = CreateThumbHttp();
+
+    static HttpClient CreateThumbHttp()
+    {
+        var handler = new HttpClientHandler
+        {
+            AllowAutoRedirect = true,
+            AutomaticDecompression = System.Net.DecompressionMethods.All,
+        };
+        var c = new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(3500) };
+        c.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
+        c.DefaultRequestHeaders.AcceptLanguage.ParseAdd("zh-CN,zh;q=0.9,en;q=0.8");
+        return c;
+    }
+
+    static bool _j2kReady;
 
     /// <summary>
     /// Ensures a preview icon saved from AirDrop Ask's FileIcon is toast-ready (.jpg/.png).
-    /// Converts .jp2 via WIC if needed; returns null if unreadable.
+    /// Decodes Apple's JPEG 2000 (.jp2) icons via CoreJ2K.Windows; returns null if unreadable.
     /// </summary>
     public static string? PrepareToastPreview(string? path)
     {
@@ -272,13 +287,27 @@ public static partial class MediaHelper
         if (IsToastPreviewable(path)) return path;
         try
         {
-            var bmp = TryLoadBitmap(path);
-            if (bmp is null) return null;
             var target = Path.ChangeExtension(path, ".jpg");
+            if (Path.GetExtension(path).Equals(".jp2", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!_j2kReady)
+                {
+                    CoreJ2K.Util.ImageFactory.Register(new CoreJ2K.Util.WindowsBitmapImageCreator());
+                    _j2kReady = true;
+                }
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                var img = CoreJ2K.J2kImage.FromStream(fs);
+                using var bmp = img.As<System.Drawing.Bitmap>();
+                if (bmp is null) return null;
+                bmp.Save(target, System.Drawing.Imaging.ImageFormat.Jpeg);
+                return target;
+            }
+            var wic = TryLoadBitmap(path);
+            if (wic is null) return null;
             var enc = new JpegBitmapEncoder { QualityLevel = 88 };
-            enc.Frames.Add(BitmapFrame.Create(bmp));
-            using (var fs = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None))
-                enc.Save(fs);
+            enc.Frames.Add(BitmapFrame.Create(wic));
+            using (var outFs = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None))
+                enc.Save(outFs);
             return target;
         }
         catch (Exception) { return null; }
@@ -312,23 +341,171 @@ public static partial class MediaHelper
     }
 
     /// <summary>
-    /// Fetches a YouTube video's static thumbnail from i.ytimg.com (2.5 s timeout)
-    /// when the sender did not attach a FileIcon preview in /Ask.
+    /// Fetches clean 16:9 cover thumbnail and video title for YouTube and Bilibili links
+    /// (3 s timeout, silent fallback to local FileIcon / raw URL if offline).
     /// </summary>
-    public static async Task<string?> TryFetchYoutubeThumbnailAsync(string? url)
+    public static async Task<(string? Title, string? ThumbPath)> TryFetchLinkPreviewAsync(string? url, string? existingThumb)
     {
-        var videoId = TryExtractYoutubeId(url);
-        if (videoId is null) return null;
+        if (!TransferHistory.IsWebUrl(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return (null, existingThumb);
+
+        var ytId = TryExtractYoutubeId(url);
+        if (ytId is not null)
+        {
+            var titleTask = FetchYoutubeTitleAsync(ytId);
+            var thumbTask = FetchYoutubeThumb16x9Async(ytId);
+            await Task.WhenAll(titleTask, thumbTask);
+            return (titleTask.Result, thumbTask.Result ?? existingThumb);
+        }
+
+        var host = uri.Host.ToLowerInvariant();
+        if (host is "b23.tv" or "www.b23.tv" or "bilibili.com" or "www.bilibili.com" or "m.bilibili.com")
+            return await FetchBilibiliPreviewAsync(url!, existingThumb);
+
+        return (null, existingThumb);
+    }
+
+    static async Task<string?> FetchYoutubeTitleAsync(string videoId)
+    {
+        try
+        {
+            var oembed = $"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={videoId}&format=json";
+            using var res = await ThumbHttp.GetAsync(oembed);
+            if (!res.IsSuccessStatusCode) return null;
+            var node = System.Text.Json.Nodes.JsonNode.Parse(await res.Content.ReadAsStringAsync());
+            var title = ((string?)node?["title"])?.Trim();
+            return string.IsNullOrEmpty(title) ? null : title;
+        }
+        catch (Exception) { return null; }
+    }
+
+    static async Task<string?> FetchYoutubeThumb16x9Async(string videoId)
+    {
         try
         {
             var dir = Path.Combine(Path.GetTempPath(), "nekodrop-previews");
             Directory.CreateDirectory(dir);
-            var target = Path.Combine(dir, $"yt-{videoId}.jpg");
+            var target = Path.Combine(dir, $"yt16x9-{videoId}.jpg");
             if (File.Exists(target) && new FileInfo(target).Length > 1000) return target;
-            using var res = await ThumbHttp.GetAsync($"https://i.ytimg.com/vi/{videoId}/hqdefault.jpg");
+            // Pure 16:9 endpoints (no 4:3 letterbox black bars like hqdefault.jpg).
+            foreach (var variant in new[] { "maxresdefault.jpg", "mqdefault.jpg" })
+            {
+                try
+                {
+                    using var res = await ThumbHttp.GetAsync($"https://i.ytimg.com/vi/{videoId}/{variant}");
+                    if (!res.IsSuccessStatusCode) continue;
+                    var bytes = await res.Content.ReadAsByteArrayAsync();
+                    if (bytes.Length < 1000 || bytes.Length > 2 * 1024 * 1024 || bytes[0] != 0xFF || bytes[1] != 0xD8) continue;
+                    var tmp = target + ".tmp";
+                    await File.WriteAllBytesAsync(tmp, bytes);
+                    File.Move(tmp, target, overwrite: true);
+                    return target;
+                }
+                catch (Exception) { }
+            }
+        }
+        catch (Exception) { }
+        return null;
+    }
+
+    static async Task<(string? Title, string? ThumbPath)> FetchBilibiliPreviewAsync(string url, string? existingThumb)
+    {
+        try
+        {
+            using var res = await ThumbHttp.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+            if (!res.IsSuccessStatusCode) return (null, existingThumb);
+            var finalUri = res.RequestMessage?.RequestUri;
+            if (finalUri is null) return (null, existingThumb);
+            var finalHost = finalUri.Host.ToLowerInvariant();
+            if (!finalHost.EndsWith("bilibili.com", StringComparison.Ordinal) && !finalHost.EndsWith("b23.tv", StringComparison.Ordinal))
+                return (null, existingThumb);
+
+            // Read only the first 96 KB (more than enough for <head> OpenGraph meta tags).
+            using var stream = await res.Content.ReadAsStreamAsync();
+            var buf = new byte[98304];
+            var read = 0;
+            while (read < buf.Length)
+            {
+                var n = await stream.ReadAsync(buf.AsMemory(read, buf.Length - read));
+                if (n <= 0) break;
+                read += n;
+            }
+            var html = System.Text.Encoding.UTF8.GetString(buf, 0, read);
+
+            var title = ExtractMetaContent(html, "og:title");
+            if (string.IsNullOrEmpty(title))
+            {
+                var tm = HtmlTitleRegex().Match(html);
+                if (tm.Success) title = System.Net.WebUtility.HtmlDecode(tm.Groups[1].Value).Trim();
+            }
+            if (!string.IsNullOrEmpty(title))
+            {
+                foreach (var suffix in new[] { "_哔哩哔哩_bilibili", "-哔哩哔哩", " - 哔哩哔哩", "_bilibili" })
+                {
+                    if (title.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        title = title[..^suffix.Length].Trim();
+                        break;
+                    }
+                }
+                if (title.Length == 0 || title.Contains("视频去哪了呢", StringComparison.Ordinal) || title.StartsWith("哔哩哔哩", StringComparison.Ordinal))
+                    title = null;
+            }
+
+            var pic = ExtractMetaContent(html, "og:image");
+            string? thumb = existingThumb;
+            if (!string.IsNullOrEmpty(pic))
+            {
+                if (pic.StartsWith("//", StringComparison.Ordinal)) pic = "https:" + pic;
+                else if (pic.StartsWith("http://", StringComparison.OrdinalIgnoreCase)) pic = "https://" + pic[7..];
+                if (Uri.TryCreate(pic, UriKind.Absolute, out var picUri) &&
+                    picUri.Host.EndsWith(".hdslb.com", StringComparison.OrdinalIgnoreCase))
+                {
+                    var key = BvidRegex().Match(finalUri.AbsoluteUri) is { Success: true } bm
+                        ? bm.Value
+                        : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(pic)))[..12];
+                    var downloaded = await DownloadPreviewImageAsync(pic, $"bili-{key}.jpg", referer: "https://www.bilibili.com/");
+                    if (downloaded is not null) thumb = downloaded;
+                }
+            }
+            return (title, thumb);
+        }
+        catch (Exception) { return (null, existingThumb); }
+    }
+
+    static string? ExtractMetaContent(string html, string property)
+    {
+        var dq = $"\"{property}\"";
+        var sq = $"'{property}'";
+        foreach (Match m in MetaTagRegex().Matches(html))
+        {
+            var tag = m.Value;
+            if (!tag.Contains(dq, StringComparison.OrdinalIgnoreCase) && !tag.Contains(sq, StringComparison.OrdinalIgnoreCase)) continue;
+            var cm = MetaContentRegex().Match(tag);
+            if (!cm.Success) continue;
+            var val = System.Net.WebUtility.HtmlDecode(cm.Groups[1].Value).Trim();
+            if (!string.IsNullOrEmpty(val)) return val;
+        }
+        return null;
+    }
+
+    static async Task<string?> DownloadPreviewImageAsync(string imgUrl, string fileName, string? referer = null)
+    {
+        try
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "nekodrop-previews");
+            Directory.CreateDirectory(dir);
+            var target = Path.Combine(dir, fileName);
+            if (File.Exists(target) && new FileInfo(target).Length > 1000) return target;
+            using var req = new HttpRequestMessage(HttpMethod.Get, imgUrl);
+            if (!string.IsNullOrEmpty(referer)) req.Headers.Referrer = new Uri(referer);
+            using var res = await ThumbHttp.SendAsync(req);
             if (!res.IsSuccessStatusCode) return null;
             var bytes = await res.Content.ReadAsByteArrayAsync();
-            if (bytes.Length < 1000 || bytes.Length > 2 * 1024 * 1024 || bytes[0] != 0xFF || bytes[1] != 0xD8) return null;
+            if (bytes.Length < 1000 || bytes.Length > 2 * 1024 * 1024) return null;
+            var isJpg = bytes[0] == 0xFF && bytes[1] == 0xD8;
+            var isPng = bytes[0] == 0x89 && bytes[1] == 0x50;
+            if (!isJpg && !isPng) return null;
             var tmp = target + ".tmp";
             await File.WriteAllBytesAsync(tmp, bytes);
             File.Move(tmp, target, overwrite: true);
@@ -339,4 +516,16 @@ public static partial class MediaHelper
 
     [GeneratedRegex(@"^[A-Za-z0-9_-]{11}$")]
     private static partial Regex YoutubeIdRegex();
+
+    [GeneratedRegex(@"BV[0-9A-Za-z]{10}")]
+    private static partial Regex BvidRegex();
+
+    [GeneratedRegex(@"<meta\b[^>]*>", RegexOptions.IgnoreCase)]
+    private static partial Regex MetaTagRegex();
+
+    [GeneratedRegex(@"\bcontent\s*=\s*[""']([^""']+)[""']", RegexOptions.IgnoreCase)]
+    private static partial Regex MetaContentRegex();
+
+    [GeneratedRegex(@"<title[^>]*>(.*?)</title>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex HtmlTitleRegex();
 }
