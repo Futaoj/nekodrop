@@ -289,6 +289,14 @@
                   <TextBlock Text="{local:T set.fastUnlock.short}" Style="{StaticResource Sub12}" Margin="0,2,0,0"/>
                 </StackPanel>
               </DockPanel>
+              <Border Style="{StaticResource Rule}" Margin="0,12"/>
+              <DockPanel>
+                <CheckBox x:Name="HighThroughputBox" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Margin="12,0,0,0"/>
+                <StackPanel>
+                  <TextBlock Text="{local:T set.highThroughput}" FontSize="13" FontWeight="Medium" TextWrapping="Wrap"/>
+                  <TextBlock Text="{local:T set.highThroughput.short}" Style="{StaticResource Sub12}" Margin="0,2,0,0"/>
+                </StackPanel>
+              </DockPanel>
             </StackPanel>
           </Border>
           <Border Style="{StaticResource CardPad}">

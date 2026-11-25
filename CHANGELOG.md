@@ -1,8 +1,32 @@
 # Changelog / 更新日志
 
 > Release channels / 发布通道：
-> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.2.7`**（首个稳定基线为 `v0.1.22`）。
+> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.2.8`**（首个稳定基线为 `v0.1.22`）。
 > - **Hourly（每时预览版 / Pre-release）**：持续迭代的预览版（客户端默认也会收到；取消勾选「包括预览版」就只收稳定版）；GitHub Releases 仅滚动保留最新 4 个每时版 + 稳定版（最多 5 个 Release），历史 Git Tag 全部保留。
+
+---
+
+## v2.2.8 (Stable / 稳定版) — 2026-11-25
+
+### 中文
+
+- **MediaTek MT7922 / RZ616 信道切换超时修复、HE80 2SS LWTBL 与扫描优化（[#65](https://github.com/zheznanohana/nekodrop/pull/65)，感谢 `@YiHoooong`）**：
+  - 将 `mtkradio` 运行时信道切换超时 `move_timeout_ms` 从 `60 ms` 提升至 `500 ms`（适配 MT7922 5 GHz 125–453 ms 切道耗时），并在 `CHANNEL_SWITCH` 失败路径下始终恢复 `MT_WF_RFCR_BAND0` 接收过滤器，避免 AWDL 永久失聪（`0 awdl`）；
+  - 为 MT7922 启用 Wi-Fi 6（HE80 2SS）BSS 与对端 LWTBL（`STA_REC_PHY` / `STA_REC_HE` / `STA_REC_HE_V2` / `STA_REC_RA` / `STA_REC_STATE`），并在 HW TX BA 数据帧上放开固件速率自适应（RA）；
+  - 并发扫描切道改用 `CH_SWITCH_SCAN_BYPASS_DPD` 跳过冗余 DPD 校准以降低扫描耗时，并同步下发带 `FIF_BCN_PRBRESP_PROMISC` 的 `MCU_CE_CMD_SET_RX_FILTER` 修复扫描期间漏收信标/探测响应的问题。
+- **实验性功能：高吞吐模式（Wi-Fi 6 HE80 + MTU 1500）（参考 [`YiHoooong/owly`](https://github.com/YiHoooong/owly/tree/feat/windows-mtkradio)）**：
+  - 在「设置 → 高级 → 实验性」新增 **高吞吐模式（Wi-Fi 6 HE80 + MTU 1500）** 开关（默认关闭）；
+  - 开启后 `awdld` 在 5 GHz 80 MHz 下通过 AWDL Data Path State TLV 12 广播 Wi-Fi 6（HE80）能力（`-H`），并将 `awdl0` Wintun MTU 从 `1450` 提升至 `1500`（`-M 1500`），配合 `awdld` 已有 TCP GRO 合并与 MT7922 / Intel AX 网卡进一步提升双向吞吐。
+
+### English
+
+- **MediaTek MT7922 / RZ616 channel-switch timeout fix, HE80 2SS LWTBL & scan improvements ([#65](https://github.com/zheznanohana/nekodrop/pull/65), thanks `@YiHoooong`):**
+  - Raised `mtkradio` `move_timeout_ms` from `60 ms` to `500 ms` for real MT7922 5 GHz switch times (125–453 ms) and always calls `restore_rx_filter()` on `CHANNEL_SWITCH` failure so `MT_WF_RFCR_BAND0` never stays permanently deaf;
+  - Enabled Connac2 Wi-Fi 6 (HE80 2SS) BSS and peer LWTBL (`STA_REC_PHY`, `STA_REC_HE`, `STA_REC_HE_V2`, `STA_REC_RA`, `STA_REC_STATE`) with firmware Rate Adaptation on HW TX BA frames;
+  - Uses `CH_SWITCH_SCAN_BYPASS_DPD` during off-channel scan dwells to cut scan latency, and sends `MCU_CE_CMD_SET_RX_FILTER` synchronously with `MT7921_FILTER_BCN_PRBRESP` before `restore_rx_filter()`.
+- **Experimental: High-throughput mode (Wi-Fi 6 HE80 + MTU 1500) (inspired by [`YiHoooong/owly`](https://github.com/YiHoooong/owly/tree/feat/windows-mtkradio)):**
+  - Added an opt-in **High-throughput mode (Wi-Fi 6 HE80 + MTU 1500)** toggle under Settings → Experimental (off by default);
+  - Passes `-H -M 1500` to `awdld`, advertising Apple AWDL Wi-Fi 6 (HE80) in Data Path State TLV 12 on 5 GHz 80 MHz and raising `awdl0` Wintun MTU from `1450` to `1500`.
 
 ---
 

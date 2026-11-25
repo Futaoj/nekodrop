@@ -99,7 +99,7 @@ public:
 
   /* Starts raw 802.11 monitor/AWDL reception and hardware ACK for `address`. */
   bool start_monitor(uint8_t channel, unsigned width_mhz, const uint8_t address[6]);
-  bool set_channel(uint8_t channel, unsigned width_mhz);
+  bool set_channel(uint8_t channel, unsigned width_mhz, uint8_t switch_reason = CH_SWITCH_NORMAL);
   bool set_address(const uint8_t address[6]);
 
   /* Second own address (own MAC 1, BSS 1) for the concurrent Wi-Fi station. */
@@ -193,7 +193,8 @@ private:
   /* MAC / Channel / RX parsing / Hardware RX Block Ack */
   bool mac_init(std::string &error);
   bool mcu_set_eeprom();
-  bool mcu_set_chan_cmd(uint8_t ext_cid, uint8_t ch, unsigned width_mhz);
+  bool mcu_set_chan_cmd(uint8_t ext_cid, uint8_t ch, unsigned width_mhz,
+                        uint8_t switch_reason = CH_SWITCH_NORMAL);
   bool add_omac(uint8_t omac, const uint8_t addr[6], const uint8_t bssid[6], bool enable);
   void set_timing();
   void restore_rx_filter();

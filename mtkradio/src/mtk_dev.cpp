@@ -1523,7 +1523,8 @@ void MtkDevice::restore_rx_filter() {
   wr(MT_WF_RFCR_BAND0, rfcr);
 }
 
-bool MtkDevice::mcu_set_chan_cmd(uint8_t ext_cid, uint8_t ch, unsigned width_mhz) {
+bool MtkDevice::mcu_set_chan_cmd(uint8_t ext_cid, uint8_t ch, unsigned width_mhz,
+                                 uint8_t switch_reason) {
 #pragma pack(push, 1)
   struct {
     uint8_t control_ch;
@@ -1551,7 +1552,7 @@ bool MtkDevice::mcu_set_chan_cmd(uint8_t ext_cid, uint8_t ch, unsigned width_mhz
   req.bw = (width_mhz == 80) ? CMD_CBW_80MHZ : (width_mhz == 40 ? CMD_CBW_40MHZ : CMD_CBW_20MHZ);
   req.tx_streams_num = 2; /* MT7922 is 2x2 */
   req.rx_streams = (ext_cid == MCU_EXT_CMD_CHANNEL_SWITCH) ? 2 : 0x3; /* num vs antenna mask */
-  req.switch_reason = CH_SWITCH_NORMAL;
+  req.switch_reason = switch_reason;
   req.band_idx = 0;
   req.channel_band = (ch <= 14) ? 0 : 1; /* 0 = 2.4 GHz, 1 = 5 GHz */
 
@@ -1560,19 +1561,20 @@ bool MtkDevice::mcu_set_chan_cmd(uint8_t ext_cid, uint8_t ch, unsigned width_mhz
   return mcu_send(MCU_CMD_EXT_CID, ext_cid, MCU_Q_SET, &req, sizeof(req), true, nullptr, timeout);
 }
 
-bool MtkDevice::set_channel(uint8_t channel, unsigned width_mhz) {
+bool MtkDevice::set_channel(uint8_t channel, unsigned width_mhz, uint8_t switch_reason) {
   if (channel <= 14) width_mhz = 20;
   const bool band_changed = !_rx_path_set || ((channel <= 14) != (_channel <= 14));
   if (band_changed) {
-    if (!mcu_set_chan_cmd(MCU_EXT_CMD_SET_RX_PATH, channel, width_mhz)) return false;
+    if (!mcu_set_chan_cmd(MCU_EXT_CMD_SET_RX_PATH, channel, width_mhz, switch_reason)) return false;
   }
-  if (!mcu_set_chan_cmd(MCU_EXT_CMD_CHANNEL_SWITCH, channel, width_mhz)) {
+  if (!mcu_set_chan_cmd(MCU_EXT_CMD_CHANNEL_SWITCH, channel, width_mhz, switch_reason)) {
     restore_rx_filter();
     return false;
   }
 
   if (!_rx_path_set) {
-    /* Configure RX filter once via MCU so firmware allows frames from other BSSes. */
+    /* Configure RX filter synchronously via MCU so firmware allows beacons/probe responses
+     * and frames from other BSSes without racing against restore_rx_filter() (#54, #65). */
 #pragma pack(push, 1)
     struct {
       uint8_t rsv[4];
@@ -1585,9 +1587,9 @@ bool MtkDevice::set_channel(uint8_t channel, unsigned width_mhz) {
     } rxfilter_req{};
 #pragma pack(pop)
     rxfilter_req.mode = 1;
-    rxfilter_req.fif = MT7921_FILTER_ENABLE | MT7921_FILTER_OTHER_BSS;
+    rxfilter_req.fif = MT7921_FILTER_ENABLE | MT7921_FILTER_OTHER_BSS | MT7921_FILTER_BCN_PRBRESP;
     (void)mcu_send(MCU_CE_CMD_SET_RX_FILTER, 0, MCU_Q_SET, &rxfilter_req, sizeof(rxfilter_req),
-                   false);
+                   true, nullptr, 500);
     _rx_path_set = true;
   }
   /* Also clear DROP_OTHER_BEACON / DROP_OTHER_UC / DROP_OTHER_BSS directly in RFCR. */

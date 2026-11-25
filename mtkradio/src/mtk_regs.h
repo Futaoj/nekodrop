@@ -469,6 +469,7 @@ constexpr uint8_t MCU_EXT_CMD_SET_RX_PATH = 0x4e;
 constexpr uint8_t MCU_CE_CMD_SET_RX_FILTER = 0x0a;
 constexpr uint8_t MCU_CE_CMD_SET_CHAN_DOMAIN = 0x0f;
 constexpr uint8_t MCU_CE_CMD_SET_EDCA_PARMS = 0x1d;
+constexpr uint32_t MT7921_FILTER_BCN_PRBRESP = bit(1);
 constexpr uint32_t MT7921_FILTER_FCSFAIL = bit(2);
 constexpr uint32_t MT7921_FILTER_CONTROL = bit(5);
 constexpr uint32_t MT7921_FILTER_OTHER_BSS = bit(6);
@@ -515,6 +516,7 @@ constexpr uint8_t CMD_CBW_20MHZ = 0;
 constexpr uint8_t CMD_CBW_40MHZ = 1;
 constexpr uint8_t CMD_CBW_80MHZ = 2;
 constexpr uint8_t CH_SWITCH_NORMAL = 0;
+constexpr uint8_t CH_SWITCH_SCAN_BYPASS_DPD = 9;
 
 /* UNI DEV/BSS/STA TLV tags */
 constexpr uint16_t DEV_INFO_ACTIVE = 0;

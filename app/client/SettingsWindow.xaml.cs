@@ -55,6 +55,7 @@ public partial class SettingsWindow : Window
         ModeOff.IsChecked = mode == "off";
         FastUnlockBox.IsChecked = (bool?)A.Service.Last?["fastUnlock"] ?? false;
         CoexPlanBox.IsChecked = (bool?)A.Service.Last?["coexPlan"] ?? false;
+        HighThroughputBox.IsChecked = (bool?)A.Service.Last?["highThroughput"] ?? false;
         CheckUpdatesBox.IsChecked = s.CheckUpdates;
         PreviewUpdatesBox.IsChecked = s.PreviewUpdates;
         DeleteInstallerBox.IsChecked = s.DeleteInstallerAfterInstall;
@@ -349,6 +350,8 @@ public partial class SettingsWindow : Window
         if (fastUnlock != ((bool?)A.Service.Last?["fastUnlock"] ?? false)) A.Service.SetFastUnlock(fastUnlock);
         var coexPlan = CoexPlanBox.IsChecked == true;
         if (coexPlan != ((bool?)A.Service.Last?["coexPlan"] ?? false)) A.Service.SetCoexPlan(coexPlan);
+        var highThroughput = HighThroughputBox.IsChecked == true;
+        if (highThroughput != ((bool?)A.Service.Last?["highThroughput"] ?? false)) A.Service.SetHighThroughput(highThroughput);
         A.Window?.FolderChanged();
         var hotkeyTaken = hotkeyChanged && !A.ApplyHotkey();
         if (receiveChanged || mediaChanged) A.RestartEngine();

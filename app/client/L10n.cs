@@ -260,6 +260,8 @@ public static class L
         ["set.card"] = ("无线网卡", "Wi-Fi card"),
         ["set.card.detectedBadge"] = ("已自动识别", "Detected"),
         ["set.coexPlan.short"] = ("nekodrop 连的 Wi-Fi 和 AirDrop 不在同一信道时，按苹果的方式分时。", "Apple-style time sharing when nekodrop's Wi-Fi is on another channel than AirDrop."),
+        ["set.highThroughput"] = ("高吞吐模式（Wi-Fi 6 HE80 + MTU 1500）", "High-throughput mode (Wi-Fi 6 HE80 + MTU 1500)"),
+        ["set.highThroughput.short"] = ("在 5 GHz 80 MHz 下广播 AWDL Wi-Fi 6 (HE80) 能力并将 awdl0 MTU 提至 1500（适合 MT7922 / AX200+；如出现断流请关闭）。", "Advertise AWDL Wi-Fi 6 (HE80) on 5 GHz 80 MHz and raise awdl0 MTU to 1500 (for MT7922 / AX200+; turn off if transfers stall)."),
         ["set.fastUnlock.short"] = ("网卡不接受国家码时更早扫描，尽快解锁 5 GHz 信道。", "Scans sooner, so a card that refuses the country can use 5 GHz earlier."),
         ["set.diagnostics"] = ("日志与故障排查", "Logs and troubleshooting"),
         ["set.checkNow"] = ("立即检查更新", "Check now"),

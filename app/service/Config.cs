@@ -42,6 +42,12 @@ public sealed class ServiceConfig
     /// </summary>
     public bool CoexPlan { get; set; }
     /// <summary>
+    /// Experimental high-throughput mode (awdld -H -M 1500, inspired by YiHoooong/owly #65):
+    /// advertises Wi-Fi 6 HE80 in AWDL Data Path State TLV 12 on 5 GHz 80 MHz and raises
+    /// awdl0 MTU from 1450 to 1500. Off by default.
+    /// </summary>
+    public bool HighThroughput { get; set; }
+    /// <summary>
     /// The user's manual choice when the card is not recognized by its ID
     /// (Settings, "Wi-Fi card"): its PCI hardware ID ("PCI\VEN_xxxx&amp;DEV_yyyy")
     /// and a CardCatalog.ManualModels key; both "" for automatic.

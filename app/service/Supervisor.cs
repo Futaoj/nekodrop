@@ -89,6 +89,7 @@ public sealed class Supervisor : IDisposable
                 ["country"] = _cfg.Country,
                 ["fastUnlock"] = _cfg.FastUnlock,
                 ["coexPlan"] = _cfg.CoexPlan,
+                ["highThroughput"] = _cfg.HighThroughput,
                 ["card"] = _cardLabel,
                 ["manualCard"] = _cfg.ManualCard,
                 ["manualModel"] = _cfg.ManualModel,
@@ -246,6 +247,21 @@ public sealed class Supervisor : IDisposable
             _cfg.Save();
         }
         Say($"experimental coexistence plan: {(on ? "on" : "off")}");
+        if (State is RadioState.On or RadioState.Starting)
+            _ = Task.Run(() => Relaunch(_channel == 0 ? _cfg.StartChannel : _channel));
+        Publish();
+    }
+
+    /// <summary>Experimental high-throughput mode (AWDL HE80 TLV 12 + MTU 1500, #65); a running daemon restarts to take it.</summary>
+    public void SetHighThroughput(bool on)
+    {
+        lock (_lock)
+        {
+            if (_cfg.HighThroughput == on) return;
+            _cfg.HighThroughput = on;
+            _cfg.Save();
+        }
+        Say($"experimental high-throughput mode (HE80 + MTU 1500): {(on ? "on" : "off")}");
         if (State is RadioState.On or RadioState.Starting)
             _ = Task.Run(() => Relaunch(_channel == 0 ? _cfg.StartChannel : _channel));
         Publish();
@@ -436,7 +452,10 @@ public sealed class Supervisor : IDisposable
             // awdld connects to the radio's pipe; give the firmware time to boot.
             for (int i = 0; i < 100 && State == RadioState.Starting && _radio is { HasExited: false }; i++) Thread.Sleep(100);
             if (_radio is null || _radio.HasExited) throw new InvalidOperationException("the radio exited during bring-up: " + _detail);
-            _awdld = Spawn(Path.Combine(_root, "awdl", "awdld.exe"), ["-c", channel.ToString()], OnAwdldLine);
+            string[] awdlArgs = _cfg.HighThroughput
+                ? ["-c", channel.ToString(), "-H", "-M", "1500"]
+                : ["-c", channel.ToString()];
+            _awdld = Spawn(Path.Combine(_root, "awdl", "awdld.exe"), awdlArgs, OnAwdldLine);
         }
         catch (Exception e)
         {

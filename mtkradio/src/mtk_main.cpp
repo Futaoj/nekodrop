@@ -681,7 +681,7 @@ int main(int argc, char **argv) {
     scan.visits++;
     const uint8_t ch = scan.channels[scan.next++];
     dev.kick_tx();
-    if (!dev.set_channel(ch, 20)) {
+    if (!dev.set_channel(ch, 20, mtk::CH_SWITCH_SCAN_BYPASS_DPD)) {
       log_fmt("scan: could not tune to channel %u; skipping dwell", ch);
       return true;
     }
