@@ -28,7 +28,12 @@ public partial class SettingsWindow : Window
         NameBox.Text = s.DeviceName;
         _folder = s.SaveFolder;
         FolderText.Text = _folder;
-        AskBox.IsChecked = s.Ask;
+        (s.AutoAcceptMode switch
+        {
+            "everyone" => AutoAcceptEveryone,
+            "contacts" => AutoAcceptContacts,
+            _ => AutoAcceptOff,
+        }).IsChecked = true;
         (s.MediaFormat == "original" ? MediaOriginal : MediaCompatible).IsChecked = true;
         AutoConvertHeicBox.IsChecked = s.AutoConvertHeic;
         StartupBox.IsChecked = s.StartWithWindows;
@@ -293,7 +298,8 @@ public partial class SettingsWindow : Window
         var name = NameBox.Text.Trim();
         if (name.Length > 0) s.DeviceName = name;
         s.SaveFolder = _folder;
-        s.Ask = AskBox.IsChecked == true;
+        s.AutoAcceptMode = AutoAcceptEveryone.IsChecked == true ? "everyone" : AutoAcceptContacts.IsChecked == true ? "contacts" : "off";
+        s.Ask = s.AutoAcceptMode != "everyone";
         var mediaFormat = MediaOriginal.IsChecked == true ? "original" : "compatible";
         var mediaChanged = mediaFormat != s.MediaFormat;
         s.MediaFormat = mediaFormat;

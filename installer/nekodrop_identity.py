@@ -139,12 +139,9 @@ def contacts():
             if len(line.strip()) == 64}
 
 
-def allowed(sender_record):
-    """Whether the receiver answers this sender: always for Everyone; for Contacts Only,
-    the owner's own devices and the owner's contacts."""
-    if not CONTACTS_ONLY or not present():
-        return True
-    if not sender_record:
+def is_contact(sender_record):
+    """Whether sender_record belongs to the owner's own Apple ID or contacts."""
+    if not present() or not sender_record:
         return False
     own = alt_dsid(record())
     if own and alt_dsid(sender_record) == own:
@@ -152,6 +149,14 @@ def allowed(sender_record):
     emails, phones = record_hashes(sender_record)
     known = contacts()
     return any(h in known for h in emails + phones)
+
+
+def allowed(sender_record):
+    """Whether the receiver answers this sender: always for Everyone; for Contacts Only,
+    the owner's own devices and the owner's contacts."""
+    if not CONTACTS_ONLY or not present():
+        return True
+    return is_contact(sender_record)
 
 
 def receiver_extra():

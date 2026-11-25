@@ -45,12 +45,13 @@ class LinkExtractionTests(unittest.TestCase):
         }
         self.assertEqual(transfer.extract_web_links(ask), [])
 
-    def test_ignores_items_when_files_present_without_links_type(self):
+    def test_extracts_url_from_mixed_files_and_items(self):
         ask = {
-            'Files': [{'FileName': 'photo.jpg'}],
-            'Items': ['https://example.org/ignored'],
+            'TransferType': {'files': True},
+            'Files': [{'FileName': 'cover.jpeg'}],
+            'Items': ['【视频标题】 https://b23.tv/mixed123'],
         }
-        self.assertEqual(transfer.extract_web_links(ask), [])
+        self.assertEqual(transfer.extract_web_links(ask), ['https://b23.tv/mixed123'])
 
 
 class MediaCapabilitiesTests(unittest.TestCase):

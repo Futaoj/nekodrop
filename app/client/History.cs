@@ -144,6 +144,16 @@ public static partial class TransferHistory
                     return IsWebUrl(url) ? url : "";
                 }
             }
+            else if (ext == ".txt" && new FileInfo(path).Length <= 4096)
+            {
+                var text = File.ReadAllText(path);
+                var m = PlainTextUrlRegex().Match(text);
+                if (m.Success)
+                {
+                    var url = m.Value.TrimEnd('.', ',', ';', ':', '!', '?', ')', ']', '}', '）', '】', '》', '。', '，', '；', '：', '！', '？');
+                    return IsWebUrl(url) ? url : "";
+                }
+            }
         }
         catch (Exception) { }
         return "";
@@ -164,4 +174,7 @@ public static partial class TransferHistory
 
     [GeneratedRegex(@"<string>\s*(https?://[^<\s]+)\s*</string>", RegexOptions.IgnoreCase)]
     private static partial Regex WeblocUrlRegex();
+
+    [GeneratedRegex(@"https?://[^\s<>""'\x00-\x1f\x7f]+", RegexOptions.IgnoreCase)]
+    private static partial Regex PlainTextUrlRegex();
 }

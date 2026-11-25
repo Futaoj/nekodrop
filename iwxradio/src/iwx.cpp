@@ -32,12 +32,13 @@ constexpr unsigned kTxQueueSizeAx210 = 128;
 constexpr unsigned kTxPayloadSlot = 4096;
 /* Every PNVM section shipped is at most 14 KiB (4 pages). */
 constexpr size_t kPnvmPagesMax = 4;
-/* More pages are locked, a batch at a time, until the buffers fit; never
- * more than half the memory Windows has free. */
-constexpr int kDmaGrowRounds = 7;
+/* More pages are locked, a batch at a time, until the buffers fit; always
+ * leaves at least 1 GiB (or 25% of pre-lock free RAM) for Windows. */
+constexpr int kDmaGrowRounds = 12;
 /* Pages locked while carving: enough that runs of 8 adjacent frames turn up
  * for the firmware's 32 KiB sections; the rest are returned once carved. */
 constexpr size_t kDmaScanPages = 262144; /* 1 GiB, locked for well under a second */
+constexpr size_t kDmaMinGrowPages = 16384; /* 64 MiB minimum partial grow step */
 constexpr size_t kDmaMinPages = 8192;
 
 const uint8_t kNvmChannels[] = {
@@ -319,17 +320,24 @@ bool IwxDevice::alloc_rings(std::string &error) {
          " multi-page buffers");
   };
   report("locked");
-  /* A long-running PC's free memory can be so scattered that 1 GiB holds few
-   * runs of adjacent frames (issue #11: at most 15 pages). Lock more. */
+  /* A long-running PC's free memory (especially with Hyper-V/WSL/VMware, #30)
+   * can be so scattered that 1-2 GiB holds few runs of adjacent frames. Lock
+   * more while always keeping max(1 GiB, 25% of pre-lock free RAM) for Windows;
+   * trim() returns ~99.5% of these pages within a second. */
   for (int round = 0; round < kDmaGrowRounds && !_dma.fits(need); round++) {
     const uint64_t locked = uint64_t(_dma.pages_locked()) * DmaPool::kPageBytes;
-    const uint64_t batch = uint64_t(kDmaScanPages) * DmaPool::kPageBytes;
-    if (locked + batch > DmaPool::available_bytes() / 2) {
-      _log("DMA: not locking more; Windows has " + std::to_string(DmaPool::available_bytes() >> 20) + " MiB free");
+    const uint64_t avail = DmaPool::available_bytes();
+    const uint64_t pre_lock_free = locked + avail;
+    const uint64_t reserve_for_os = std::max<uint64_t>(1024ULL << 20, pre_lock_free / 4);
+    const uint64_t headroom = avail > reserve_for_os ? avail - reserve_for_os : 0;
+    const size_t step_pages = static_cast<size_t>(
+        std::min<uint64_t>(kDmaScanPages, headroom / DmaPool::kPageBytes));
+    if (step_pages < kDmaMinGrowPages) {
+      _log("DMA: not locking more; Windows has " + std::to_string(avail >> 20) + " MiB free");
       break;
     }
     std::string why;
-    if (!_dma.grow(kDmaScanPages, why)) {
+    if (!_dma.grow(step_pages, why)) {
       _log("DMA: " + why);
       break;
     }

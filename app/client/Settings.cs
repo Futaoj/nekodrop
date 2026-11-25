@@ -10,8 +10,10 @@ public sealed class Settings
     public string DeviceName { get; set; } = Environment.MachineName;
     public string SaveFolder { get; set; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "nekodrop");
-    /// <summary>Ask before storing what someone sends (an AirDrop receiver's default).</summary>
+    /// <summary>Ask before storing what someone sends (false when AutoAcceptMode == "everyone").</summary>
     public bool Ask { get; set; } = true;
+    /// <summary>Auto-accept incoming transfers: "off" (ask), "contacts" (Apple ID contacts / own devices), or "everyone".</summary>
+    public string AutoAcceptMode { get; set; } = "off";
     /// <summary>Media format negotiated with senders: "compatible" (JPEG/H.264) or "original" (HEIC/HEVC).</summary>
     public string MediaFormat { get; set; } = "compatible";
     /// <summary>When a .heic/.heif photo (e.g. Live Photo or original format) arrives, save a sibling .jpg copy.</summary>
@@ -62,7 +64,13 @@ public sealed class Settings
         try
         {
             if (File.Exists(FilePath))
-                return JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath), Options) ?? new();
+            {
+                var loaded = JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath), Options) ?? new();
+                // Migrate legacy Ask == false to AutoAcceptMode == "everyone".
+                if (!loaded.Ask && loaded.AutoAcceptMode == "off") loaded.AutoAcceptMode = "everyone";
+                loaded.Ask = loaded.AutoAcceptMode != "everyone";
+                return loaded;
+            }
         }
         catch (Exception) { }
         return new();

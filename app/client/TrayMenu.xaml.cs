@@ -20,6 +20,7 @@ public partial class TrayMenu : Window
     {
         InitializeComponent();
         AllowItem.Tag = A.Model.Allow ? "" : "";
+        AutoAcceptItem.Tag = A.Settings.AutoAcceptMode != "off" ? "" : "";
         Deactivated += (_, _) => Shut();
     }
 
@@ -88,6 +89,7 @@ public partial class TrayMenu : Window
 
     void Open_Click(object sender, RoutedEventArgs e) { Shut(); A.ShowWindow(); }
     void Allow_Click(object sender, RoutedEventArgs e) { Shut(); A.SetDiscoverable(!A.Model.Allow); }
+    void AutoAccept_Click(object sender, RoutedEventArgs e) { Shut(); A.SetAutoAccept(A.Settings.AutoAcceptMode == "off" ? "everyone" : "off"); }
     void Wifi_Click(object sender, RoutedEventArgs e) { Shut(); A.ShowWifi(); }
     void Settings_Click(object sender, RoutedEventArgs e) { Shut(); A.ShowSettings("general"); }
     void Report_Click(object sender, RoutedEventArgs e) { Shut(); App.RunReport(); }

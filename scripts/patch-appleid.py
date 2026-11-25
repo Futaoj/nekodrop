@@ -235,18 +235,33 @@ pub fn client_info() -> &'static str {
     }
 }'''
     new = '''async fn validate_code(session: &Session, anisette: &mut Anisette, code: &str) -> Result<(), String> {
-    // nekodrop: retry transient 502/503/504 from /validate (#42).
+    // nekodrop: retry transient 502/503/504 from /validate and fall back to
+    // /auth/verify/trusteddevice/securitycode when GrandSlam /validate returns 503 (#42).
+    let trimmed = code.trim();
     for (attempt, wait) in [5u64, 10, 15, 0].into_iter().enumerate() {
         let headers = code_headers(session, anisette)?;
         let res = request(reqwest::Method::GET, &format!("{SERVICE}/validate"), &headers)
             .header("Content-Type", "text/x-xml-plist")
             .header("Accept", "text/x-xml-plist")
-            .header("security-code", code.trim())
+            .header("security-code", trimmed)
             .send()
             .await
             .map_err(|e| e.to_string())?;
         let status = res.status();
         if matches!(status.as_u16(), 502 | 503 | 504) {
+            if let Ok(fb_headers) = code_headers(session, anisette) {
+                let body = serde_json::json!({ "securityCode": { "code": trimmed } });
+                if let Ok(fb) = request(reqwest::Method::POST, &format!("{AUTH}/verify/trusteddevice/securitycode"), &fb_headers)
+                    .header("Accept", "application/json")
+                    .json(&body)
+                    .send()
+                    .await
+                    && fb.status().is_success()
+                {
+                    say!("verification code accepted via fallback endpoint");
+                    return Ok(());
+                }
+            }
             if wait == 0 {
                 return Err(format!("Apple's verification server is still unavailable (HTTP {status})"));
             }
@@ -266,8 +281,29 @@ pub fn client_info() -> &'static str {
         sys.exit('gsa.rs: validate_code moved; update patch-appleid.py')
     text = text.replace(old, new, 1)
 
+    old_first = '    let (session, next) = password_round(account, password, anisette).await?;'
+    new_first = '''    // nekodrop: retry transient 503/unreachable on the initial password_round too (#42).
+    let (session, next) = {
+        let mut round_tries = 0u32;
+        loop {
+            match password_round(account, password, anisette).await {
+                Ok(pair) => break pair,
+                Err(e @ (Fault::Busy(_) | Fault::Unreachable(_))) if round_tries < 3 => {
+                    round_tries += 1;
+                    let wait = 10 + (round_tries as u64 - 1) * 5;
+                    say!("Apple's sign-in server is busy ({}); retrying in {wait} s ({round_tries}/3)", e.brief());
+                    tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+    };'''
+    if text.count(old_first) != 1:
+        sys.exit('gsa.rs: first password_round moved; update patch-appleid.py')
+    text = text.replace(old_first, new_first, 1)
+
     path.write_text(text, encoding='utf-8')
-    print('appleid: gsa.rs runtime-switchable client_info() and 503 retry in validate_code')
+    print('appleid: gsa.rs runtime-switchable client_info(), 503 retries and 2FA fallback')
 
 path = pathlib.Path(sys.argv[1]) / 'crates' / 'appleid' / 'src' / 'anisette.rs'
 text = path.read_text(encoding='utf-8')

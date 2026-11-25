@@ -25,9 +25,11 @@ HELPER = NL.join([
     '        try:',
     '            return receiver.Receiver(port, settings, watcher)',
     '        except OSError as error:',
-    '            if error.errno != errno.EADDRINUSE or port == ports[-1]:',
+    "            blocked = (error.errno in (errno.EADDRINUSE, errno.EACCES)",
+    "                       or getattr(error, 'winerror', None) in (10013, 10048))",
+    '            if not blocked or port == ports[-1]:',
     '                raise',
-    "            logging.warning('port %d held, trying the next', port)",
+    "            logging.warning('port %d unavailable (%s), trying the next', port, error)",
     '',
     '',
     '',
@@ -589,9 +591,7 @@ if 'def extract_web_links(ask):' not in text:
         '    """Return safe http(s) URLs carried in an Ask\'s Items (plain URLs, share',
         '    strings such as Bilibili shares containing a URL, or dict values)."""',
         "    items = ask.get('Items') or []",
-        "    kinds = ask.get('TransferType') or {}",
-        "    files = ask.get('Files') or []",
-        "    if 'links' not in kinds and (files or not items):",
+        '    if not items:',
         '        return []',
         '    found = []',
         '    for item in items:',
@@ -657,6 +657,8 @@ if 'def _media_capabilities():' not in text:
                 '            watcher.stored(self.accepted, links)',
             ]),
             NL.join([
+                '        if items:',
+                "            logging.info('ask extras: keys=%s items=%d', sorted(ask.keys()), len(items))",
                 '        extracted = transfer.extract_web_links(ask)',
                 "        if 'links' in kinds or extracted:",
                 '            links = []',
@@ -680,8 +682,9 @@ if 'def _media_capabilities():' not in text:
 
 engine_path = pathlib.Path(sys.argv[1]) / 'engine.py'
 text = engine_path.read_text(encoding='utf-8')
-if 'urls=urls' not in text:
+if 'contact=contact' not in text:
     pairs = [
+        (NL + 'import mdns' + NL, NL + 'import mdns' + NL + 'import nekodrop_identity' + NL),
         (
             NL.join([
                 '    def _open(self, sender_name, model, files, links, waits):',
@@ -705,7 +708,7 @@ if 'urls=urls' not in text:
                 '                              announced_files(ask), links, waits)',
             ]),
             NL.join([
-                '    def _open(self, sender_name, model, files, links, waits, urls=None):',
+                '    def _open(self, sender_name, model, files, links, waits, urls=None, contact=False):',
                 '        with self._lock:',
                 '            key = next(self._keys)',
                 '            if waits:',
@@ -714,15 +717,16 @@ if 'urls=urls' not in text:
                 "        sizes = [file['size'] for file in files]",
                 '        total = sum(sizes) if sizes and None not in sizes else None',
                 "        self.events.say('asked', id=key, sender=sender_name, model=model, files=files,",
-                '                        links=links, urls=urls or [], total=total, waits=waits)',
+                '                        links=links, urls=urls or [], contact=contact, total=total, waits=waits)',
                 '        return Accepted(key, total)',
                 '',
                 '    def asked(self, ask, address, left):',
                 '        urls = transfer.extract_web_links(ask)',
                 '        links = len(urls)',
+                "        contact = nekodrop_identity.is_contact(ask.get('SenderRecordData'))",
                 '        waits = self.settings.ask',
                 "        accepted = self._open(ask.get('SenderComputerName'), ask.get('SenderModelName'),",
-                '                              announced_files(ask), links, waits, urls=urls)',
+                '                              announced_files(ask), links, waits, urls=urls, contact=contact)',
             ]),
         ),
     ]
@@ -731,4 +735,4 @@ if 'urls=urls' not in text:
             sys.exit(f'engine.py: {old[:60]!r} moved; update patch-engine.py')
         text = text.replace(old, new, 1)
     engine_path.write_text(text, encoding='utf-8')
-    print('engine.py: include extracted link URLs in asked events')
+    print('engine.py: include extracted link URLs and contact flag in asked events')

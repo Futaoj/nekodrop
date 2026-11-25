@@ -143,13 +143,19 @@
             </StackPanel>
           </Border>
           <Border Style="{StaticResource CardPad}">
-            <DockPanel>
-              <CheckBox x:Name="AskBox" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Margin="12,0,0,0"/>
-              <StackPanel>
-                <TextBlock Text="{local:T set.ask}" Style="{StaticResource T13S}"/>
-                <TextBlock Text="{local:T set.askHint}" Style="{StaticResource Sub12}" Margin="0,2,0,0"/>
-              </StackPanel>
-            </DockPanel>
+            <StackPanel>
+              <DockPanel>
+                <Border DockPanel.Dock="Right" Style="{StaticResource SegmentBox}" VerticalAlignment="Center" Margin="12,0,0,0">
+                  <StackPanel Orientation="Horizontal">
+                    <RadioButton x:Name="AutoAcceptOff" Style="{StaticResource Segment}" Content="{local:T set.autoAccept.off}" GroupName="autoaccept"/>
+                    <RadioButton x:Name="AutoAcceptContacts" Style="{StaticResource Segment}" Content="{local:T set.autoAccept.contacts}" GroupName="autoaccept"/>
+                    <RadioButton x:Name="AutoAcceptEveryone" Style="{StaticResource Segment}" Content="{local:T set.autoAccept.everyone}" GroupName="autoaccept"/>
+                  </StackPanel>
+                </Border>
+                <TextBlock Text="{local:T set.autoAccept}" Style="{StaticResource T13S}" VerticalAlignment="Center"/>
+              </DockPanel>
+              <TextBlock Text="{local:T set.autoAcceptHint}" Style="{StaticResource Sub12}" Margin="0,6,0,0"/>
+            </StackPanel>
           </Border>
           <Border Style="{StaticResource CardPad}">
             <StackPanel>

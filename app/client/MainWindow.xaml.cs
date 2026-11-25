@@ -85,11 +85,30 @@ public partial class MainWindow : Window
     void StatusPill_Checked(object sender, RoutedEventArgs e)
     {
         AllowToggle.IsChecked = A.Model.Allow;
+        UpdateAutoAcceptUi();
         ModeList.Children.Clear();
         foreach (var (key, text) in new[] { ("concurrent", L.T("mode.concurrent.short")), ("ondemand", L.T("mode.ondemand.short")), ("off", L.T("mode.off.short")) })
             ModeList.Children.Add(ModeChoice(key, text, A.Model.Mode == key));
         ChannelTip.Text = A.Model.Air == "ready" ? L.F("status.on", A.Model.Channel) : Status(A.Model.Air).Label;
         StatusPopup.IsOpen = true;
+    }
+
+    void UpdateAutoAcceptUi()
+    {
+        var m = A.Settings.AutoAcceptMode;
+        AutoAcceptToggle.IsChecked = m != "off";
+        AutoAcceptSub.Text = m switch
+        {
+            "everyone" => L.T("set.autoAccept.everyone"),
+            "contacts" => L.T("set.autoAccept.contacts"),
+            _ => L.T("set.autoAccept.off"),
+        };
+    }
+
+    void AutoAccept_Click(object sender, RoutedEventArgs e)
+    {
+        A.SetAutoAccept(AutoAcceptToggle.IsChecked == true ? "everyone" : "off");
+        UpdateAutoAcceptUi();
     }
 
     Button ModeChoice(string key, string text, bool chosen) =>

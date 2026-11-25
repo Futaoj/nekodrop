@@ -164,10 +164,11 @@ public static class Shell
         catch (Exception) { /* no Start menu identity yet (a development run) */ }
     }
 
-    /// <summary>"iPhone 想发送 2 张照片" with 接受 / 拒绝, answered through nekodrop:answer.</summary>
+    /// <summary>"iPhone 想发送 2 张照片" with 接受 / 总是接受 / 拒绝, answered through nekodrop:answer.</summary>
     public static void AskToast(string id, string sender, string what)
     {
         var accept = X($"nekodrop:answer?id={Uri.EscapeDataString(id)}&accept=1");
+        var always = X($"nekodrop:answer?id={Uri.EscapeDataString(id)}&accept=1&always=1");
         var decline = X($"nekodrop:answer?id={Uri.EscapeDataString(id)}&accept=0");
         Show($"""
             <toast scenario="reminder" launch="{X("nekodrop:open")}" activationType="protocol">
@@ -177,6 +178,7 @@ public static class Shell
               </binding></visual>
               <actions>
                 <action content="{X(L.T("accept"))}" arguments="{accept}" activationType="protocol"/>
+                <action content="{X(L.T("accept.always"))}" arguments="{always}" activationType="protocol"/>
                 <action content="{X(L.T("decline"))}" arguments="{decline}" activationType="protocol"/>
               </actions>
             </toast>

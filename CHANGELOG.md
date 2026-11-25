@@ -6,6 +6,36 @@
 
 ---
 
+## v2.2.1 (Preview / 预览版) — 2026-11-25
+
+### 中文
+
+- **自动同意接收（关闭 / 仅限联系人 / 全部）**：
+  - 设置 → 网络与接收新增 **自动同意接收** 三档切换：关闭（每次询问）、仅限联系人（对自己的设备和 Apple ID 通讯录免询问，由引擎校验联系人哈希）、全部（免询问直接接收所有文件与链接，并弹出带预览图/复制/打开按钮的完成通知）。
+  - 主面板状态胶囊下拉菜单和右键托盘菜单同步提供快捷 **自动同意接收** 开关；询问通知新增 **总是接受** 按钮。
+- **App 链接分享增强（B 站等）**：
+  - 扩展 `airdrop/transfer.py`、`receiver.py`、`engine.py` 与客户端 `.txt` 链接识别：当 App 同时附带封面图和链接（如 B 站分享）或发送含 URL 的纯文本 `.txt` 时，自动提取安全 `http(s)://` 链接并弹出 **打开链接 / 复制链接** 通知。
+- **Apple ID 登录 503 修复（[#42](https://github.com/zheznanohana/nekodrop/issues/42)）**：
+  - 扩展 `scripts/patch-appleid.py`：首轮密码认证遇到 HTTP 503 / 连接中断自动重试（最多 3 次）；二步验证 `/validate` 遇到 HTTP 502/503/504 时自动尝试 Apple AuthKit 备用验证端点 `/auth/verify/trusteddevice/securitycode` 并退避重试。
+- **AX211 / 高碎片内存环境（WSL / Hyper-V / VMware）启动与端口修复（[#30](https://github.com/zheznanohana/nekodrop/issues/30)）**：
+  - 修复 `iwxradio` DMA 扩容预算重复扣减已锁定内存导致空闲 3 GiB 以上仍提前停止扫描的问题，并支持 64 MiB 细粒度尾批扩容（始终为 Windows 保留至少 1 GiB 或 25% 可用内存，切分完立即 `trim()` 归还 99% 以上内存）。
+  - 修复 Windows Hyper-V / WSL 保留端口范围触发 `WinError 10013 (EACCES)` 时 AirDrop 接收端未切换到备用端口（8772–8779）的问题。
+
+### English
+
+- **Auto-accept modes (Off / Contacts / Everyone):**
+  - Added a 3-way **Auto-accept incoming** control in *Settings → Network*: Off (always ask), Contacts (auto-accept your own Apple ID devices & contacts verified by the engine), or Everyone (skip Ask prompts and show a single rich completion toast).
+  - Added a quick **Auto-accept** toggle in the status pill popover and tray menu, plus an **Always accept** button on Ask notifications.
+- **App link sharing (Bilibili, etc.):**
+  - Extended `airdrop/transfer.py`, `receiver.py`, `engine.py`, and client `.txt` detection to safely extract `http(s)://` URLs from mixed file+item asks and small `.txt` shares, showing **Open link / Copy link** notifications.
+- **Apple ID HTTP 503 resilience ([#42](https://github.com/zheznanohana/nekodrop/issues/42)):**
+  - Extended `scripts/patch-appleid.py` to retry transient 503/unreachable errors on the initial password round and fall back to Apple's `/auth/verify/trusteddevice/securitycode` endpoint when `/GsService2/validate` returns 502/503/504.
+- **AX211 / fragmented-RAM (WSL / Hyper-V / VMware) DMA & port fixes ([#30](https://github.com/zheznanohana/nekodrop/issues/30)):**
+  - Fixed `iwxradio`'s DMA pool grow budget double-counting already-locked pages (which stopped scanning at 2 GiB with >3 GiB still free) and enabled partial final batches down to 64 MiB while always keeping at least 1 GiB or 25% of pre-lock free RAM for Windows.
+  - Fixed `_bind_spare` in the AirDrop engine to also fall back to spare ports 8772–8779 on Windows `WinError 10013` (`EACCES`, caused by Hyper-V / WSL excluded port ranges), not only `EADDRINUSE`.
+
+---
+
 ## v2.2.0 (Preview / 预览版) — 2026-11-25
 
 ### 中文

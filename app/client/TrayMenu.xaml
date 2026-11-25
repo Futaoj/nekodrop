@@ -59,6 +59,9 @@
         <Button x:Name="AllowItem" Style="{StaticResource Item}" Background="Transparent" Click="Allow_Click">
           <TextBlock Text="{local:T tray.receive}"/>
         </Button>
+        <Button x:Name="AutoAcceptItem" Style="{StaticResource Item}" Background="Transparent" Click="AutoAccept_Click">
+          <TextBlock Text="{local:T tray.autoAccept}"/>
+        </Button>
         <Button x:Name="ModeItem" Style="{StaticResource Item}" Background="Transparent" Tag="&#xEB44;" Click="Mode_Click">
           <DockPanel>
             <TextBlock DockPanel.Dock="Right" FontFamily="{DynamicResource IconFont}" Text="&#xE76B;" FontSize="9"

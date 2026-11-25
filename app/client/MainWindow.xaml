@@ -89,6 +89,13 @@
             <CheckBox x:Name="AllowToggle" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Click="Allow_Click"/>
             <TextBlock Text="{local:T tray.receive}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
           </DockPanel>
+          <DockPanel Margin="0,10,0,0">
+            <CheckBox x:Name="AutoAcceptToggle" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Click="AutoAccept_Click"/>
+            <StackPanel VerticalAlignment="Center" Margin="0,0,8,0">
+              <TextBlock Text="{local:T tray.autoAccept}" FontSize="12" FontWeight="SemiBold"/>
+              <TextBlock x:Name="AutoAcceptSub" Style="{StaticResource Dim11}" TextTrimming="CharacterEllipsis"/>
+            </StackPanel>
+          </DockPanel>
           <Border Style="{StaticResource Rule}" Margin="0,10,0,8"/>
           <TextBlock Text="{local:T tray.mode}" Style="{StaticResource Dim11}" Margin="0,0,0,4"/>
           <StackPanel x:Name="ModeList"/>

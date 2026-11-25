@@ -668,6 +668,14 @@ public sealed class App : Application
         else Engine.Dispose();
     }
 
+    public void SetAutoAccept(string mode)
+    {
+        Settings.AutoAcceptMode = mode is "everyone" or "contacts" ? mode : "off";
+        Settings.Ask = Settings.AutoAcceptMode != "everyone";
+        Settings.Save();
+        Engine.Apply(Settings);
+    }
+
     public void ShowWindow()
     {
         Service.Wake();
@@ -780,7 +788,17 @@ public sealed class App : Application
         {
             case "answer":
                 var id = q["id"] ?? "";
-                Answer(id, q["accept"] == "1");
+                var accept = q["accept"] == "1";
+                if (accept && q["always"] == "1" && _requests.TryGetValue(id, out var req))
+                {
+                    var key = $"{req.Sender}|{req.Model}";
+                    if (!Settings.AlwaysAccept.Contains(key))
+                    {
+                        Settings.AlwaysAccept.Add(key);
+                        Settings.Save();
+                    }
+                }
+                Answer(id, accept);
                 break;
             case "update":
                 _ = InstallUpdate();
@@ -1051,6 +1069,7 @@ public sealed class App : Application
                 var linkCount = (int?)o["links"] ?? 0;
                 var urls = o["urls"] as JsonArray;
                 var waits = (bool?)o["waits"] ?? true;
+                var isContact = (bool?)o["contact"] == true;
                 var what = Describe(files, linkCount, urls);
                 _askSender[id] = sender;
                 var key = $"{sender}|{model}";
@@ -1063,7 +1082,10 @@ public sealed class App : Application
                     Settings.Save();
                 }
                 if (!waits) break;
-                if (Settings.AlwaysAccept.Contains(key)) { Engine.Answer(id, true); break; }
+                var autoAccept = Settings.AutoAcceptMode == "everyone" ||
+                                 (Settings.AutoAcceptMode == "contacts" && isContact) ||
+                                 Settings.AlwaysAccept.Contains(key);
+                if (autoAccept) { Engine.Answer(id, true); break; }
                 var r = new Request { Id = id, Sender = sender, Model = model, What = what };
                 _requests[id] = r;
                 Model.Requests.Insert(0, r);
