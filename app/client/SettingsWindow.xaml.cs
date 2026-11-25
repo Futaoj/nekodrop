@@ -38,6 +38,7 @@ public partial class SettingsWindow : Window
         AutoConvertHeicBox.IsChecked = s.AutoConvertHeic;
         StartupBox.IsChecked = s.StartWithWindows;
         HotkeyBox.IsChecked = s.Hotkey;
+        ShowSpeedBox.IsChecked = s.ShowTransferSpeed;
         AppleIdOnBox.IsChecked = s.AppleIdOn;
         AppleIdOn_Changed(AppleIdOnBox, new RoutedEventArgs());
         ShowReceive();
@@ -332,6 +333,7 @@ public partial class SettingsWindow : Window
         var hotkeyChanged = (HotkeyBox.IsChecked == true) != s.Hotkey || _hotkeyKeys != s.HotkeyKeys;
         s.Hotkey = HotkeyBox.IsChecked == true;
         s.HotkeyKeys = _hotkeyKeys;
+        s.ShowTransferSpeed = ShowSpeedBox.IsChecked == true;
         s.CheckUpdates = CheckUpdatesBox.IsChecked == true;
         s.PreviewUpdates = PreviewUpdatesBox.IsChecked == true;
         s.DeleteInstallerAfterInstall = DeleteInstallerBox.IsChecked == true;

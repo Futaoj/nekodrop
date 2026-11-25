@@ -235,6 +235,8 @@ public static class L
         ["set.hotkeyReset"] = ("恢复默认", "Default"),
         ["set.hotkeyTaken"] = ("已保存，但 {0} 已被其他程序占用，请换一个", "Saved, but {0} is taken by another program; pick another"),
         ["set.hotkeyHint"] = ("在资源管理器里选中文件后按下，直接发送；否则打开主窗口", "With files selected in Explorer it sends them; otherwise it opens the main window"),
+        ["set.showSpeed"] = ("传输时显示实时速率", "Show live transfer speed"),
+        ["set.showSpeedHint"] = ("在发送和接收进度旁显示当前传输速率（如 48.5 MB/s）。", "Show the current rate next to send and receive progress (e.g. 48.5 MB/s)."),
         ["set.network"] = ("网络与 AirDrop 模式", "Wi-Fi and AirDrop mode"),
         ["mode.concurrent"] = ("同时上网和传文件（推荐）", "Wi-Fi and AirDrop together (recommended)"),
         ["mode.ondemand"] = ("传文件时临时接管网卡", "Take the card when sharing"),

@@ -125,6 +125,14 @@
                   <TextBlock Text="{local:T set.hotkeyHint}" Style="{StaticResource Sub12}" Margin="0,2,0,0"/>
                 </StackPanel>
               </DockPanel>
+              <Border Style="{StaticResource Rule}" Margin="0,12"/>
+              <DockPanel>
+                <CheckBox x:Name="ShowSpeedBox" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Margin="12,0,0,0"/>
+                <StackPanel>
+                  <TextBlock Text="{local:T set.showSpeed}" FontSize="13" FontWeight="Medium"/>
+                  <TextBlock Text="{local:T set.showSpeedHint}" Style="{StaticResource Sub12}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+              </DockPanel>
             </StackPanel>
           </Border>
         </StackPanel>

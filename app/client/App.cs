@@ -77,6 +77,55 @@ public sealed class App : Application
     readonly Dictionary<string, string> _askIcon = [];
     readonly Dictionary<string, List<string>> _recentBatches = [];
     readonly Dictionary<string, (string DeviceId, string DeviceName, List<string> Files)> _sendInfo = [];
+    readonly Dictionary<string, SpeedMeter> _rxSpeed = [];
+    readonly Dictionary<string, SpeedMeter> _txSpeed = [];
+
+    sealed class SpeedMeter
+    {
+        readonly long _startMs;
+        long _lastMs;
+        double _lastBytes;
+        double _smoothedBps;
+        bool _hasRate;
+
+        public SpeedMeter(double initialBytes, long nowMs)
+        {
+            _startMs = nowMs;
+            _lastMs = nowMs;
+            _lastBytes = initialBytes;
+        }
+
+        public double? Sample(double doneBytes, long nowMs)
+        {
+            var dt = nowMs - _lastMs;
+            if (doneBytes > _lastBytes && dt >= 250)
+            {
+                var inst = (doneBytes - _lastBytes) * 1000.0 / dt;
+                _smoothedBps = _hasRate ? _smoothedBps * 0.65 + inst * 0.35 : inst;
+                _hasRate = true;
+                _lastBytes = doneBytes;
+                _lastMs = nowMs;
+            }
+            if (_hasRate) return _smoothedBps;
+            var totalDt = nowMs - _startMs;
+            return doneBytes > 0 && totalDt >= 250 ? doneBytes * 1000.0 / totalDt : null;
+        }
+    }
+
+    static string? UpdateSpeed(Dictionary<string, SpeedMeter> map, string id, double doneBytes)
+    {
+        var now = Environment.TickCount64;
+        if (!map.TryGetValue(id, out var meter))
+        {
+            meter = new SpeedMeter(doneBytes, now);
+            map[id] = meter;
+        }
+        var bps = meter.Sample(doneBytes, now);
+        if (bps is null || bps.Value < 1024) return null;
+        return bps.Value >= 1024 * 1024
+            ? $"{bps.Value / (1024.0 * 1024.0):0.0} MB/s"
+            : $"{bps.Value / 1024.0:0.0} KB/s";
+    }
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -1126,14 +1175,18 @@ public sealed class App : Application
                     Model.Requests.Insert(0, inc);
                     AttachAsk(inc);
                 }
+                var incDone = (double?)o["done"] ?? 0;
                 var incTotal = (double?)o["total"] ?? 0;
-                inc.Progress = incTotal > 0 ? Math.Clamp(((double?)o["done"] ?? 0) / incTotal, 0, 1) : 0;
-                inc.Status = incTotal > 0 ? L.F("req.receivingPct", inc.Progress) : L.T("req.receiving");
+                inc.Progress = incTotal > 0 ? Math.Clamp(incDone / incTotal, 0, 1) : 0;
+                var rxBase = incTotal > 0 ? L.F("req.receivingPct", inc.Progress) : L.T("req.receiving");
+                var rxRate = Settings.ShowTransferSpeed ? UpdateSpeed(_rxSpeed, id, incDone) : null;
+                inc.Status = rxRate is not null ? $"{rxBase} · {rxRate}" : rxBase;
                 inc.Receiving = true;
                 Service.Touch();
                 break;
             case "stored":
             {
+                _rxSpeed.Remove(id);
                 var folder = (string?)o["folder"] ?? Settings.SaveFolder;
                 var from = _requests.TryGetValue(id, out var st) ? st.Sender : _askSender.GetValueOrDefault(id, "AirDrop");
                 var askIcon = _askIcon.GetValueOrDefault(id);
@@ -1170,6 +1223,7 @@ public sealed class App : Application
                 break;
             }
             case "lost":
+                _rxSpeed.Remove(id);
                 _askSender.Remove(id);
                 _askIcon.Remove(id);
                 if (_requests.Remove(id, out var lost))
@@ -1199,10 +1253,11 @@ public sealed class App : Application
                     var total = (double?)o["total"] ?? 0;
                     var done = (double?)o["done"] ?? (double?)o["sent"] ?? 0;
                     d.Progress = total > 0 ? done / total : d.Progress;
+                    var txRate = state == "sending" && Settings.ShowTransferSpeed ? UpdateSpeed(_txSpeed, id, done) : null;
                     d.Status = state switch
                     {
                         "asking" => L.T("send.asking"),
-                        "sending" => L.F("send.sending", d.Progress),
+                        "sending" => txRate is not null ? $"{L.F("send.sending", d.Progress)} · {txRate}" : L.F("send.sending", d.Progress),
                         "sent" or "done" => L.T("send.sent"),
                         "declined" => L.T("send.declined"),
                         "failed" => L.T("send.failed") + ((string?)o["reason"] ?? ""),
@@ -1211,6 +1266,7 @@ public sealed class App : Application
                 }
                 if (state is "sent" or "done" or "declined" or "failed")
                 {
+                    _txSpeed.Remove(id);
                     _sendInfo.Remove(id);
                     if (d is not null)
                     {

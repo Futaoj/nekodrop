@@ -43,6 +43,8 @@ public sealed class Settings
     public bool Hotkey { get; set; } = true;
     /// <summary>The global shortcut's keys, as the user recorded them ("Ctrl+Alt+K").</summary>
     public string HotkeyKeys { get; set; } = NekoDrop.Hotkey.Default;
+    /// <summary>Show live transfer speed (MB/s or KB/s) next to send and receive progress.</summary>
+    public bool ShowTransferSpeed { get; set; } = true;
     /// <summary>Experimental: use the Apple ID identity (AppleId) at all. Off, the engine stays anonymous (Everyone).</summary>
     public bool AppleIdOn { get; set; }
     /// <summary>Who may send to this PC: "everyone", or "contacts" (needs AppleIdOn and an identity, see AppleId).</summary>
