@@ -343,16 +343,27 @@ bool IwxDevice::alloc_rings(std::string &error) {
     }
     report("grew to");
   }
+  _rx_buf_bytes = IWX_RBUF_SIZE;
+  bool use_8k_rx = false;
+  if (_opt.he80) {
+    std::vector<size_t> probe = need;
+    probe.insert(probe.end(), IWX_RX_MQ_RING_COUNT, size_t(2));
+    use_8k_rx = _dma.fits(probe);
+    if (use_8k_rx) {
+      need = std::move(probe);
+      _rx_buf_bytes = 8192;
+      _log("rx: 8 KiB DMA buffers enabled (A-MSDU high-throughput)");
+    } else {
+      _log("rx: keeping 4 KiB DMA buffers (insufficient 2-page contiguous runs)");
+    }
+  }
 #ifndef NEKO_KERNEL
   if (!_dma.reserve_runs(need))
     _log("DMA: not enough free runs to reserve all rings and firmware sections");
 #endif
 
   _ctxt_info = _dma.alloc(std::max(sizeof(iwx_context_info), sizeof(iwx_context_info_gen3)), 4096);
-  /* Receive: free list, used list, status word, 512 buffers of 4 KiB. The
-   * 22000 family takes 64-bit addresses with the buffer id in the low 12
-   * bits and 32-bit used entries; the AX210 family 16-byte transfer and
-   * 32-byte completion descriptors (iwx_alloc_rx_ring). */
+  /* Receive: free list, used list, status word, 512 buffers (4 KiB default, 8 KiB with --he80). */
   _rx_free = _dma.alloc(IWX_RX_MQ_RING_COUNT * (gen3() ? sizeof(iwx_rx_transfer_desc) : sizeof(uint64_t)), 256);
   _rx_used = _dma.alloc(IWX_RX_MQ_RING_COUNT * rx_used_elem, 256);
   _rx_stat = _dma.alloc(sizeof(iwx_rb_status), 16);
@@ -362,7 +373,7 @@ bool IwxDevice::alloc_rings(std::string &error) {
   }
   _rx_bufs.resize(IWX_RX_MQ_RING_COUNT);
   for (unsigned i = 0; i < IWX_RX_MQ_RING_COUNT; i++) {
-    _rx_bufs[i] = _dma.alloc_page();
+    _rx_bufs[i] = _rx_buf_bytes == 8192 ? _dma.alloc(8192, 4096) : _dma.alloc_page();
     if (!_rx_bufs[i]) {
       error = "out of DMA memory for receive buffers";
       return false;
@@ -782,7 +793,9 @@ bool IwxDevice::load_firmware(std::string &error) {
     ctrl.version.version = 0;
     ctrl.version.mac_id = htole16(static_cast<uint16_t>(rd(IWX_CSR_HW_REV)));
     ctrl.version.size = htole16(sizeof(*scratch) / 4);
-    uint32_t control_flags = IWX_PRPH_SCRATCH_RB_SIZE_4K | IWX_PRPH_SCRATCH_MTR_MODE |
+    const uint32_t rb_flag =
+        _rx_buf_bytes == 8192 ? IWX_PRPH_SCRATCH_RB_SIZE_EXT_8K : IWX_PRPH_SCRATCH_RB_SIZE_4K;
+    uint32_t control_flags = rb_flag | IWX_PRPH_SCRATCH_MTR_MODE |
                              (IWX_PRPH_MTR_FORMAT_256B & IWX_PRPH_SCRATCH_MTR_FORMAT);
     if (_card.imr) control_flags |= kPrphScratchImrDebugEn;
     ctrl.control.control_flags = htole32(control_flags);
@@ -803,10 +816,12 @@ bool IwxDevice::load_firmware(std::string &error) {
     ci->version.version = 0;
     ci->version.mac_id = htole16(static_cast<uint16_t>(rd(IWX_CSR_HW_REV)));
     ci->version.size = htole16(sizeof(*ci) / 4);
+    const uint32_t rb_sz =
+        _rx_buf_bytes == 8192 ? IWX_CTXT_INFO_RB_SIZE_8K : IWX_CTXT_INFO_RB_SIZE_4K;
     ci->control.control_flags =
         htole32(IWX_CTXT_INFO_TFD_FORMAT_LONG |
                 (IWX_RX_QUEUE_CB_SIZE(IWX_MQ_RX_TABLE_SIZE) << IWX_CTXT_INFO_RB_CB_SIZE_POS) |
-                (IWX_CTXT_INFO_RB_SIZE_4K << IWX_CTXT_INFO_RB_SIZE_POS));
+                (rb_sz << IWX_CTXT_INFO_RB_SIZE_POS));
     ci->rbd_cfg.free_rbd_addr = htole64(_rx_free.pa);
     ci->rbd_cfg.used_rbd_addr = htole64(_rx_used.pa);
     ci->rbd_cfg.status_wr_ptr = htole64(_rx_stat.pa);
@@ -1540,50 +1555,82 @@ bool IwxDevice::agg_setup(const uint8_t peer[6], bool vht80, bool mimo) {
     }
   }
   if (ok) {
-    /* Firmware rate control for the peer: VHT at 80 MHz when the listener
-     * is, two streams when both antennas can send (upstream's iwx_rs_init). */
-    iwx_tlc_config_cmd_v4 c{};
-    c.sta_id = 3;
-    c.non_ht_rates = htole16(static_cast<uint16_t>(_channel <= 14 ? 0x0fff : 0x0ff0));
+    /* Firmware rate control for the peer: HE80 (with --he80) or VHT80 when the
+     * listener is 80 MHz, two streams when both antennas can send. */
     const uint8_t ant = valid_tx_ant();
-    c.chains = static_cast<uint8_t>(((ant & 1) ? IWX_TLC_MNG_CHAIN_A_MSK : 0) |
-                                    ((ant & 2) ? IWX_TLC_MNG_CHAIN_B_MSK : 0));
     const bool two = mimo && (ant & 3) == 3;
     const bool vht = vht80 && _channel > 14;
-    c.mode = vht ? IWX_TLC_MNG_MODE_VHT : IWX_TLC_MNG_MODE_HT;
-    /* High rates only, as ForbiddenItlwm's iwx_rs_init (MCS 4..9 VHT / 4..7 HT):
-     * the peer leaves the channel often and rate control would otherwise drop
-     * all the way down to MCS 0 (#4). */
-    const uint16_t mcs = vht ? 0x03f0 : 0x00f0;
-    c.ht_rates[IWX_TLC_NSS_1][IWX_TLC_MCS_PER_BW_80] = htole16(mcs);
-    if (two) c.ht_rates[IWX_TLC_NSS_2][IWX_TLC_MCS_PER_BW_80] = htole16(mcs);
-    c.max_ch_width = static_cast<uint8_t>(vht && _width >= 80 ? IWX_TLC_MNG_CH_WIDTH_80MHZ : IWX_TLC_MNG_CH_WIDTH_20MHZ);
-    /* Enable LDPC (required for VHT80 MCS 9), STBC when two TX chains are
-     * active, and SGI across 20/40/80 MHz (unlocks 866.7 Mbps VHT80 2SS). */
-    c.flags = htole16(static_cast<uint16_t>(IWX_TLC_MNG_CFG_FLAGS_LDPC_MSK |
-                                            (two ? IWX_TLC_MNG_CFG_FLAGS_STBC_MSK : 0u)));
-    c.sgi_ch_width_supp = static_cast<uint8_t>((1u << IWX_TLC_MNG_CH_WIDTH_20MHZ) |
-                                               (1u << IWX_TLC_MNG_CH_WIDTH_40MHZ) |
-                                               (1u << IWX_TLC_MNG_CH_WIDTH_80MHZ));
+    const bool try_he = _opt.he80 && !_he80_fallback && vht && _width >= 80;
     const uint32_t id = iwx_cmd_id(IWX_TLC_MNG_CONFIG_CMD, IWX_DATA_PATH_GROUP, 0);
     const uint8_t ver = cmd_version(IWX_DATA_PATH_GROUP, IWX_TLC_MNG_CONFIG_CMD);
-    int err;
-    if (ver == 4) {
-      err = send_cmd(id, &c, sizeof(c), false, nullptr);
-    } else {
+
+    const auto send_tlc = [&](bool use_he) -> int {
+      iwx_tlc_config_cmd_v4 c{};
+      c.sta_id = 3;
+      c.non_ht_rates = htole16(static_cast<uint16_t>(_channel <= 14 ? 0x0fff : 0x0ff0));
+      c.chains = static_cast<uint8_t>(((ant & 1) ? IWX_TLC_MNG_CHAIN_A_MSK : 0) |
+                                      ((ant & 2) ? IWX_TLC_MNG_CHAIN_B_MSK : 0));
+      c.mode = static_cast<uint8_t>(
+          use_he ? IWX_TLC_MNG_MODE_HE : (vht ? IWX_TLC_MNG_MODE_VHT : IWX_TLC_MNG_MODE_HT));
+      /* High rates only (MCS 4..11 HE / 4..9 VHT / 4..7 HT): the peer leaves the
+       * channel often and rate control would otherwise drop to MCS 0 (#4). */
+      const uint16_t mcs = use_he ? 0x0ff0 : (vht ? 0x03f0 : 0x00f0);
+      c.ht_rates[IWX_TLC_NSS_1][IWX_TLC_MCS_PER_BW_80] = htole16(mcs);
+      if (two) c.ht_rates[IWX_TLC_NSS_2][IWX_TLC_MCS_PER_BW_80] = htole16(mcs);
+      c.max_ch_width =
+          static_cast<uint8_t>(vht && _width >= 80 ? IWX_TLC_MNG_CH_WIDTH_80MHZ : IWX_TLC_MNG_CH_WIDTH_20MHZ);
+      c.flags = htole16(static_cast<uint16_t>(IWX_TLC_MNG_CFG_FLAGS_LDPC_MSK |
+                                              (two ? IWX_TLC_MNG_CFG_FLAGS_STBC_MSK : 0u)));
+      c.sgi_ch_width_supp = static_cast<uint8_t>((1u << IWX_TLC_MNG_CH_WIDTH_20MHZ) |
+                                                 (1u << IWX_TLC_MNG_CH_WIDTH_40MHZ) |
+                                                 (1u << IWX_TLC_MNG_CH_WIDTH_80MHZ));
+      if (_opt.he80) c.max_mpdu_len = htole16(3895);
+      if (ver == 4) {
+        return send_cmd(id, &c, sizeof(c), false, nullptr);
+      }
       iwl_tlc_config_cmd_v3 v3{};
       v3.sta_id = c.sta_id;
       v3.max_ch_width = c.max_ch_width;
       v3.mode = c.mode;
       v3.chains = c.chains;
+      v3.amsdu = _opt.he80 ? 1u : 0u;
       v3.flags = c.flags;
       v3.non_ht_rates = c.non_ht_rates;
       v3.ht_rates[0][0] = c.ht_rates[0][0];
       v3.ht_rates[1][0] = c.ht_rates[1][0];
+      v3.max_mpdu_len = c.max_mpdu_len;
       v3.sgi_ch_width_supp = c.sgi_ch_width_supp;
       size_t sz = sizeof(v3);
       if (ver == IWX_FW_CMD_VER_UNKNOWN || ver < 3) sz -= 4;
-      err = send_cmd(id, &v3, sz, false, nullptr);
+      return send_cmd(id, &v3, sz, false, nullptr);
+    };
+
+    int err = 0;
+    _agg_he80_active = false;
+    if (try_he) {
+      const uint8_t he_ver = cmd_version(IWX_DATA_PATH_GROUP, IWX_STA_HE_CTXT_CMD);
+      if (he_ver != IWX_FW_CMD_VER_UNKNOWN) {
+        static const uint8_t kAwdlBssid[6] = {0x00, 0x25, 0x00, 0xff, 0x94, 0x73};
+        iwx_he_sta_context_cmd he{};
+        he.sta_id = 3;
+        he.tid_limit = 7;
+        he.flags = htole32(IWX_HE_BSS_COLOR_DIS | IWX_HE_ACK_ENABLED);
+        std::memcpy(he.ref_bssid_addr, kAwdlBssid, 6);
+        const uint32_t he_id = iwx_cmd_id(IWX_STA_HE_CTXT_CMD, IWX_DATA_PATH_GROUP, 0);
+        const int herr = send_cmd(he_id, &he, sizeof(he), false, nullptr);
+        if (herr) _log("aggregate: STA_HE_CTXT_CMD returned " + std::to_string(herr) + "; trying HE TLC anyway");
+      }
+      err = send_tlc(true);
+      if (err == 0) {
+        _agg_he80_active = true;
+        _log("aggregate: Wi-Fi 6 HE80 2SS TLC active (MCS 4..11)");
+      } else {
+        _log("aggregate: HE80 TLC refused (" + std::to_string(err) + "); falling back to VHT80");
+        _he80_fallback = true;
+        err = send_tlc(false);
+      }
+    } else {
+      err = send_tlc(false);
     }
     if (err) _log("aggregate: rate control refused (" + std::to_string(err) + ")");
     ok = err == 0;
@@ -2428,21 +2475,22 @@ void IwxDevice::handle_rb(unsigned index) {
   const uint8_t *buf = _rx_bufs[index].va;
   const size_t minsz = sizeof(uint32_t) + sizeof(iwx_cmd_header);
   size_t offset = 0;
-  while (offset + minsz < IWX_RBUF_SIZE) {
+  while (offset + minsz < _rx_buf_bytes) {
     const auto *pkt = reinterpret_cast<const iwx_rx_packet *>(buf + offset);
     const int qid = pkt->hdr.qid & ~0x80;
     if ((qid == 0 && pkt->hdr.idx == 0 && pkt->hdr.cmd == 0 && pkt->hdr.group_id == 0) ||
         pkt->len_n_flags == htole32(IWX_FH_RSCSR_FRAME_INVALID))
       break;
     const size_t len = sizeof(pkt->len_n_flags) + iwx_rx_packet_len(pkt);
-    if (len < minsz || len > IWX_RBUF_SIZE - offset) break;
+    if (len < minsz || len > _rx_buf_bytes - offset) break;
     handle_packet(buf + offset, len);
     offset += roundup(len, IWX_FH_RSCSR_FRAME_ALIGN);
     if (gen3()) break; /* one packet per buffer on the AX210 family (iwx_rx_pkt) */
   }
-  /* Clear the first packet header so a stale buffer never parses twice, and
-   * hand the same buffer back at the same slot of the free list. */
-  std::memset(_rx_bufs[index].va, 0, IWX_RBUF_SIZE); /* stale packets must never parse again */
+  /* Clear only the consumed portion + next header so a stale buffer never
+   * parses twice without zeroing unused tail bytes on every 8 KiB slot. */
+  const size_t clear_bytes = std::min<size_t>(offset + minsz + IWX_FH_RSCSR_FRAME_ALIGN, _rx_buf_bytes);
+  std::memset(_rx_bufs[index].va, 0, clear_bytes);
   post_rx_buf(index);
 }
 

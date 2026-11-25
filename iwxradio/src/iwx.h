@@ -69,6 +69,9 @@ public:
   bool agg_available() const { return _aggq.count != 0; }
   bool agg_ready() const { return _agg_queue_enabled; }
   bool agg_setup(const uint8_t peer[6], bool vht80, bool mimo);
+  /* Falls back from experimental HE80 TX TLC to VHT80 if the peer/firmware gives no Block Acks. */
+  bool agg_using_he80() const { return _agg_he80_active; }
+  void agg_fallback_vht() { _he80_fallback = true; _agg_he80_active = false; }
   /* Lets the firmware aggregate TID 0 (after the peer's ADDBA answer), or stops it. */
   bool agg_enable(bool on);
   /* Holds the peer's frames in the firmware while it is away from our channel. */
@@ -319,12 +322,15 @@ private:
 
   DmaBuf _ctxt_info, _rx_free, _rx_used, _rx_stat;
   std::vector<DmaBuf> _rx_bufs;
+  size_t _rx_buf_bytes = 4096;
   std::vector<DmaBuf> _fw_sections; /* kept until the card is reset */
   unsigned _rx_cur = 0;
   std::vector<unsigned> _rx_inflight; /* buffers being handled, oldest first (re-entrant poll) */
   TxRing _cmdq, _dataq, _staq, _aggq;
   bool _agg_queue_enabled = false;
   bool _agg_active = false;
+  bool _agg_he80_active = false;
+  bool _he80_fallback = false;
   uint16_t _agg_seq = 0;
   uint32_t _ba_epoch = 0;
   AggStats _agg_stats;

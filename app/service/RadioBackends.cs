@@ -14,7 +14,8 @@ namespace NekoDrop.Service;
 /// <param name="BtCoexBalanced">balanced Bluetooth coexistence (always true from the service since
 /// 0.1.37: AX200 and AX211 data, nobody worse; Intel only, not on the kernel path)</param>
 public sealed record RadioStart(AdapterProfile Profile, int Channel, bool Kernel, string Country, string? StaConf,
-                                bool Aggregate, bool FastUnlock, bool CoexPlan = false, bool BtCoexBalanced = false)
+                                bool Aggregate, bool FastUnlock, bool CoexPlan = false, bool BtCoexBalanced = false,
+                                bool HighThroughput = false)
 {
     /// <summary>20 MHz on 2.4 GHz, 80 MHz on 5 GHz.</summary>
     public int Width => Channel <= 14 ? 20 : 80;
@@ -80,6 +81,7 @@ public sealed class IwxRadioBackend : IRadioBackend
         // Balanced Wi-Fi/Bluetooth arbitration in the firmware the user-mode radio boots;
         // nekodrop-wlan.sys keeps its own.
         if (s.BtCoexBalanced && !s.Kernel) args.AddRange(["--bt-coex", "1"]);
+        if (s.HighThroughput && !s.Kernel && caps.SupportsAggregate) args.Add("--he80");
         if (!s.Kernel && s.Profile.RadioFamily is { Length: > 0 } family) args.AddRange(["--family", family]);
         return args;
     }
@@ -134,6 +136,7 @@ public sealed class MtkRadioBackend : IRadioBackend
         var args = new List<string> { s.Channel.ToString(), "--width", s.Width.ToString() };
         if (s.Country is { Length: 2 } c && c != "ZZ" && c != "00") args.AddRange(["--country", c]);
         if (s.StaConf is not null) args.AddRange(["--sta-config", s.StaConf]);
+        if (s.HighThroughput) args.Add("--he80");
         return args;
     }
 }

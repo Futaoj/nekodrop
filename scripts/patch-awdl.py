@@ -179,3 +179,326 @@ patch_once(
     '\t\tlog_info("experimental high-throughput: HE80=%d, MTU=%lu", enable_he, host_mtu);\n',
     'main.c apply HE80 and log high-throughput',
 )
+
+# 5. host_if.c: 8 MiB Wintun ring (2x default) to absorb bursty 500+ Mbit/s AWDL slots
+patch_once(
+    host_if_c,
+    '#define RING_BYTES 0x800000',
+    '#define RING_BYTES 0x400000\n',
+    '#define RING_BYTES 0x800000 /* nekodrop: 8 MiB Wintun ring for bursty HE80 throughput */\n',
+    'host_if.c 8 MiB Wintun ring',
+)
+
+# 5b. radio_client.h: raise RADIO_CLIENT_MAX_FRAME to 12800 so 8/12 KiB RX A-MSDUs pass through
+radio_client_h = root / 'awdl' / 'win' / 'radio_client.h'
+patch_once(
+    radio_client_h,
+    '#define RADIO_CLIENT_MAX_FRAME 12800',
+    '#define RADIO_CLIENT_MAX_FRAME 4096\n',
+    '#define RADIO_CLIENT_MAX_FRAME 12800 /* nekodrop: fit 8/12 KiB RX A-MSDUs + radiotap */\n',
+    'radio_client.h 12800-byte RX A-MSDU frame buffer',
+)
+
+# 6. radio_client.c: lock-free shared-memory SPSC data plane (matches iwxradio/src/radio_shm.h)
+#    plus 64 KiB buffered Named Pipe fallback for radios without SHM (e.g. RTL8852CE / MT7902).
+radio_client_c = root / 'awdl' / 'win' / 'radio_client.c'
+SHM_DEFS = '\n'.join([
+    '#define SLOT_COUNT 2048',
+    '#define PIPE_READ_BUF 65536',
+    '#define RADIO_SHM_MAGIC 0x4E4B5348u',
+    '#define RADIO_SHM_VERSION 1u',
+    '#define RADIO_SHM_RING_SIZE (4u * 1024u * 1024u)',
+    '#define RADIO_SHM_RING_MASK (RADIO_SHM_RING_SIZE - 1u)',
+    '#define RADIO_LINK_CAP_SHM_GLOBAL 1u',
+    '#define RADIO_LINK_CAP_SHM_LOCAL 2u',
+    '',
+    'struct radio_shm_ring {',
+    '\tvolatile LONG write_pos;',
+    '\tvolatile LONG pad0[15];',
+    '\tvolatile LONG read_pos;',
+    '\tvolatile LONG waiting;',
+    '\tvolatile LONG pad1[14];',
+    '\tuint8_t data[RADIO_SHM_RING_SIZE];',
+    '};',
+    '',
+    'struct radio_shm_layout {',
+    '\tuint32_t magic;',
+    '\tuint32_t version;',
+    '\tvolatile LONG epoch;',
+    '\tvolatile LONG client_ready;',
+    '\tuint32_t reserved[12];',
+    '\tstruct radio_shm_ring rx;',
+    '\tstruct radio_shm_ring tx;',
+    '};',
+    '_Static_assert(sizeof(struct radio_shm_ring) == 128u + RADIO_SHM_RING_SIZE, "shm ring ABI");',
+    '_Static_assert(sizeof(struct radio_shm_layout) == 64u + 2u * sizeof(struct radio_shm_ring), "shm layout ABI");',
+    '',
+    'static void shm_write_bytes(uint8_t *ring, uint32_t pos, const uint8_t *src, uint32_t n) {',
+    '\tuint32_t idx = pos & RADIO_SHM_RING_MASK;',
+    '\tuint32_t first = RADIO_SHM_RING_SIZE - idx;',
+    '\tif (first > n) first = n;',
+    '\tmemcpy(ring + idx, src, first);',
+    '\tif (n > first) memcpy(ring, src + first, n - first);',
+    '}',
+    '',
+    'static void shm_read_bytes(const uint8_t *ring, uint32_t pos, uint8_t *dst, uint32_t n) {',
+    '\tuint32_t idx = pos & RADIO_SHM_RING_MASK;',
+    '\tuint32_t first = RADIO_SHM_RING_SIZE - idx;',
+    '\tif (first > n) first = n;',
+    '\tmemcpy(dst, ring + idx, first);',
+    '\tif (n > first) memcpy(dst + first, ring, n - first);',
+    '}',
+    '',
+])
+patch_once(
+    radio_client_c,
+    'RADIO_SHM_MAGIC',
+    '#define SLOT_COUNT 2048\n',
+    SHM_DEFS,
+    'radio_client.c SHM ring definitions',
+)
+patch_once(
+    radio_client_c,
+    'struct radio_shm_layout *shm;',
+    '\tvolatile LONG closing;\n\tvoid (*on_disconnect)(void);\n};\n',
+    '\tvolatile LONG closing;\n'
+    '\tvoid (*on_disconnect)(void);\n'
+    '\tuint8_t *pipe_buf;\n'
+    '\tDWORD pipe_pos, pipe_len;\n'
+    '\tHANDLE shm_map;\n'
+    '\tHANDLE shm_rx_event;\n'
+    '\tHANDLE shm_tx_event;\n'
+    '\tstruct radio_shm_layout *shm;\n'
+    '};\n',
+    'radio_client.c SHM & pipe buffer fields',
+)
+patch_once(
+    radio_client_c,
+    'client->pipe_buf',
+    'static BOOL read_exact(struct radio_client *client, void *data, DWORD length) {\n'
+    '\tuint8_t *bytes = data;\n'
+    '\twhile (length > 0) {\n'
+    '\t\tOVERLAPPED io = {.hEvent = client->read_done};\n'
+    '\t\tDWORD got = 0;\n'
+    '\t\tBOOL started = ReadFile(client->pipe, bytes, length, &got, &io);\n'
+    '\t\tif (!finish(client, &io, started, &got) || got == 0)\n'
+    '\t\t\treturn FALSE;\n'
+    '\t\tbytes += got;\n'
+    '\t\tlength -= got;\n'
+    '\t}\n'
+    '\treturn TRUE;\n'
+    '}\n',
+    'static BOOL read_exact(struct radio_client *client, void *data, DWORD length) {\n'
+    '\tuint8_t *bytes = data;\n'
+    '\twhile (length > 0) {\n'
+    '\t\tif (client->pipe_pos == client->pipe_len) {\n'
+    '\t\t\tOVERLAPPED io = {.hEvent = client->read_done};\n'
+    '\t\t\tDWORD got = 0;\n'
+    '\t\t\tBOOL started = ReadFile(client->pipe, client->pipe_buf, PIPE_READ_BUF, &got, &io);\n'
+    '\t\t\tif (!finish(client, &io, started, &got) || got == 0)\n'
+    '\t\t\t\treturn FALSE;\n'
+    '\t\t\tclient->pipe_pos = 0;\n'
+    '\t\t\tclient->pipe_len = got;\n'
+    '\t\t}\n'
+    '\t\tDWORD avail = client->pipe_len - client->pipe_pos;\n'
+    '\t\tDWORD step = length < avail ? length : avail;\n'
+    '\t\tmemcpy(bytes, client->pipe_buf + client->pipe_pos, step);\n'
+    '\t\tclient->pipe_pos += step;\n'
+    '\t\tbytes += step;\n'
+    '\t\tlength -= step;\n'
+    '\t}\n'
+    '\treturn TRUE;\n'
+    '}\n'
+    '\n'
+    'static void try_open_shm(struct radio_client *client, uint8_t cap) {\n'
+    '\tconst char *map_name = (cap & RADIO_LINK_CAP_SHM_GLOBAL) ? "Global\\\\nekodrop-radio-shm-v1"\n'
+    '\t                     : (cap & RADIO_LINK_CAP_SHM_LOCAL)  ? "Local\\\\nekodrop-radio-shm-v1" : NULL;\n'
+    '\tconst char *rx_name  = (cap & RADIO_LINK_CAP_SHM_GLOBAL) ? "Global\\\\nekodrop-radio-shm-rx-v1"\n'
+    '\t                     : "Local\\\\nekodrop-radio-shm-rx-v1";\n'
+    '\tconst char *tx_name  = (cap & RADIO_LINK_CAP_SHM_GLOBAL) ? "Global\\\\nekodrop-radio-shm-tx-v1"\n'
+    '\t                     : "Local\\\\nekodrop-radio-shm-tx-v1";\n'
+    '\tif (!map_name)\n'
+    '\t\treturn;\n'
+    '\tHANDLE map = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, map_name);\n'
+    '\tif (!map)\n'
+    '\t\treturn;\n'
+    '\tstruct radio_shm_layout *shm =\n'
+    '\t    MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(struct radio_shm_layout));\n'
+    '\tif (!shm || shm->magic != RADIO_SHM_MAGIC || shm->version != RADIO_SHM_VERSION) {\n'
+    '\t\tif (shm) UnmapViewOfFile(shm);\n'
+    '\t\tCloseHandle(map);\n'
+    '\t\treturn;\n'
+    '\t}\n'
+    '\tHANDLE rx_ev = OpenEventA(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, rx_name);\n'
+    '\tHANDLE tx_ev = OpenEventA(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, tx_name);\n'
+    '\tif (!rx_ev || !tx_ev) {\n'
+    '\t\tif (rx_ev) CloseHandle(rx_ev);\n'
+    '\t\tif (tx_ev) CloseHandle(tx_ev);\n'
+    '\t\tUnmapViewOfFile(shm);\n'
+    '\t\tCloseHandle(map);\n'
+    '\t\treturn;\n'
+    '\t}\n'
+    '\tclient->shm_map = map;\n'
+    '\tclient->shm_rx_event = rx_ev;\n'
+    '\tclient->shm_tx_event = tx_ev;\n'
+    '\tclient->shm = shm;\n'
+    '\tInterlockedExchange(&shm->rx.waiting, 1);\n'
+    '\tMemoryBarrier();\n'
+    '\tInterlockedExchange(&shm->client_ready, 1);\n'
+    '\tlog_info("radio data plane: zero-pipe shared-memory rings active (4 MiB RX + 4 MiB TX)");\n'
+    '}\n',
+    'radio_client.c buffered pipe read + try_open_shm',
+)
+patch_once(
+    radio_client_c,
+    'try_open_shm(client, hello->reserved[0]);',
+    '\t\t\tclient->version = hello->version;\n'
+    '\t\t\tclient->channel = hello->channel;\n'
+    '\t\t\tclient->width_mhz = hello->width_mhz;\n'
+    '\t\t\tSetEvent(client->hello_event);\n',
+    '\t\t\tclient->version = hello->version;\n'
+    '\t\t\tclient->channel = hello->channel;\n'
+    '\t\t\tclient->width_mhz = hello->width_mhz;\n'
+    '\t\t\ttry_open_shm(client, hello->reserved[0]);\n'
+    '\t\t\tSetEvent(client->hello_event);\n',
+    'radio_client.c negotiate SHM on HELLO',
+)
+patch_once(
+    radio_client_c,
+    'client->pipe_buf = malloc(PIPE_READ_BUF);',
+    '\tclient->slots = calloc(SLOT_COUNT, sizeof(*client->slots));\n',
+    '\tclient->slots = calloc(SLOT_COUNT, sizeof(*client->slots));\n'
+    '\tclient->pipe_buf = malloc(PIPE_READ_BUF);\n',
+    'radio_client.c allocate pipe_buf',
+)
+patch_once(
+    radio_client_c,
+    'if (client->shm)',
+    '\tfree(client->slots);\n\tfree(client);\n',
+    '\tif (client->shm) {\n'
+    '\t\tInterlockedExchange(&client->shm->client_ready, 0);\n'
+    '\t\tUnmapViewOfFile(client->shm);\n'
+    '\t}\n'
+    '\tif (client->shm_map) CloseHandle(client->shm_map);\n'
+    '\tif (client->shm_rx_event) CloseHandle(client->shm_rx_event);\n'
+    '\tif (client->shm_tx_event) CloseHandle(client->shm_tx_event);\n'
+    '\tfree(client->pipe_buf);\n'
+    '\tfree(client->slots);\n'
+    '\tfree(client);\n',
+    'radio_client.c close SHM handles',
+)
+patch_once(
+    radio_client_c,
+    'client->shm_rx_event ? client->shm_rx_event',
+    'void *radio_client_rx_event(const struct radio_client *client) {\n'
+    '\treturn client->rx_event;\n'
+    '}\n',
+    'void *radio_client_rx_event(const struct radio_client *client) {\n'
+    '\treturn client->shm_rx_event ? client->shm_rx_event : client->rx_event;\n'
+    '}\n',
+    'radio_client.c return SHM rx_event',
+)
+patch_once(
+    radio_client_c,
+    'shm_pop_rx',
+    'int radio_client_pop(struct radio_client *client, uint8_t *frame) {\n'
+    '\tint length = 0;\n'
+    '\tEnterCriticalSection(&client->queue_lock);\n'
+    '\tif (client->count > 0) {\n'
+    '\t\tconst struct slot *slot = &client->slots[client->head];\n'
+    '\t\tlength = slot->length;\n'
+    '\t\tmemcpy(frame, slot->frame, (size_t) length);\n'
+    '\t\tclient->head = (client->head + 1) % SLOT_COUNT;\n'
+    '\t\tclient->count--;\n'
+    '\t}\n'
+    '\tLeaveCriticalSection(&client->queue_lock);\n'
+    '\treturn length;\n'
+    '}\n'
+    '\n'
+    'int radio_client_has_frame(struct radio_client *client) {\n'
+    '\tEnterCriticalSection(&client->queue_lock);\n'
+    '\tint waiting = client->count > 0;\n'
+    '\tLeaveCriticalSection(&client->queue_lock);\n'
+    '\treturn waiting;\n'
+    '}\n'
+    '\n'
+    'int radio_client_send(struct radio_client *client, uint16_t type, const uint8_t *payload,\n'
+    '\t\t      uint32_t length) {\n',
+    'static int shm_pop_rx(struct radio_client *client, uint8_t *frame) {\n'
+    '\tstruct radio_shm_ring *ring = &client->shm->rx;\n'
+    '\tfor (int attempt = 0; attempt < 2; attempt++) {\n'
+    '\t\tuint32_t r = (uint32_t) ring->read_pos;\n'
+    '\t\tuint32_t w = (uint32_t) InterlockedCompareExchange(&ring->write_pos, 0, 0);\n'
+    '\t\tif (w == r) {\n'
+    '\t\t\tif (attempt == 0) {\n'
+    '\t\t\t\tInterlockedExchange(&ring->waiting, 1);\n'
+    '\t\t\t\tMemoryBarrier();\n'
+    '\t\t\t\tcontinue;\n'
+    '\t\t\t}\n'
+    '\t\t\treturn 0;\n'
+    '\t\t}\n'
+    '\t\tMemoryBarrier();\n'
+    '\t\tuint32_t len = 0;\n'
+    '\t\tshm_read_bytes(ring->data, r, (uint8_t *) &len, 4u);\n'
+    '\t\tuint32_t total = (4u + len + 3u) & ~3u;\n'
+    '\t\tif (len == 0 || len > RADIO_CLIENT_MAX_FRAME || (w - r) < total) {\n'
+    '\t\t\tInterlockedExchange(&ring->read_pos, (LONG) w);\n'
+    '\t\t\treturn 0;\n'
+    '\t\t}\n'
+    '\t\tshm_read_bytes(ring->data, r + 4u, frame, len);\n'
+    '\t\tMemoryBarrier();\n'
+    '\t\tInterlockedExchange(&ring->read_pos, (LONG) (r + total));\n'
+    '\t\treturn (int) len;\n'
+    '\t}\n'
+    '\treturn 0;\n'
+    '}\n'
+    '\n'
+    'int radio_client_pop(struct radio_client *client, uint8_t *frame) {\n'
+    '\tif (client->shm)\n'
+    '\t\treturn shm_pop_rx(client, frame);\n'
+    '\tint length = 0;\n'
+    '\tEnterCriticalSection(&client->queue_lock);\n'
+    '\tif (client->count > 0) {\n'
+    '\t\tconst struct slot *slot = &client->slots[client->head];\n'
+    '\t\tlength = slot->length;\n'
+    '\t\tmemcpy(frame, slot->frame, (size_t) length);\n'
+    '\t\tclient->head = (client->head + 1) % SLOT_COUNT;\n'
+    '\t\tclient->count--;\n'
+    '\t}\n'
+    '\tLeaveCriticalSection(&client->queue_lock);\n'
+    '\treturn length;\n'
+    '}\n'
+    '\n'
+    'int radio_client_has_frame(struct radio_client *client) {\n'
+    '\tif (client->shm) {\n'
+    '\t\tstruct radio_shm_ring *ring = &client->shm->rx;\n'
+    '\t\treturn (uint32_t) InterlockedCompareExchange(&ring->write_pos, 0, 0) !=\n'
+    '\t\t       (uint32_t) ring->read_pos;\n'
+    '\t}\n'
+    '\tEnterCriticalSection(&client->queue_lock);\n'
+    '\tint waiting = client->count > 0;\n'
+    '\tLeaveCriticalSection(&client->queue_lock);\n'
+    '\treturn waiting;\n'
+    '}\n'
+    '\n'
+    'int radio_client_send(struct radio_client *client, uint16_t type, const uint8_t *payload,\n'
+    '\t\t      uint32_t length) {\n'
+    '\tif (type == RADIO_LINK_TX && client->shm && length > 0 && length <= RADIO_LINK_MAX_PAYLOAD) {\n'
+    '\t\tstruct radio_shm_ring *ring = &client->shm->tx;\n'
+    '\t\tuint32_t total = (4u + length + 3u) & ~3u;\n'
+    '\t\tfor (int spins = 0; spins < 2000; spins++) {\n'
+    '\t\t\tuint32_t w = (uint32_t) ring->write_pos;\n'
+    '\t\t\tuint32_t r = (uint32_t) InterlockedCompareExchange(&ring->read_pos, 0, 0);\n'
+    '\t\t\tif (RADIO_SHM_RING_SIZE - (w - r) >= total) {\n'
+    '\t\t\t\tshm_write_bytes(ring->data, w, (const uint8_t *) &length, 4u);\n'
+    '\t\t\t\tshm_write_bytes(ring->data, w + 4u, payload, length);\n'
+    '\t\t\t\tMemoryBarrier();\n'
+    '\t\t\t\tInterlockedExchange(&ring->write_pos, (LONG) (w + total));\n'
+    '\t\t\t\treturn 0;\n'
+    '\t\t\t}\n'
+    '\t\t\tYieldProcessor();\n'
+    '\t\t}\n'
+    '\t\treturn 0; /* ring full under stall: drop rather than block AWDL sync */\n'
+    '\t}\n',
+    'radio_client.c lock-free SHM RX pop + TX push',
+)

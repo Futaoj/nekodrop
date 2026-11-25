@@ -90,6 +90,8 @@ struct RadioOpenOptions {
   bool verbose = false;
   /* Experimental A-MPDU sending to the AWDL peer: one more TX ring. */
   bool aggregate = false;
+  /* Experimental Wi-Fi 6 HE80 TX TLC (MCS 4..11 2SS) + 8 KiB RX A-MSDU buffers. */
+  bool he80 = false;
   /* --family (the user's manual choice in Settings, for a card whose PCI
    * device ID nekodrop does not know): the device ID whose transport
    * parameters to use (cards::family_device), 0 for the card's own. */

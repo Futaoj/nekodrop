@@ -53,6 +53,7 @@
 #include "pipe_server.h"
 #include "plat.h"
 #include "radio_link.h"
+#include "rx_ba_reorder.h"
 #include "wifi_sta.h"
 
 namespace {
@@ -254,6 +255,7 @@ int main(int argc, char **argv) {
   bool reset_only = false;
   bool boot_test = false;
   bool no_block_ack = false;
+  bool he80 = false;
   uint8_t channel = 149;
   unsigned width = 80;
   unsigned run_for = 0;
@@ -284,6 +286,8 @@ int main(int argc, char **argv) {
       dev_opts.verbose = true;
     } else if (a == "--no-block-ack") {
       no_block_ack = true;
+    } else if (a == "--he80") {
+      he80 = true;
     } else if (a == "--tap" || a == "--profile" || a == "--mac" || a == "--pipe") {
       (void)next_val(); /* accepted for compatibility with NekoDropService */
     } else if (!a.empty() && a[0] >= '0' && a[0] <= '9') {
@@ -385,7 +389,8 @@ int main(int argc, char **argv) {
       log_line("awdld client connected");
 
       radio_link_hello hello{RADIO_LINK_VERSION, awdl_channel,
-                             static_cast<uint8_t>(awdl_channel <= 14 ? 20 : width), {0, 0}};
+                             static_cast<uint8_t>(awdl_channel <= 14 ? 20 : width),
+                             {pipe.shm_cap_flag(), 0}};
       pipe.send(RADIO_LINK_HELLO,
                 std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&hello), sizeof(hello)));
 
@@ -801,6 +806,7 @@ int main(int argc, char **argv) {
 
   std::vector<uint8_t> rx_batch;
   rx_batch.reserve(128 * 1024);
+  mtk::RxBaReorder ba_reorder;
   std::vector<std::array<uint8_t, 33>> addba_responses;
   uint64_t last_active_us = 0;
   constexpr uint64_t kSpinWindowUs = 5000; /* 5 ms active spin before Sleep(1) */
@@ -821,6 +827,16 @@ int main(int argc, char **argv) {
         if (m.type == RADIO_LINK_TX) awdl_tx_q.push_back(std::move(m));
         else local_q.push_back(std::move(m));
         cmds.pop_front();
+      }
+    }
+    {
+      PendingCmd shm_tx;
+      shm_tx.type = RADIO_LINK_TX;
+      const uint64_t t_now = now_us();
+      while (awdl_tx_q.size() < 1024 && pipe.pop_shm_tx(shm_tx.payload)) {
+        shm_tx.at_us = t_now;
+        awdl_tx_q.push_back(std::move(shm_tx));
+        shm_tx.payload.clear();
       }
     }
 
@@ -983,12 +999,18 @@ int main(int argc, char **argv) {
           f.data[25] == 0u) {
         const uint8_t token = f.data[26];
         const uint16_t req_params = static_cast<uint16_t>(f.data[27] | (f.data[28] << 8));
+        const uint16_t seqctl = static_cast<uint16_t>(f.data[31] | (f.data[32] << 8));
         const bool immediate = (req_params & 2u) != 0;
         if (immediate && addba_responses.size() < 8) {
-          const uint16_t amsdu = 0u;
+          const uint16_t amsdu = he80 ? (req_params & 1u) : 0u;
           const uint8_t tid = static_cast<uint8_t>((req_params >> 2) & 0x0fu);
           uint16_t win = static_cast<uint16_t>((req_params >> 6) & 0x03ffu);
           if (win == 0 || win > 64) win = 64;
+          const uint16_t ssn = static_cast<uint16_t>((seqctl >> 4) & 0x0fffu);
+          ba_reorder.on_addba(f.data + 10, tid, ssn, win, heard,
+                              [&](const uint8_t *d, size_t n, uint8_t ch, int8_t rssi) {
+                                if (pipe.connected()) append_rx_wire({d, n, rssi, ch}, rx_batch);
+                              });
           std::array<uint8_t, 33> resp{};
           resp[0] = 0xd0u;
           std::memcpy(resp.data() + 4, f.data + 10, 6);
@@ -1006,14 +1028,47 @@ int main(int argc, char **argv) {
           resp[30] = static_cast<uint8_t>(rsp_params >> 8);
           addba_responses.push_back(resp);
         }
+      } else if (!no_block_ack && on_awdl_ch && f.len >= 28 && (f.data[0] & 0xfcu) == 0xd0u &&
+                 std::memcmp(f.data + 4, own_mac.data(), 6) == 0 && f.data[24] == 3u &&
+                 f.data[25] == 2u) {
+        const uint16_t params = static_cast<uint16_t>(f.data[26] | (f.data[27] << 8));
+        if ((params >> 11) & 1u) {
+          const uint8_t tid = static_cast<uint8_t>((params >> 12) & 0x0fu);
+          ba_reorder.on_delba(f.data + 10, tid,
+                              [&](const uint8_t *d, size_t n, uint8_t ch, int8_t rssi) {
+                                if (pipe.connected()) append_rx_wire({d, n, rssi, ch}, rx_batch);
+                              });
+        }
+      } else if (!no_block_ack && on_awdl_ch && f.len >= 20 && f.data[0] == 0x84u &&
+                 std::memcmp(f.data + 4, own_mac.data(), 6) == 0) {
+        ba_reorder.on_bar(f.data, f.len, heard,
+                          [&](const uint8_t *d, size_t n, uint8_t ch, int8_t rssi) {
+                            if (pipe.connected()) append_rx_wire({d, n, rssi, ch}, rx_batch);
+                          });
       }
 
       if (!pipe.connected()) return;
       if (filter_active && f.len >= 22 && std::memcmp(f.data + 16, bssid_filter.data(), 6) != 0) {
         return;
       }
+      if (!no_block_ack && on_awdl_ch && f.len >= 26 && (f.data[0] & 0x8cu) == 0x88u &&
+          std::memcmp(f.data + 4, own_mac.data(), 6) == 0) {
+        if (ba_reorder.process(f.data, f.len, f.channel, f.dbm, heard,
+                               [&](const uint8_t *d, size_t n, uint8_t ch, int8_t rssi) {
+                                 append_rx_wire({d, n, rssi, ch}, rx_batch);
+                               })) {
+          return;
+        }
+      }
       append_rx_wire(f, rx_batch);
     });
+
+    if (pipe.connected() && !no_block_ack) {
+      ba_reorder.flush_expired(now_us(),
+                               [&](const uint8_t *d, size_t n, uint8_t ch, int8_t rssi) {
+                                 append_rx_wire({d, n, rssi, ch}, rx_batch);
+                               });
+    }
 
     if (!rx_batch.empty()) pipe.send_raw(rx_batch);
     if (on_awdl_ch && !addba_responses.empty()) {

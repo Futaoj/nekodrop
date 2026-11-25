@@ -446,7 +446,7 @@ public sealed class Supervisor : IDisposable
             else if (Card.Find() is { } kc) { _profile = kc.Profile; _caps = kc.Profile.Capabilities; }
             if (!_wanted) { lock (_lock) State = RadioState.Off; Publish(); return; }
             var launch = CardCatalog.BuildRadioLaunch(_profile, channel, kernel, _cfg.Country, staConf, true, _cfg.FastUnlock,
-                                                      _cfg.CoexPlan, btCoexBalanced: true);
+                                                      _cfg.CoexPlan, btCoexBalanced: true, highThroughput: _cfg.HighThroughput);
             _startedAt = DateTime.UtcNow;
             _radio = Spawn(Path.Combine(_root, "radio", launch.ExeName), launch.Args, OnRadioLine);
             // awdld connects to the radio's pipe; give the firmware time to boot.

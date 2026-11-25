@@ -699,31 +699,52 @@ bool MtkDevice::tx_ring_push(Ring &r, const void *data, size_t len, bool wait_do
 }
 
 bool MtkDevice::rx_ring_pop(Ring &r, std::vector<uint8_t> &out, bool commit) {
+  static constexpr size_t kMaxReasmBytes = 12288;
   MtkDesc *d = r.descs();
-  const uint32_t idx = r.tail;
-  const uint32_t ctrl = *static_cast<const volatile uint32_t *>(&d[idx].ctrl);
-  if (!(ctrl & MT_DMA_CTL_DMA_DONE)) return false;
+  out.clear();
+  for (;;) {
+    const uint32_t idx = r.tail;
+    const uint32_t ctrl = *static_cast<const volatile uint32_t *>(&d[idx].ctrl);
+    if (!(ctrl & MT_DMA_CTL_DMA_DONE)) return false;
 
-  plat::mem_barrier();
-  const uint32_t len = field_get(MT_DMA_CTL_SD_LEN0, ctrl);
-  if (len > 0 && len <= DmaPool32::kPageBytes) {
-    out.assign(r.bufs[idx].va, r.bufs[idx].va + len);
-  } else {
-    out.clear();
+    plat::mem_barrier();
+    const uint32_t len = field_get(MT_DMA_CTL_SD_LEN0, ctrl);
+    const bool last_sec = (ctrl & MT_DMA_CTL_LAST_SEC0) != 0;
+
+    if (len > 0 && len <= DmaPool32::kPageBytes) {
+      if (r.rx_reasm.empty() && last_sec) {
+        /* Fast path: single-descriptor frame (no extra copy). */
+        out.assign(r.bufs[idx].va, r.bufs[idx].va + len);
+      } else {
+        /* Multi-descriptor RX A-MSDU fragment (up to 12 KiB). */
+        if (r.rx_reasm.size() + len <= kMaxReasmBytes) {
+          r.rx_reasm.insert(r.rx_reasm.end(), r.bufs[idx].va, r.bufs[idx].va + len);
+        } else {
+          r.rx_reasm.clear();
+        }
+        if (last_sec && !r.rx_reasm.empty()) {
+          out.swap(r.rx_reasm);
+          r.rx_reasm.clear();
+        }
+      }
+    } else if (last_sec) {
+      r.rx_reasm.clear();
+    }
+
+    /* Re-arm descriptor and advance head/tail; optionally defer cpu_idx MMIO doorbell. */
+    d[idx].buf0 = r.bufs[idx].pa;
+    d[idx].buf1 = 0;
+    d[idx].info = 0;
+    plat::mem_barrier();
+    d[idx].ctrl = field_prep(MT_DMA_CTL_SD_LEN0, static_cast<uint32_t>(DmaPool32::kPageBytes));
+    plat::mem_barrier();
+
+    r.head = idx;
+    r.tail = (r.tail + 1) % r.count;
+    if (commit) wr(r.reg_base + 0x8, r.head);
+
+    if (last_sec) return !out.empty();
   }
-
-  /* Re-arm descriptor and advance head/tail; optionally defer cpu_idx MMIO doorbell. */
-  d[idx].buf0 = r.bufs[idx].pa;
-  d[idx].buf1 = 0;
-  d[idx].info = 0;
-  plat::mem_barrier();
-  d[idx].ctrl = field_prep(MT_DMA_CTL_SD_LEN0, static_cast<uint32_t>(DmaPool32::kPageBytes));
-  plat::mem_barrier();
-
-  r.head = idx;
-  r.tail = (r.tail + 1) % r.count;
-  if (commit) wr(r.reg_base + 0x8, r.head);
-  return !out.empty();
 }
 
 void MtkDevice::rx_ring_commit(Ring &r) {

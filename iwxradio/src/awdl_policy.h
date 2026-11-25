@@ -180,6 +180,7 @@ struct AddbaRequest {
   uint8_t peer[6], bssid[6];
   uint8_t token, tid;
   bool immediate;
+  bool amsdu;
   uint16_t window, ssn;
 };
 
@@ -196,7 +197,8 @@ inline bool parse_addba_request(const uint8_t *f, size_t length, const uint8_t *
   std::memcpy(out->bssid, f + 16, 6);
   out->token = f[26];
   out->tid = uint8_t(tid);
-  out->immediate = params & 2U;
+  out->amsdu = (params & 1U) != 0;
+  out->immediate = (params & 2U) != 0;
   const uint16_t asked = params >> 6;
   out->window = !asked || asked > kBaWindowMax ? kBaWindowMax : asked;
   out->ssn = seqctl >> 4;
@@ -251,7 +253,8 @@ inline bool ba_tx_session_idle(bool bulk, size_t waiting, unsigned queued, uint6
   return since && now_us - since >= kBaTxIdleEndUS;
 }
 
-inline size_t build_addba_response(uint8_t *out, const AddbaRequest &r, const uint8_t *own, uint16_t seq) {
+inline size_t build_addba_response(uint8_t *out, const AddbaRequest &r, const uint8_t *own, uint16_t seq,
+                                   bool allow_amsdu = false) {
   std::memset(out, 0, kAddbaResponseLength);
   out[0] = 0xd0;
   std::memcpy(out + 4, r.peer, 6);
@@ -264,7 +267,8 @@ inline size_t build_addba_response(uint8_t *out, const AddbaRequest &r, const ui
   out[25] = 1;
   out[26] = r.token;
   /* 27-28: status 0, success. */
-  const uint16_t params = uint16_t(2U | unsigned(r.tid) << 2 | unsigned(r.window) << 6);
+  const uint16_t amsdu_bit = (allow_amsdu && r.amsdu) ? 1U : 0U;
+  const uint16_t params = uint16_t(amsdu_bit | 2U | unsigned(r.tid) << 2 | unsigned(r.window) << 6);
   out[29] = uint8_t(params);
   out[30] = uint8_t(params >> 8);
   /* 31-32: timeout 0. */

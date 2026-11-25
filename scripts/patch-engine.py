@@ -250,7 +250,9 @@ transfer_path = pathlib.Path(sys.argv[1]) / 'transfer.py'
 text = transfer_path.read_text(encoding='utf-8')
 TRANSFER_PATCHES = [
     ('END_MARKER_WAIT_SECONDS = 2' + NL, 'END_MARKER_WAIT_SECONDS = 0.5  # nekodrop: faster video/Live Photo completion' + NL),
+    ('IO_CHUNK_BYTES = 64 * KIB' + NL, 'IO_CHUNK_BYTES = 512 * KIB  # nekodrop: 512 KiB I/O chunks' + NL),
     ('DVZIP_BLOCK_BYTES = 16 * KIB' + NL, 'DVZIP_BLOCK_BYTES = 64 * KIB  # nekodrop: 64 KiB DVZip blocks' + NL),
+    ("        return cand, os.fdopen(fd, 'wb')" + NL, "        return cand, os.fdopen(fd, 'wb', buffering=4 * MIB)  # nekodrop: 4 MiB output buffer" + NL),
     (
         NL.join([
             'def encode_dvzip(pieces):',
@@ -316,7 +318,7 @@ if changed:
     transfer_path.write_text(text, encoding='utf-8')
     print('transfer: 64 KiB DVZip + adaptive stored bypass + 0.5 s tail wait')
 
-# sender.py & receiver.py: 2 MiB socket buffers and TCP_NODELAY so bursty AWDL
+# sender.py & receiver.py: 4 MiB socket buffers and TCP_NODELAY so bursty AWDL
 # presence slots do not stall behind Winsock's 64 KiB default TCP window.
 sender_path = pathlib.Path(sys.argv[1]) / 'sender.py'
 text = sender_path.read_text(encoding='utf-8')
@@ -329,20 +331,37 @@ new_s = NL.join([
     '        try:',
     '            sock.settimeout(self.timeout)',
     '            for opt in ((socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),',
-    '                        (socket.SOL_SOCKET, socket.SO_SNDBUF, 2 * 1024 * 1024),',
-    '                        (socket.SOL_SOCKET, socket.SO_RCVBUF, 2 * 1024 * 1024)):',
+    '                        (socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024),',
+    '                        (socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)):',
     '                try:',
     '                    sock.setsockopt(*opt)',
     '                except OSError:',
     '                    pass',
     '            sock.connect((self.host, self.port, 0, self.scope))',
 ])
-if new_s not in text:
+if 'SO_SNDBUF, 4 * 1024 * 1024' not in text:
     if text.count(old_s) != 1:
         sys.exit('sender.py: Connection.connect moved; update patch-engine.py')
     text = text.replace(old_s, new_s, 1)
     sender_path.write_text(text, encoding='utf-8')
-    print('sender: 2 MiB socket buffers + TCP_NODELAY')
+    print('sender: 4 MiB socket buffers + TCP_NODELAY')
+
+text = sender_path.read_text(encoding='utf-8')
+sender_io_pairs = [
+    ('IO_BLOCK_BYTES = 64 * 1024' + NL, 'IO_BLOCK_BYTES = 512 * 1024  # nekodrop: 512 KiB send reads' + NL),
+    ("    with open(path, 'rb') as source:" + NL, "    with open(path, 'rb', buffering=4 * MIB) as source:" + NL),
+]
+changed = False
+for old_io, new_io in sender_io_pairs:
+    if new_io in text:
+        continue
+    if text.count(old_io) != 1:
+        sys.exit(f'sender.py: {old_io[:48]!r} moved; update patch-engine.py')
+    text = text.replace(old_io, new_io, 1)
+    changed = True
+if changed:
+    sender_path.write_text(text, encoding='utf-8')
+    print('sender: 512 KiB reads + 4 MiB file buffer')
 
 text = sender_path.read_text(encoding='utf-8')
 if "self._phase = 'tcp'" not in text:
@@ -390,11 +409,13 @@ old_r = NL.join([
     '        self.request.settimeout(transfer.READ_IDLE_TIMEOUT_SECONDS)',
 ])
 new_r = NL.join([
+    '    rbufsize = 512 * 1024  # nekodrop: 512 KiB buffered TLS reads',
+    '',
     '    def setup(self):',
     '        self.request.settimeout(transfer.READ_IDLE_TIMEOUT_SECONDS)',
     '        for opt in ((socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),',
-    '                    (socket.SOL_SOCKET, socket.SO_RCVBUF, 2 * 1024 * 1024),',
-    '                    (socket.SOL_SOCKET, socket.SO_SNDBUF, 2 * 1024 * 1024)):',
+    '                    (socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024),',
+    '                    (socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)):',
     '            try:',
     '                self.request.setsockopt(*opt)',
     '            except OSError:',
@@ -405,7 +426,7 @@ if new_r not in text:
         sys.exit('receiver.py: Handler.setup moved; update patch-engine.py')
     text = text.replace(old_r, new_r, 1)
     receiver_path.write_text(text, encoding='utf-8')
-    print('receiver: 2 MiB socket buffers + TCP_NODELAY')
+    print('receiver: 4 MiB socket buffers + 512 KiB rbufsize + TCP_NODELAY')
 
 
 # Contacts Only: nekodrop_identity.py (copied beside the engine by
@@ -903,3 +924,351 @@ if 'contact=contact' not in text:
         text = text.replace(old, new, 1)
     engine_path.write_text(text, encoding='utf-8')
     print('engine.py: include extracted link URLs and contact flag in asked events')
+
+# cpio.py: 512 KiB extraction chunks (8x fewer read/write calls on large files).
+cpio_path = pathlib.Path(sys.argv[1]) / 'cpio.py'
+text = cpio_path.read_text(encoding='utf-8')
+old_c = 'BLOCK_BYTES = 64 * 1024' + NL
+new_c = 'BLOCK_BYTES = 512 * 1024  # nekodrop: 512 KiB CPIO extraction chunks' + NL
+if new_c not in text:
+    if text.count(old_c) != 1:
+        sys.exit('cpio.py: BLOCK_BYTES moved; update patch-engine.py')
+    text = text.replace(old_c, new_c, 1)
+    cpio_path.write_text(text, encoding='utf-8')
+    print('cpio.py: 512 KiB extraction chunks')
+
+# transfer.py: streaming DVZip -> CPIO extraction (eliminates the second full-size
+# temp file copy in store_upload) + AsyncBufferedWriter so TLS receive never stalls
+# on synchronous NTFS writes.
+transfer_path = pathlib.Path(sys.argv[1]) / 'transfer.py'
+text = transfer_path.read_text(encoding='utf-8')
+if 'class _DvzipStream:' not in text:
+    stream_pairs = [
+        (
+            'import contextlib' + NL,
+            'import collections' + NL + 'import contextlib' + NL + 'import queue' + NL,
+        ),
+        (
+            NL.join([
+                'def store_upload(raw, dest, tid, receive_budget):',
+                '    """Decode and extract regular files, removing every output on failure."""',
+                '    created = []',
+                '    try:',
+                '        with tempfile.TemporaryFile(dir=dest) as archive:',
+                '            raw.seek(0)',
+                "            logging.debug('upload %s: body starts with %s', tid, raw.read(8).hex())",
+                '            decoded = decode_dvzip(raw, archive, receive_budget.byte_limit, dest)',
+                '            # The wire copy is no longer needed. Release its blocks before the',
+                '            # extracted files begin consuming space.',
+                '            raw.seek(0)',
+                '            raw.truncate(0)',
+                '            archive.seek(0)',
+                "            logging.info('upload %s: decoded to %d bytes', tid, decoded)",
+                '            return _extract(archive, dest,',
+                '                            ExtractionBudget(receive_budget.byte_limit), created)',
+                '    except Exception:',
+                '        for name in reversed(created):',
+                '            with contextlib.suppress(FileNotFoundError):',
+                '                os.unlink(os.path.join(dest, name))',
+                '        raise',
+            ]),
+            NL.join([
+                'class _DvzipStream:',
+                '    """Pull-based gzip/DVZip decoder feeding cpio.read_entries directly,',
+                '    eliminating the intermediate decoded temp file copy."""',
+                '',
+                '    def __init__(self, source, byte_limit):',
+                '        self._source = source',
+                '        self._limit = byte_limit',
+                '        self.total = 0',
+                '        self._chunks = collections.deque()',
+                '        self._off = 0',
+                '        self._avail = 0',
+                '        self._eof = False',
+                '        self._source.seek(0)',
+                '        magic = self._source.read(2)',
+                '        self._source.seek(0)',
+                "        self._is_gzip = (magic == b'\\x1f\\x8b')",
+                '        self._gz = zlib.decompressobj(zlib.MAX_WBITS | 16) if self._is_gzip else None',
+                '        self._block_left = 0',
+                '        self._block_stored = False',
+                '        self._block_dec = None',
+                '',
+                '    def _emit(self, data):',
+                '        if not data:',
+                '            return',
+                '        if self.total + len(data) > self._limit:',
+                '            raise UploadLimitError(',
+                "                f'decompressed archive exceeds {self._limit}-byte limit')",
+                '        self.total += len(data)',
+                '        self._chunks.append(data)',
+                '        self._avail += len(data)',
+                '',
+                '    def _inflate_all(self, dec, data):',
+                '        while data:',
+                '            remaining = self._limit - self.total',
+                '            output = dec.decompress(data, min(IO_CHUNK_BYTES, remaining + 1))',
+                '            self._emit(output)',
+                '            if dec.unconsumed_tail:',
+                '                data = dec.unconsumed_tail',
+                '            else:',
+                '                return',
+                '',
+                '    def _fill_one(self):',
+                '        if self._is_gzip:',
+                '            data = self._source.read(IO_CHUNK_BYTES)',
+                '            if not data:',
+                '                self._emit(self._gz.flush())',
+                '                if not self._gz.eof:',
+                "                    raise ValueError('truncated gzip body')",
+                '                self._eof = True',
+                '                return',
+                '            self._inflate_all(self._gz, data)',
+                '            if self._gz.unused_data:',
+                "                raise ValueError('gzip body has trailing data')",
+                '            return',
+                '        if self._block_left == 0:',
+                '            if self._block_dec is not None:',
+                '                self._emit(self._block_dec.flush())',
+                '                if not self._block_dec.eof:',
+                "                    raise ValueError('truncated compressed block')",
+                '                self._block_dec = None',
+                '                if self._avail:',
+                '                    return',
+                '            header = self._source.read(4)',
+                '            if not header:',
+                '                self._eof = True',
+                '                return',
+                '            if len(header) != 4:',
+                "                raise ValueError(f'truncated DVZip block header: {len(header)} bytes')",
+                "            value = int.from_bytes(header, 'big')",
+                '            self._block_left = value & 0x7fffffff',
+                '            self._block_stored = bool(value & 0x80000000)',
+                '            self._block_dec = None if self._block_stored else zlib.decompressobj()',
+                '            if self._block_left == 0:',
+                '                return',
+                '        data = self._source.read(min(self._block_left, IO_CHUNK_BYTES))',
+                '        if not data:',
+                "            kind = 'stored' if self._block_stored else 'compressed'",
+                "            raise ValueError(f'truncated {kind} block: {self._block_left} bytes missing')",
+                '        self._block_left -= len(data)',
+                '        if self._block_stored:',
+                '            self._emit(data)',
+                '        else:',
+                '            self._inflate_all(self._block_dec, data)',
+                '            if self._block_dec.unused_data:',
+                "                raise ValueError('compressed block has trailing data')",
+                '            if self._block_left == 0:',
+                '                self._emit(self._block_dec.flush())',
+                '                if not self._block_dec.eof:',
+                "                    raise ValueError('truncated compressed block')",
+                '                self._block_dec = None',
+                '',
+                '    def read(self, size=-1):',
+                '        if size == 0:',
+                "            return b''",
+                '        if size < 0:',
+                '            while not self._eof:',
+                '                self._fill_one()',
+                '            size = self._avail',
+                '        else:',
+                '            while self._avail < size and not self._eof:',
+                '                self._fill_one()',
+                '        if self._avail == 0:',
+                "            return b''",
+                '        want = min(size, self._avail)',
+                '        head = self._chunks[0]',
+                '        head_rem = len(head) - self._off',
+                '        if head_rem >= want:',
+                '            if self._off == 0 and head_rem == want:',
+                '                self._chunks.popleft()',
+                '                self._avail -= want',
+                '                return head',
+                '            out = head[self._off:self._off + want]',
+                '            self._off += want',
+                '            self._avail -= want',
+                '            if self._off == len(head):',
+                '                self._chunks.popleft()',
+                '                self._off = 0',
+                '            return out',
+                '        parts = []',
+                '        left = want',
+                '        while left:',
+                '            head = self._chunks[0]',
+                '            if self._off:',
+                '                head = head[self._off:]',
+                '                self._off = 0',
+                '            if len(head) <= left:',
+                '                self._chunks.popleft()',
+                '                parts.append(head)',
+                '                left -= len(head)',
+                '            else:',
+                '                parts.append(head[:left])',
+                '                self._chunks[0] = head[left:]',
+                '                left = 0',
+                '        self._avail -= want',
+                "        return b''.join(parts)",
+                '',
+                '    def drain(self):',
+                '        """Consume trailing CPIO padding and verify clean gzip/DVZip EOF."""',
+                '        while not self._eof:',
+                '            self._chunks.clear()',
+                '            self._off = 0',
+                '            self._avail = 0',
+                '            self._fill_one()',
+                '        return self.total',
+                '',
+                '',
+                'class AsyncBufferedWriter:',
+                '    """Offloads raw temp-file writes to a daemon thread so TLS reads never',
+                '    stall on synchronous NTFS writes."""',
+                '',
+                '    def __init__(self, target, max_pending=32):',
+                '        self._target = target',
+                '        self._queue = queue.Queue(maxsize=max_pending)',
+                '        self._error = None',
+                '        self._closed = False',
+                "        self._thread = threading.Thread(target=self._run, name='nekodrop-rx-writer', daemon=True)",
+                '        self._thread.start()',
+                '',
+                '    def _run(self):',
+                '        while True:',
+                '            item = self._queue.get()',
+                '            if item is None:',
+                '                return',
+                '            if self._error is not None:',
+                '                continue',
+                '            try:',
+                '                written = self._target.write(item)',
+                '                if written != len(item):',
+                "                    self._error = OSError(f'short async write: {written} of {len(item)} bytes')",
+                '            except Exception as exc:',
+                '                self._error = exc',
+                '',
+                '    def write(self, data):',
+                '        if self._error is not None:',
+                '            raise self._error',
+                '        if not data:',
+                '            return 0',
+                '        self._queue.put(data)',
+                '        if self._error is not None:',
+                '            raise self._error',
+                '        return len(data)',
+                '',
+                '    def close(self):',
+                '        if not self._closed:',
+                '            self._closed = True',
+                '            self._queue.put(None)',
+                '            self._thread.join()',
+                '        if self._error is not None:',
+                '            raise self._error',
+                "        if hasattr(self._target, 'flush'):",
+                '            self._target.flush()',
+                '',
+                '    def abort(self):',
+                '        if not self._closed:',
+                '            self._closed = True',
+                '            while True:',
+                '                try:',
+                '                    self._queue.get_nowait()',
+                '                except queue.Empty:',
+                '                    break',
+                '            self._queue.put(None)',
+                '            self._thread.join()',
+                '',
+                '',
+                'def store_upload(raw, dest, tid, receive_budget):',
+                '    """Decode and extract regular files in a single pass, removing every output on failure."""',
+                '    created = []',
+                '    try:',
+                '        raw.seek(0)',
+                "        logging.debug('upload %s: body starts with %s', tid, raw.read(8).hex())",
+                '        stream = _DvzipStream(raw, receive_budget.byte_limit)',
+                '        written = _extract(stream, dest,',
+                '                           ExtractionBudget(receive_budget.byte_limit), created)',
+                '        decoded = stream.drain()',
+                '        raw.seek(0)',
+                '        raw.truncate(0)',
+                "        logging.info('upload %s: decoded to %d bytes', tid, decoded)",
+                '        return written',
+                '    except Exception:',
+                '        for name in reversed(created):',
+                '            with contextlib.suppress(FileNotFoundError):',
+                '                os.unlink(os.path.join(dest, name))',
+                '        raise',
+            ]),
+        ),
+    ]
+    for old, new in stream_pairs:
+        if text.count(old) != 1:
+            sys.exit(f'transfer.py: {old[:60]!r} moved; update patch-engine.py')
+        text = text.replace(old, new, 1)
+    transfer_path.write_text(text, encoding='utf-8')
+    print('transfer.py: streaming DVZip->CPIO extraction + AsyncBufferedWriter')
+
+# receiver.py: 4 MiB temp-file buffering + AsyncBufferedWriter write-behind queue.
+receiver_path = pathlib.Path(sys.argv[1]) / 'receiver.py'
+text = receiver_path.read_text(encoding='utf-8')
+if 'AsyncBufferedWriter' not in text:
+    rx_io_pairs = [
+        (
+            NL.join([
+                '        try:',
+                '            wire_bytes = transfer.read_request_body(',
+                '                self.rfile, self.headers,',
+                '                transfer.EndWatchingFile(raw, expect_little_more, on_progress),',
+                '                budget.byte_limit, disk=dest, plan=plan, deadline=deadline)',
+                '        except TimeoutError as stall:',
+                '            if not deadline.between_chunks:',
+                '                raise',
+                '            try:',
+                '                written = transfer.store_upload(raw, dest, tid, budget)',
+                '            except transfer.UploadLimitError:',
+                '                raise',
+                '            except ValueError:',
+                '                raise stall from None',
+                "            logging.info('upload %s: %d bytes received, a complete archive '",
+                "                         'with no end marker', tid, deadline.transferred)",
+                '            return written, False',
+                "        logging.info('upload %s: %d bytes received', tid, wire_bytes)",
+                '        return transfer.store_upload(raw, dest, tid, budget), True',
+            ]),
+            NL.join([
+                '        sink = transfer.AsyncBufferedWriter(raw)',
+                '        try:',
+                '            try:',
+                '                wire_bytes = transfer.read_request_body(',
+                '                    self.rfile, self.headers,',
+                '                    transfer.EndWatchingFile(sink, expect_little_more, on_progress),',
+                '                    budget.byte_limit, disk=dest, plan=plan, deadline=deadline)',
+                '                sink.close()',
+                '            except TimeoutError as stall:',
+                '                sink.close()',
+                '                if not deadline.between_chunks:',
+                '                    raise',
+                '                try:',
+                '                    written = transfer.store_upload(raw, dest, tid, budget)',
+                '                except transfer.UploadLimitError:',
+                '                    raise',
+                '                except ValueError:',
+                '                    raise stall from None',
+                "                logging.info('upload %s: %d bytes received, a complete archive '",
+                "                             'with no end marker', tid, deadline.transferred)",
+                '                return written, False',
+                '        finally:',
+                '            sink.abort()',
+                "        logging.info('upload %s: %d bytes received', tid, wire_bytes)",
+                '        return transfer.store_upload(raw, dest, tid, budget), True',
+            ]),
+        ),
+        (
+            '            with tempfile.TemporaryFile(dir=settings.dest) as raw:',
+            '            with tempfile.TemporaryFile(dir=settings.dest, buffering=4 * transfer.MIB) as raw:',
+        ),
+    ]
+    for old, new in rx_io_pairs:
+        if text.count(old) != 1:
+            sys.exit(f'receiver.py: {old[:60]!r} moved; update patch-engine.py')
+        text = text.replace(old, new, 1)
+    receiver_path.write_text(text, encoding='utf-8')
+    print('receiver.py: 4 MiB temp buffer + AsyncBufferedWriter')

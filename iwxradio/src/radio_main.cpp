@@ -92,6 +92,9 @@ struct Options {
   /* --aggregate (experimental "A-MPDU sending"): Block Ack and firmware
    * aggregation to the iPhone, with ForbiddenItlwm's peer-schedule pause. */
   bool aggregate = false;
+  /* --he80 (experimental "high-throughput mode"): Wi-Fi 6 HE80 TX TLC +
+   * 8 KiB RX DMA buffers + ADDBA RX A-MSDU negotiation. */
+  bool he80 = false;
   /* --fast-unlock (experimental "fast passive-channel unlock", #11): on a
    * passive 5 GHz AWDL channel, discovery scans at 1.5, 12 and 30 s over the
    * non-DFS channels instead of the one full scan at 10 s, and the country
@@ -148,6 +151,7 @@ bool parse_options(int argc, char **argv, Options &o) {
     else if (a == "--retries" || a == "--capture") value();
     else if (a == "--no-block-ack") o.no_block_ack = true;
     else if (a == "--aggregate") o.aggregate = o.dev.aggregate = true;
+    else if (a == "--he80") o.he80 = o.dev.he80 = true;
     else if (a == "--fast-unlock") o.fast_unlock = true;
     else if (a == "--coex-plan") o.coex_plan = true;
     else if (a == "--family") {
@@ -1046,7 +1050,7 @@ int main(int argc, char **argv) {
     while (!stopping() && dev.healthy()) {
       bool busy = dev.poll() > 0;
       pipe.flush_send();
-      for (int n = 0; n < 128 && inbox.pop(req); n++) {
+      for (int n = 0; n < 128 && (inbox.pop(req) || (pipe.pop_shm_tx(req.payload) && (req.type = RADIO_LINK_TX, true))); n++) {
         busy = true;
         if (req.type == RADIO_LINK_TX) {
           RadiotapInfo rt;
@@ -1158,7 +1162,7 @@ int main(int argc, char **argv) {
           if (!r.immediate || opt.no_block_ack) continue;
           if (!dev.add_rx_ba(r.peer, r.tid, r.ssn, r.window, r.token)) continue;
           uint8_t answer[awdl::kAddbaResponseLength];
-          awdl::build_addba_response(answer, r, dev_address, ++mgmt_seq);
+          awdl::build_addba_response(answer, r, dev_address, ++mgmt_seq, opt.he80);
           if (may_send()) {
             uq.push_front({std::vector<uint8_t>(answer, answer + sizeof(answer)), TxRate{}, false});
             ba_answers++;
@@ -1354,10 +1358,19 @@ int main(int argc, char **argv) {
                           static_cast<unsigned long long>(a.singles_fail),
                           static_cast<unsigned>(a.last_fail_status),
                           static_cast<unsigned>(a.last_single_rate));
-            /* A second stall means this card's firmware never reports Block
-             * Acks (seen on an AX210, #39): stop asking until the radio restarts. */
-            agg.retry_us = ++agg.stalls >= 2 ? UINT64_MAX : t + awdl::kBaTxFailBackoffUS;
-            stop(detail);
+            /* If experimental HE80 TLC stalled with 0 Block Acks, immediately
+             * fall back to proven VHT80 and allow a quick retry instead of
+             * counting it toward permanent aggregation disable. */
+            if (dev.agg_using_he80()) {
+              dev.agg_fallback_vht();
+              agg.retry_us = t + 2000000;
+              stop("HE80 TLC gave no Block Acks; falling back to VHT80");
+            } else {
+              /* A second stall means this card's firmware never reports Block
+               * Acks (seen on an AX210, #39): stop asking until the radio restarts. */
+              agg.retry_us = ++agg.stalls >= 2 ? UINT64_MAX : t + awdl::kBaTxFailBackoffUS;
+              stop(detail);
+            }
             /* The peer still holds the session it agreed to: end it (DELBA), as
              * after a finished bulk send, so its receive side does not keep
              * waiting for aggregate sequence numbers that will never come (#39). */
@@ -1656,7 +1669,8 @@ int main(int argc, char **argv) {
   std::vector<uint8_t> payload;
   while (!stopping() && pipe.wait_for_client()) {
     radio_link_hello hello{RADIO_LINK_VERSION, opt.channel,
-                           static_cast<uint8_t>(opt.channel <= 14 ? 20 : opt.width), {}};
+                           static_cast<uint8_t>(opt.channel <= 14 ? 20 : opt.width),
+                           {pipe.shm_cap_flag(), 0}};
     client_connected = true;
     pipe.send(RADIO_LINK_HELLO, {reinterpret_cast<const uint8_t *>(&hello), sizeof(hello)});
     log_line("client connected");

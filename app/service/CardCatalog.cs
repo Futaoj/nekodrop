@@ -199,12 +199,12 @@ public static class CardCatalog
     public static RadioLaunch BuildRadioLaunch(
         AdapterProfile profile, int channel, bool kernel,
         string country, string? staConf, bool aggregate, bool fastUnlock, bool coexPlan = false,
-        bool btCoexBalanced = false)
+        bool btCoexBalanced = false, bool highThroughput = false)
     {
         var backend = RadioBackends.Get(profile.Backend);
         return new RadioLaunch(backend.ExeName,
             backend.BuildArgs(new RadioStart(profile, channel, kernel, country, staConf, aggregate, fastUnlock, coexPlan,
-                                             btCoexBalanced)));
+                                             btCoexBalanced, highThroughput)));
     }
 
     /// <summary>One model the user can pick when a card is not recognized by its ID.</summary>
@@ -345,6 +345,12 @@ public static class CardCatalog
         Check(SameLaunch(BuildRadioLaunch(iwx, 149, true, "", null, false, false, btCoexBalanced: true),
                          "nekodrop-radio.exe", "149", "--width", "80", "--kernel"),
               "Iwx kernel mode must suppress --bt-coex");
+        Check(SameLaunch(BuildRadioLaunch(iwx, 149, false, "", null, true, false, highThroughput: true),
+                         "nekodrop-radio.exe", "149", "--width", "80", "--tx-window", "64", "--aggregate", "--he80"),
+              "Iwx high-throughput launch args");
+        Check(SameLaunch(BuildRadioLaunch(iwx, 149, true, "", null, true, false, highThroughput: true),
+                         "nekodrop-radio.exe", "149", "--width", "80", "--kernel"),
+              "Iwx kernel mode must suppress --he80");
         if (r is not null)
         {
             Check(SameLaunch(BuildRadioLaunch(r, 6, true, "JP", @"C:\run\sta.conf", true, true),
@@ -415,6 +421,9 @@ public static class CardCatalog
             Check(SameLaunch(BuildRadioLaunch(mtk, 44, false, "00", null, false, false),
                              "nekodrop-radio-mtk.exe", "44", "--width", "80"),
                   $"MtkRadio 14C3:{dev} ch 44 launch args (00 omitted)");
+            Check(SameLaunch(BuildRadioLaunch(mtk, 149, false, "JP", null, false, false, highThroughput: true),
+                             "nekodrop-radio-mtk.exe", "149", "--width", "80", "--country", "JP", "--he80"),
+                  $"MtkRadio 14C3:{dev} high-throughput launch args");
         }
 
         // Every backend kind, profile and manual model has a registered radio backend.

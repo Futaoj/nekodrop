@@ -51,6 +51,7 @@ struct Ring {
   DmaBuf desc_buf;       /* array of `count` MtkDesc */
   std::vector<DmaBuf> bufs; /* per-slot 4 KiB payload buffer */
   std::vector<DmaBuf> txwi; /* per-slot 64-byte TXD+TXP buffer (TX data only) */
+  std::vector<uint8_t> rx_reasm; /* multi-descriptor RX A-MSDU reassembly (up to 12 KiB) */
 
   MtkDesc *descs() const { return reinterpret_cast<MtkDesc *>(desc_buf.va); }
 };
