@@ -507,3 +507,87 @@ patch_once(
     '\t}\n',
     'radio_client.c lock-free SHM RX pop + TX push',
 )
+
+# 7. ev_win.c: fair poll all ready I/O handles after WaitForMultipleObjects so a
+#    persistently signaled manual-reset shm_rx_event never starves host_fd (TCP ACKs!).
+ev_win_c = root / 'awdl' / 'win' / 'ev_win.c'
+patch_once(
+    ev_win_c,
+    'Fair poll: never starve later handles',
+    '\tDWORD result = WaitForMultipleObjects(count, handles, FALSE, INFINITE);\n'
+    '\tDWORD index = result - WAIT_OBJECT_0;\n'
+    '\tif (index < count && watchers[index])\n'
+    '\t\tev_feed_event(loop, watchers[index], EV_READ);\n',
+    '\tDWORD result = WaitForMultipleObjects(count, handles, FALSE, INFINITE);\n'
+    '\tDWORD index = result - WAIT_OBJECT_0;\n'
+    '\tif (index < count && watchers[index])\n'
+    '\t\tev_feed_event(loop, watchers[index], EV_READ);\n'
+    '\t/* Fair poll: never starve later handles (e.g. host_fd TCP ACKs) behind\n'
+    '\t * a persistently signaled manual-reset SHM RX event. */\n'
+    '\tfor (DWORD i = index + 1; i < count; i++) {\n'
+    '\t\tif (watchers[i] && WaitForSingleObject(handles[i], 0) == WAIT_OBJECT_0)\n'
+    '\t\t\tev_feed_event(loop, watchers[i], EV_READ);\n'
+    '\t}\n',
+    'ev_win.c fair poll all ready handles',
+)
+
+# 8. io_win.c: batch up to 32 RX frames per pcap_dispatch call (32x fewer kernel
+#    WaitForMultipleObjects + SetWaitableTimer syscalls during high-rate RX bursts).
+io_win_c = root / 'awdl' / 'win' / 'io_win.c'
+patch_once(
+    io_win_c,
+    'int handled = 0;',
+    'int pcap_dispatch(pcap_t *handle, int count, pcap_handler callback, unsigned char *user) {\n'
+    '\t(void) count;\n'
+    '\tstatic uint8_t frame[RADIO_CLIENT_MAX_FRAME];\n'
+    '\tint length = radio_client_pop(handle->radio, frame);\n'
+    '\tif (length == 0 && merge.length) {\n'
+    '\t\t/* The queue is empty, but the rest of an aggregate may still be\n'
+    '\t\t * on its way from the radio. */\n'
+    '\t\tif (frame_before_delivery())\n'
+    '\t\t\tlength = radio_client_pop(handle->radio, frame);\n'
+    '\t\telse\n'
+    '\t\t\tdeliver_joined();\n'
+    '\t}\n'
+    '\tif (length == 0)\n'
+    '\t\treturn 0;\n'
+    '\tjoining.last_frame_us = now_us();\n'
+    '\tlength = frame_fixup_received(frame, length);\n'
+    '\tstatic uint8_t announced[SERVICE_BRIDGE_MAX_PACKET];\n'
+    '\tint announced_len = service_bridge_packet(frame, length, announced);\n'
+    '\tif (announced_len && host)\n'
+    '\t\thost_if_write(host, announced, announced_len);\n'
+    '\tstruct pcap_pkthdr header = {.caplen = (uint32_t) length, .len = (uint32_t) length};\n'
+    '\tcallback(user, &header, frame);\n'
+    '\treturn 1;\n'
+    '}\n',
+    'int pcap_dispatch(pcap_t *handle, int count, pcap_handler callback, unsigned char *user) {\n'
+    '\t(void) count;\n'
+    '\tstatic uint8_t frame[RADIO_CLIENT_MAX_FRAME];\n'
+    '\tstatic uint8_t announced[SERVICE_BRIDGE_MAX_PACKET];\n'
+    '\tint handled = 0;\n'
+    '\twhile (handled < 32) {\n'
+    '\t\tint length = radio_client_pop(handle->radio, frame);\n'
+    '\t\tif (length == 0 && merge.length) {\n'
+    '\t\t\t/* The queue is empty, but the rest of an aggregate may still be\n'
+    '\t\t\t * on its way from the radio. */\n'
+    '\t\t\tif (frame_before_delivery())\n'
+    '\t\t\t\tlength = radio_client_pop(handle->radio, frame);\n'
+    '\t\t\telse\n'
+    '\t\t\t\tdeliver_joined();\n'
+    '\t\t}\n'
+    '\t\tif (length == 0)\n'
+    '\t\t\tbreak;\n'
+    '\t\tjoining.last_frame_us = now_us();\n'
+    '\t\tlength = frame_fixup_received(frame, length);\n'
+    '\t\tint announced_len = service_bridge_packet(frame, length, announced);\n'
+    '\t\tif (announced_len && host)\n'
+    '\t\t\thost_if_write(host, announced, announced_len);\n'
+    '\t\tstruct pcap_pkthdr header = {.caplen = (uint32_t) length, .len = (uint32_t) length};\n'
+    '\t\tcallback(user, &header, frame);\n'
+    '\t\thandled++;\n'
+    '\t}\n'
+    '\treturn handled;\n'
+    '}\n',
+    'io_win.c batch up to 32 RX frames per pcap_dispatch',
+)
