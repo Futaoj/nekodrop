@@ -171,7 +171,9 @@ private:
       cleanup();
       return false;
     }
-    _rx_event = CreateEventA(psa, FALSE, FALSE, rx_name);
+    /* Manual-reset RX event: stays signaled while consumer drains a full burst
+     * (zero per-frame syscalls) and is only reset by the consumer when w == r. */
+    _rx_event = CreateEventA(psa, TRUE, FALSE, rx_name);
     _tx_event = CreateEventA(psa, FALSE, FALSE, tx_name);
     if (!_rx_event || !_tx_event) {
       cleanup();

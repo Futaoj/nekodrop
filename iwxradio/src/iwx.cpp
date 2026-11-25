@@ -1555,82 +1555,54 @@ bool IwxDevice::agg_setup(const uint8_t peer[6], bool vht80, bool mimo) {
     }
   }
   if (ok) {
-    /* Firmware rate control for the peer: HE80 (with --he80) or VHT80 when the
-     * listener is 80 MHz, two streams when both antennas can send. */
+    /* Firmware rate control for the peer: VHT80 when the listener is 80 MHz,
+     * two streams when both antennas can send. Intel 22000/QuZ firmware asserts
+     * in UMAC (0x20101a0d on TLC_MNG_CONFIG_CMD) if HE mode is requested on a
+     * LISTENER MAC context, so TX aggregation stays on VHT80 2SS MCS 4..9 SGI
+     * (866.7 Mbps PHY) while --he80 enables 8 KiB RX DMA + RX A-MSDU + AWDL HE80. */
     const uint8_t ant = valid_tx_ant();
     const bool two = mimo && (ant & 3) == 3;
     const bool vht = vht80 && _channel > 14;
-    const bool try_he = _opt.he80 && !_he80_fallback && vht && _width >= 80;
     const uint32_t id = iwx_cmd_id(IWX_TLC_MNG_CONFIG_CMD, IWX_DATA_PATH_GROUP, 0);
     const uint8_t ver = cmd_version(IWX_DATA_PATH_GROUP, IWX_TLC_MNG_CONFIG_CMD);
 
-    const auto send_tlc = [&](bool use_he) -> int {
-      iwx_tlc_config_cmd_v4 c{};
-      c.sta_id = 3;
-      c.non_ht_rates = htole16(static_cast<uint16_t>(_channel <= 14 ? 0x0fff : 0x0ff0));
-      c.chains = static_cast<uint8_t>(((ant & 1) ? IWX_TLC_MNG_CHAIN_A_MSK : 0) |
-                                      ((ant & 2) ? IWX_TLC_MNG_CHAIN_B_MSK : 0));
-      c.mode = static_cast<uint8_t>(
-          use_he ? IWX_TLC_MNG_MODE_HE : (vht ? IWX_TLC_MNG_MODE_VHT : IWX_TLC_MNG_MODE_HT));
-      /* High rates only (MCS 4..11 HE / 4..9 VHT / 4..7 HT): the peer leaves the
-       * channel often and rate control would otherwise drop to MCS 0 (#4). */
-      const uint16_t mcs = use_he ? 0x0ff0 : (vht ? 0x03f0 : 0x00f0);
-      c.ht_rates[IWX_TLC_NSS_1][IWX_TLC_MCS_PER_BW_80] = htole16(mcs);
-      if (two) c.ht_rates[IWX_TLC_NSS_2][IWX_TLC_MCS_PER_BW_80] = htole16(mcs);
-      c.max_ch_width =
-          static_cast<uint8_t>(vht && _width >= 80 ? IWX_TLC_MNG_CH_WIDTH_80MHZ : IWX_TLC_MNG_CH_WIDTH_20MHZ);
-      c.flags = htole16(static_cast<uint16_t>(IWX_TLC_MNG_CFG_FLAGS_LDPC_MSK |
-                                              (two ? IWX_TLC_MNG_CFG_FLAGS_STBC_MSK : 0u)));
-      c.sgi_ch_width_supp = static_cast<uint8_t>((1u << IWX_TLC_MNG_CH_WIDTH_20MHZ) |
-                                                 (1u << IWX_TLC_MNG_CH_WIDTH_40MHZ) |
-                                                 (1u << IWX_TLC_MNG_CH_WIDTH_80MHZ));
-      if (_opt.he80) c.max_mpdu_len = htole16(3895);
-      if (ver == 4) {
-        return send_cmd(id, &c, sizeof(c), false, nullptr);
-      }
+    iwx_tlc_config_cmd_v4 c{};
+    c.sta_id = 3;
+    c.non_ht_rates = htole16(static_cast<uint16_t>(_channel <= 14 ? 0x0fff : 0x0ff0));
+    c.chains = static_cast<uint8_t>(((ant & 1) ? IWX_TLC_MNG_CHAIN_A_MSK : 0) |
+                                    ((ant & 2) ? IWX_TLC_MNG_CHAIN_B_MSK : 0));
+    c.mode = static_cast<uint8_t>(vht ? IWX_TLC_MNG_MODE_VHT : IWX_TLC_MNG_MODE_HT);
+    /* High rates only, as ForbiddenItlwm's iwx_rs_init (MCS 4..9 VHT / 4..7 HT):
+     * the peer leaves the channel often and rate control would otherwise drop
+     * all the way down to MCS 0 (#4). */
+    const uint16_t mcs = vht ? 0x03f0 : 0x00f0;
+    c.ht_rates[IWX_TLC_NSS_1][IWX_TLC_MCS_PER_BW_80] = htole16(mcs);
+    if (two) c.ht_rates[IWX_TLC_NSS_2][IWX_TLC_MCS_PER_BW_80] = htole16(mcs);
+    c.max_ch_width =
+        static_cast<uint8_t>(vht && _width >= 80 ? IWX_TLC_MNG_CH_WIDTH_80MHZ : IWX_TLC_MNG_CH_WIDTH_20MHZ);
+    c.flags = htole16(static_cast<uint16_t>(IWX_TLC_MNG_CFG_FLAGS_LDPC_MSK |
+                                            (two ? IWX_TLC_MNG_CFG_FLAGS_STBC_MSK : 0u)));
+    c.sgi_ch_width_supp = static_cast<uint8_t>((1u << IWX_TLC_MNG_CH_WIDTH_20MHZ) |
+                                               (1u << IWX_TLC_MNG_CH_WIDTH_40MHZ) |
+                                               (1u << IWX_TLC_MNG_CH_WIDTH_80MHZ));
+    _agg_he80_active = false;
+    int err;
+    if (ver == 4) {
+      err = send_cmd(id, &c, sizeof(c), false, nullptr);
+    } else {
       iwl_tlc_config_cmd_v3 v3{};
       v3.sta_id = c.sta_id;
       v3.max_ch_width = c.max_ch_width;
       v3.mode = c.mode;
       v3.chains = c.chains;
-      v3.amsdu = _opt.he80 ? 1u : 0u;
       v3.flags = c.flags;
       v3.non_ht_rates = c.non_ht_rates;
       v3.ht_rates[0][0] = c.ht_rates[0][0];
       v3.ht_rates[1][0] = c.ht_rates[1][0];
-      v3.max_mpdu_len = c.max_mpdu_len;
       v3.sgi_ch_width_supp = c.sgi_ch_width_supp;
       size_t sz = sizeof(v3);
       if (ver == IWX_FW_CMD_VER_UNKNOWN || ver < 3) sz -= 4;
-      return send_cmd(id, &v3, sz, false, nullptr);
-    };
-
-    int err = 0;
-    _agg_he80_active = false;
-    if (try_he) {
-      const uint8_t he_ver = cmd_version(IWX_DATA_PATH_GROUP, IWX_STA_HE_CTXT_CMD);
-      if (he_ver != IWX_FW_CMD_VER_UNKNOWN) {
-        static const uint8_t kAwdlBssid[6] = {0x00, 0x25, 0x00, 0xff, 0x94, 0x73};
-        iwx_he_sta_context_cmd he{};
-        he.sta_id = 3;
-        he.tid_limit = 7;
-        he.flags = htole32(IWX_HE_BSS_COLOR_DIS | IWX_HE_ACK_ENABLED);
-        std::memcpy(he.ref_bssid_addr, kAwdlBssid, 6);
-        const uint32_t he_id = iwx_cmd_id(IWX_STA_HE_CTXT_CMD, IWX_DATA_PATH_GROUP, 0);
-        const int herr = send_cmd(he_id, &he, sizeof(he), false, nullptr);
-        if (herr) _log("aggregate: STA_HE_CTXT_CMD returned " + std::to_string(herr) + "; trying HE TLC anyway");
-      }
-      err = send_tlc(true);
-      if (err == 0) {
-        _agg_he80_active = true;
-        _log("aggregate: Wi-Fi 6 HE80 2SS TLC active (MCS 4..11)");
-      } else {
-        _log("aggregate: HE80 TLC refused (" + std::to_string(err) + "); falling back to VHT80");
-        _he80_fallback = true;
-        err = send_tlc(false);
-      }
-    } else {
-      err = send_tlc(false);
+      err = send_cmd(id, &v3, sz, false, nullptr);
     }
     if (err) _log("aggregate: rate control refused (" + std::to_string(err) + ")");
     ok = err == 0;
