@@ -1272,3 +1272,43 @@ if 'AsyncBufferedWriter' not in text:
         text = text.replace(old, new, 1)
     receiver_path.write_text(text, encoding='utf-8')
     print('receiver.py: 4 MiB temp buffer + AsyncBufferedWriter')
+
+# engine.py: keep the Bluetooth beacon running while receiving.  An Apple
+# device's AirDrop list shows only peers whose Bluetooth advertisement it has
+# seen; today the beacon starts only while the client looks for receivers
+# (sender.Beacon in the looking path), so a PC that is just receiving is
+# invisible to iOS 18 / macOS 15 (#51).  Off unless NEKODROP_BLE_STANDBY=1.
+_hook('engine.py', [
+    (
+        '        self.announcer = None' + NL + '        self._said = None' + NL,
+        '        self.announcer = None' + NL +
+        '        self.beacon = None  # nekodrop: advertised while receiving' + NL +
+        '        self._said = None' + NL,
+    ),
+    (
+        "        logging.info('receiving as %s on port %d into %s', self.settings.name," + NL +
+        "                     self.settings.port, self.settings.dest)" + NL +
+        '        self._say(True)' + NL,
+        "        logging.info('receiving as %s on port %d into %s', self.settings.name," + NL +
+        "                     self.settings.port, self.settings.dest)" + NL +
+        "        if os.environ.get('NEKODROP_BLE_STANDBY') == '1':" + NL +
+        '            try:' + NL +
+        '                self.beacon = sender.Beacon()' + NL +
+        '                self.beacon.__enter__()' + NL +
+        '            except Exception as error:  # noqa: BLE001' + NL +
+        "                logging.warning('standby beacon failed: %s', error)" + NL +
+        '                self.beacon = None' + NL +
+        '        self._say(True)' + NL,
+    ),
+    (
+        '    def stop(self, reason=None):' + NL + '        if self.announcer:' + NL,
+        '    def stop(self, reason=None):' + NL +
+        '        if self.beacon:' + NL +
+        '            try:' + NL +
+        '                self.beacon.__exit__(None, None, None)' + NL +
+        '            except Exception:  # noqa: BLE001' + NL +
+        '                pass' + NL +
+        '            self.beacon = None' + NL +
+        '        if self.announcer:' + NL,
+    ),
+], 'NEKODROP_BLE_STANDBY')
