@@ -1,8 +1,26 @@
 # Changelog / 更新日志
 
 > Release channels / 发布通道：
-> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.2.5`**（首个稳定基线为 `v0.1.22`）。
+> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.2.6`**（首个稳定基线为 `v0.1.22`）。
 > - **Hourly（每时预览版 / Pre-release）**：持续迭代的预览版（客户端默认也会收到；取消勾选「包括预览版」就只收稳定版）；GitHub Releases 仅滚动保留最新 4 个每时版 + 稳定版（最多 5 个 Release），历史 Git Tag 全部保留。
+
+---
+
+## v2.2.6 (Stable / 稳定版) — 2026-11-25
+
+### 中文
+
+- **并发模式 Wi-Fi 站点关联（Association Request）合规性与首连稳定性修复（[#60](https://github.com/zheznanohana/nekodrop/issues/60)）**：
+  - 修复启动后首次接入 Wi-Fi 时 `_state_since` 尚未对齐当前时钟导致跳过等待信标（`Listening`）、在未读取路由器能力前直接发起认证的问题；
+  - 关联请求帧补齐 IEEE 802.11 规范字段：对加密网络设置 Capability Info 的 `Privacy`（`0x0010`）位并按路由器信标对齐 `Short Slot Time`（`0x0400`），过滤 Supported / Extended Rates 中的 BSS Membership Selectors（避免在未携带 HE/EHT IE 时误宣称 Wi-Fi 6/7 成员资格），并在路由器广播 WMM 时携带标准 WMM Information Element（802.11n/ac HT/VHT 必需）；
+  - 当路由器拒绝关联（如 `status 45`）时，在日志中输出无隐私泄露的信标安全上下文（`ap_capab`、`rsn_caps`、`wmm`、`akm`、`pmf`、`ap_rsn` 十六进制），便于精确定位特殊路由器兼容问题。
+
+### English
+
+- **Concurrent-mode Wi-Fi station Association Request compliance & first-join beacon wait fix ([#60](https://github.com/zheznanohana/nekodrop/issues/60)):**
+  - Anchored `_state_since` on the first `tick()` after `start()` and reset `_beacon_seen`, preventing the initial Wi-Fi join at startup from timing out `State::Listening` immediately and authenticating before any AP beacon is parsed;
+  - Made `send_assoc()` conform to IEEE 802.11 / 802.11n/ac expectations: sets the `Privacy` (`0x0010`) capability bit on protected networks, mirrors `Short Slot Time` (`0x0400`) from the AP beacon, filters out BSS membership selectors (`> 54 Mb/s`, such as HT/VHT/HE/EHT/SAE-H2E) from Supported/Extended Rates so the station never claims HE/EHT membership without HE/EHT IEs, and appends the standard WMM Information Element whenever the AP advertises WMM;
+  - Logs non-sensitive AP security context (`ap_capab`, `rsn_caps`, `wmm`, `akm`, `pmf`, raw `ap_rsn` hex) whenever an AP refuses association (e.g., `status 45`) to speed up router-specific diagnosis.
 
 ---
 

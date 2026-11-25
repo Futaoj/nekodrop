@@ -132,9 +132,11 @@ private:
   bool _pmf = false; /* management frame protection negotiated */
 
   /* What the beacon told us. */
-  bool _beacon_seen = false, _ap_rsn = false, _ap_ht = false, _ap_vht = false, _ap_2ss = false;
+  bool _beacon_seen = false, _ap_rsn = false, _ap_ht = false, _ap_vht = false, _ap_2ss = false, _ap_wmm = false;
   bool _ap_pairwise_ccmp = true, _ap_mfpc = false, _ap_mfpr = false, _ap_bip_cmac = true, _ap_h2e_only = false;
   uint32_t _ap_akms = 0; /* bit n: AKM 00-0F-AC:n offered */
+  uint16_t _ap_rsn_caps = 0;
+  std::vector<uint8_t> _ap_rsn_raw;
 
   /* SAE (WPA3-Personal) */
   enum class SaeStep : uint8_t { None, Committed, Confirmed };

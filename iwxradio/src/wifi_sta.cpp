@@ -193,6 +193,7 @@ bool WifiStation::start(const StaConfig &cfg, std::string &error) {
   }
   _joins++;
   reset_join_state();
+  _beacon_seen = false;
   _state = State::Listening;
   _state_since = _now;
   _tries = 0;
@@ -330,7 +331,7 @@ void WifiStation::learn_beacon(const uint8_t *f, size_t len) {
   if (len < 36) return;
   _beacon_int = le16(f + 32);
   _ap_capab = le16(f + 34);
-  _ap_rsn = _ap_ht = _ap_vht = _ap_2ss = false;
+  _ap_rsn = _ap_ht = _ap_vht = _ap_2ss = _ap_wmm = false;
   _ap_ht_cap = 0;
   _ap_ampdu = 0;
   _ap_vht_cap = 0;
@@ -338,6 +339,8 @@ void WifiStation::learn_beacon(const uint8_t *f, size_t len) {
   _ap_pairwise_ccmp = _ap_bip_cmac = true;
   _ap_mfpc = _ap_mfpr = _ap_h2e_only = false;
   _ap_akms = 0;
+  _ap_rsn_caps = 0;
+  _ap_rsn_raw.clear();
   _ap_width = 20;
   _ap_rates.clear();
   for (size_t i = 36; i + 2 <= len;) {
@@ -350,6 +353,7 @@ void WifiStation::learn_beacon(const uint8_t *f, size_t len) {
       /* RSN (9.4.2.25): version, group cipher, pairwise ciphers, AKMs,
        * capabilities, PMKIDs, group management cipher. The group cipher
        * must be CCMP, as before. */
+      _ap_rsn_raw.assign(v, v + std::min<size_t>(n, 64));
       const bool ccmp = std::memcmp(v + 2, kRsnOui, 3) == 0 && v[5] == 4;
       _ap_rsn = ccmp;
       size_t o = 6;
@@ -367,6 +371,7 @@ void WifiStation::learn_beacon(const uint8_t *f, size_t len) {
       if (o + 2 <= n) {
         const uint16_t caps = le16(v + o);
         o += 2;
+        _ap_rsn_caps = caps;
         _ap_mfpc = caps & 0x80;
         _ap_mfpr = caps & 0x40;
       }
@@ -385,6 +390,9 @@ void WifiStation::learn_beacon(const uint8_t *f, size_t len) {
       _ap_vht_mcs = le16(v + 4);
     } else if (id == 192 && n >= 1) {
       if (v[0] >= 1) _ap_width = 80;
+    } else if (id == 221 && n >= 6 && v[0] == 0x00 && v[1] == 0x50 && v[2] == 0xf2 && v[3] == 0x02 &&
+               (v[4] == 0x00 || v[4] == 0x01)) {
+      _ap_wmm = true;
     }
     i += 2 + n;
   }
@@ -517,14 +525,21 @@ void WifiStation::send_assoc() {
   std::memcpy(&f[16], _cfg.bssid, 6);
   f[22] = static_cast<uint8_t>(++_mgmt_seq << 4);
   f[23] = static_cast<uint8_t>(_mgmt_seq >> 4);
-  uint16_t cap = 0x0001 | 0x0400; /* ESS, short slot time */
-  if (_ap_capab & 0x0020) cap |= 0x0020; /* short preamble */
+  uint16_t cap = 0x0001; /* ESS */
+  if (!plain() || (_ap_capab & 0x0010)) cap |= 0x0010;      /* privacy */
+  if (_ap_capab & 0x0020) cap |= 0x0020;                    /* short preamble */
+  if (!_beacon_seen || (_ap_capab & 0x0400)) cap |= 0x0400; /* short slot time */
   put_le16(f, cap);
   put_le16(f, 10); /* listen interval */
   f.push_back(0);
   f.push_back(static_cast<uint8_t>(_cfg.ssid.size()));
   f.insert(f.end(), _cfg.ssid.begin(), _cfg.ssid.end());
-  std::vector<uint8_t> rates = _ap_rates;
+  /* Filter out BSS membership selectors (HT/VHT/HE/EHT/SAE-H2E, value > 108 = 54 Mb/s)
+   * so we never advertise HE/EHT membership without sending HE/EHT Capabilities IEs. */
+  std::vector<uint8_t> rates;
+  rates.reserve(_ap_rates.size());
+  for (uint8_t r : _ap_rates)
+    if ((r & 0x7f) <= 108) rates.push_back(r);
   if (rates.empty()) {
     if (_cfg.channel <= 14) rates = {0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24, 0x30, 0x48, 0x60, 0x6c};
     else rates = {0x8c, 0x12, 0x98, 0x24, 0xb0, 0x48, 0x60, 0x6c};
@@ -579,6 +594,12 @@ void WifiStation::send_assoc() {
     const uint8_t vht[14] = {191, 12, 0x20, 0x01, 0x80, 0x03, 0xfa, 0xff, 0, 0, 0xfa, 0xff, 0, 0};
     f.insert(f.end(), vht, vht + sizeof(vht));
   }
+  if (_ap_wmm) {
+    /* WMM Information Element (OUI 00-50-F2, type 2, subtype 0, version 1, QoS info 0):
+     * required by 802.11n/ac when advertising HT/VHT capabilities. */
+    const uint8_t wmm[9] = {221, 7, 0x00, 0x50, 0xf2, 0x02, 0x00, 0x01, 0x00};
+    f.insert(f.end(), wmm, wmm + sizeof(wmm));
+  }
   _dev.sta_transmit(f.data(), f.size(), mgmt_rate(), false);
 }
 
@@ -617,7 +638,22 @@ void WifiStation::handle_mgmt(const RxFrame &in) {
   } else if ((sub == 0x10 || sub == 0x30) && _state == State::Associating && f.len >= 30) {
     const uint16_t status = le16(f.data + 26), aid = le16(f.data + 28);
     if (status == 30) return fail("association refused for now (the access point still holds our previous connection)");
-    if (status != 0) return fail("association refused, status " + std::to_string(status));
+    if (status != 0) {
+      std::string rsn_hex;
+      rsn_hex.reserve(_ap_rsn_raw.size() * 2);
+      for (uint8_t b : _ap_rsn_raw) {
+        char h[3];
+        std::snprintf(h, sizeof(h), "%02x", b);
+        rsn_hex += h;
+      }
+      char ctx[256];
+      std::snprintf(ctx, sizeof(ctx),
+                    "station: assoc context: ap_capab=0x%04x rsn_caps=0x%04x wmm=%u akm=%u pmf=%u ap_rsn=%s",
+                    _ap_capab, _ap_rsn_caps, _ap_wmm ? 1u : 0u, static_cast<unsigned>(_akm), _pmf ? 1u : 0u,
+                    rsn_hex.empty() ? "none" : rsn_hex.c_str());
+      _log(ctx);
+      return fail("association refused, status " + std::to_string(status));
+    }
     if (_akm == Akm::Owe) {
       /* The AP's OWE Diffie-Hellman Parameter: group 19 and its public x. */
       const uint8_t *peer_x = nullptr;
@@ -1132,6 +1168,9 @@ void WifiStation::handle_eapol(const uint8_t *body, size_t len, bool encrypted) 
 
 void WifiStation::tick(uint64_t now_us) {
   _now = now_us;
+  /* First tick after start() before _now was populated: anchor _state_since so
+   * Listening genuinely waits for a beacon instead of timing out immediately. */
+  if (_state != State::Idle && _state_since == 0) _state_since = now_us;
   /* Keys go in once message 4 has left, for the first handshake and for a
    * rekey alike (Codex review #2: rekeys used to be acknowledged and never
    * installed). */
