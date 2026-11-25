@@ -6,6 +6,18 @@
 
 ---
 
+## v2.1.6 (Preview / 预览版)
+
+### 中文
+
+- BE200 / Killer BE1750x：启动 AirDrop 监听时，让固件自己管理接收缓冲，并去掉只在连上路由器后才需要的组播设置。针对 [#53](https://github.com/zheznanohana/nekodrop/issues/53) 刚启动就掉线的问题。
+
+### English
+
+- BE200 / Killer BE1750x: let firmware manage receive buffering when AirDrop starts listening, and omit multicast configuration meant for an associated Wi‑Fi connection. Addresses the immediate startup failure in [#53](https://github.com/zheznanohana/nekodrop/issues/53).
+
+---
+
 ## v2.1.5 (Preview / 预览版)
 
 ### 中文

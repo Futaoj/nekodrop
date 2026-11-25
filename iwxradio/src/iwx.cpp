@@ -2017,6 +2017,34 @@ int IwxDevice::mld_add_monitor_sta() {
   return send_cmd(IWX_WIDE_ID(IWX_MAC_CONF_GROUP, IWX_STA_CONFIG_CMD), &cmd, sz, false, nullptr);
 }
 
+int IwxDevice::monitor_smart_fifo(uint32_t state) {
+  iwx_sf_cfg_cmd sf{};
+  sf.state = htole32(state);
+  sf.watermark[IWX_SF_LONG_DELAY_ON] = htole32(IWX_SF_W_MARK_SCAN);
+  sf.watermark[IWX_SF_FULL_ON] = htole32(state == IWX_SF_FULL_ON ? IWX_SF_W_MARK_LEGACY : IWX_SF_W_MARK_MIMO2);
+  for (unsigned i = 0; i < IWX_SF_NUM_SCENARIO; i++)
+    for (unsigned j = 0; j < IWX_SF_NUM_TIMEOUT_TYPES; j++)
+      sf.long_delay_timeouts[i][j] = htole32(IWX_SF_LONG_DELAY_AGING_TIMER);
+  if (state == IWX_SF_FULL_ON) {
+    static const uint32_t full_on[IWX_SF_NUM_SCENARIO][IWX_SF_NUM_TIMEOUT_TYPES] = {
+        {IWX_SF_SINGLE_UNICAST_AGING_TIMER, IWX_SF_SINGLE_UNICAST_IDLE_TIMER},
+        {IWX_SF_AGG_UNICAST_AGING_TIMER, IWX_SF_AGG_UNICAST_IDLE_TIMER},
+        {IWX_SF_MCAST_AGING_TIMER, IWX_SF_MCAST_IDLE_TIMER},
+        {IWX_SF_BA_AGING_TIMER, IWX_SF_BA_IDLE_TIMER},
+        {IWX_SF_TX_RE_AGING_TIMER, IWX_SF_TX_RE_IDLE_TIMER}};
+    std::memcpy(sf.full_on_timeouts, full_on, sizeof(full_on));
+  } else {
+    static const uint32_t defaults[IWX_SF_NUM_SCENARIO][IWX_SF_NUM_TIMEOUT_TYPES] = {
+        {IWX_SF_SINGLE_UNICAST_AGING_TIMER_DEF, IWX_SF_SINGLE_UNICAST_IDLE_TIMER_DEF},
+        {IWX_SF_AGG_UNICAST_AGING_TIMER_DEF, IWX_SF_AGG_UNICAST_IDLE_TIMER_DEF},
+        {IWX_SF_MCAST_AGING_TIMER_DEF, IWX_SF_MCAST_IDLE_TIMER_DEF},
+        {IWX_SF_BA_AGING_TIMER_DEF, IWX_SF_BA_IDLE_TIMER_DEF},
+        {IWX_SF_TX_RE_AGING_TIMER_DEF, IWX_SF_TX_RE_IDLE_TIMER_DEF}};
+    std::memcpy(sf.full_on_timeouts, defaults, sizeof(defaults));
+  }
+  return send_cmd(IWX_REPLY_SF_CFG_CMD, &sf, sizeof(sf), false, nullptr);
+}
+
 bool IwxDevice::start_monitor(uint8_t channel, unsigned width_mhz, const uint8_t address[6]) {
   _channel = channel;
   _width = width_mhz;
@@ -2030,6 +2058,12 @@ bool IwxDevice::start_monitor(uint8_t channel, unsigned width_mhz, const uint8_t
       err = mld_mac_cmd(IWX_FW_CTXT_ACTION_ADD);
       if (err) _log("MLD MAC config add failed (" + std::to_string(err) + ")");
       else _mac_added = true;
+    }
+    if (!err && !_fw.has_api(IWX_UCODE_TLV_API_SMART_FIFO_OFFLOAD)) {
+      /* iwlwifi's MLD monitor has no associated station: leave Smart FIFO
+       * uninitialized before binding. BE200 API 100 owns Smart FIFO itself. */
+      err = monitor_smart_fifo(IWX_SF_UNINIT);
+      if (err) _log("MLD monitor Smart FIFO config failed (" + std::to_string(err) + ")");
     }
     if (!err) {
       err = mld_link_add();
@@ -2085,25 +2119,13 @@ bool IwxDevice::start_monitor(uint8_t channel, unsigned width_mhz, const uint8_t
       if (err) _log("MAC context modify failed (" + std::to_string(err) + ")");
     }
   }
-  if (!err) {
-    iwx_sf_cfg_cmd sf{};
-    sf.state = htole32(IWX_SF_FULL_ON);
-    sf.watermark[IWX_SF_LONG_DELAY_ON] = htole32(IWX_SF_W_MARK_SCAN);
-    sf.watermark[IWX_SF_FULL_ON] = htole32(IWX_SF_W_MARK_LEGACY);
-    for (unsigned i = 0; i < IWX_SF_NUM_SCENARIO; i++)
-      for (unsigned j = 0; j < IWX_SF_NUM_TIMEOUT_TYPES; j++)
-        sf.long_delay_timeouts[i][j] = htole32(IWX_SF_LONG_DELAY_AGING_TIMER);
-    static const uint32_t full_on[IWX_SF_NUM_SCENARIO][IWX_SF_NUM_TIMEOUT_TYPES] = {
-        {IWX_SF_SINGLE_UNICAST_AGING_TIMER, IWX_SF_SINGLE_UNICAST_IDLE_TIMER},
-        {IWX_SF_AGG_UNICAST_AGING_TIMER, IWX_SF_AGG_UNICAST_IDLE_TIMER},
-        {IWX_SF_MCAST_AGING_TIMER, IWX_SF_MCAST_IDLE_TIMER},
-        {IWX_SF_BA_AGING_TIMER, IWX_SF_BA_IDLE_TIMER},
-        {IWX_SF_TX_RE_AGING_TIMER, IWX_SF_TX_RE_IDLE_TIMER}};
-    std::memcpy(sf.full_on_timeouts, full_on, sizeof(full_on));
-    err = send_cmd(IWX_REPLY_SF_CFG_CMD, &sf, sizeof(sf), false, nullptr);
+  if (!err && !use_mld()) {
+    err = monitor_smart_fifo(IWX_SF_FULL_ON);
     if (err) _log("smart FIFO config failed (" + std::to_string(err) + ")");
   }
-  if (!err) {
+  if (!err && !use_mld()) {
+    /* MLD listeners already accept group frames in MAC_CONFIG. On MLD,
+     * MCAST_FILTER_CMD is for an associated station with a real BSSID. */
     /* A byte buffer: the struct ends in a zero-size array. */
     alignas(4) uint8_t buf[roundup(sizeof(iwx_mcast_filter_cmd), 4)] = {};
     auto *mc = reinterpret_cast<iwx_mcast_filter_cmd *>(buf);
@@ -2133,6 +2155,12 @@ bool IwxDevice::start_monitor(uint8_t channel, unsigned width_mhz, const uint8_t
     if (err) _log("time quota failed (" + std::to_string(err) + ")");
   }
   nic_unlock();
+  if (!err && bz()) {
+    /* A firmware assertion may arrive after the last command completion.
+     * Check before radio_main advertises this listener as ready. */
+    check_health();
+    if (_fw_error) return false;
+  }
   if (!err)
     _log("listening on channel " + std::to_string(_channel) + " at " + std::to_string(_width) +
          " MHz");

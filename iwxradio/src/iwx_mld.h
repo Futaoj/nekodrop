@@ -35,6 +35,7 @@
 
 /* ---- Firmware TLV & capability additions (API 86..100) ---- */
 #define IWX_UCODE_TLV_PNVM_DATA                         74u
+#define IWX_UCODE_TLV_API_SMART_FIFO_OFFLOAD             68u
 #define IWX_UCODE_TLV_CAPA_FRAGMENTED_PNVM_IMG          32u
 #define IWX_UCODE_TLV_CAPA_MLD_API_SUPPORT              110u
 #define IWX_UCODE_TLV_CAPA_STA_EXP_MFP_SUPPORT          114u

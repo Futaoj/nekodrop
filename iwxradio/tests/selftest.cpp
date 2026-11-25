@@ -174,6 +174,18 @@ int main(int argc, char **argv) {
         failures++;
       }
     }
+    Firmware be200;
+    std::string be200_error;
+    if (!be200.load(std::string(argv[1]) + "\\iwlwifi-gl-c0-fm-c0-100.ucode", be200_error)) {
+      std::printf("FAIL BE200 firmware: %s\n", be200_error.c_str());
+      failures++;
+    } else if (!be200.has_capa(IWX_UCODE_TLV_CAPA_MLD_API_SUPPORT) ||
+               !be200.has_api(IWX_UCODE_TLV_API_SMART_FIFO_OFFLOAD)) {
+      std::printf("FAIL BE200 firmware did not advertise MLD and Smart FIFO offload\n");
+      failures++;
+    } else {
+      std::printf("ok   BE200 firmware %s advertises MLD and Smart FIFO offload\n", be200.version.c_str());
+    }
   }
 
   /* AWDL policy (ported from ForbiddenItlwm), on a captured iPhone frame. */

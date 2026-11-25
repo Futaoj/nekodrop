@@ -26,9 +26,8 @@ foreach ($f in 'iwlwifi-Qu*-68.ucode', 'iwlwifi-cc-a0-68.ucode', 'iwlwifi-so-a0-
   Get-ChildItem $fwSource -Filter $f | Copy-Item -Destination $fwDest -Force
 }
 $be200Fw = "$repo\third_party\linux-firmware-iwlwifi-be200\iwlwifi-gl-c0-fm-c0-100.ucode"
-if (Test-Path $be200Fw) {
-  Copy-Item $be200Fw $fwDest -Force
-}
+if (-not (Test-Path $be200Fw)) { throw "BE200 firmware not found; run scripts/fetch-deps.ps1" }
+Copy-Item $be200Fw $fwDest -Force
 Copy-Item "$repo\third_party\ForbiddenItlwm\iwlwifi-firmware-license" "$fwDest\LICENSE.iwlwifi-firmware" -Force
 
 & "$build\iwx_selftest.exe" $fwDest

@@ -248,6 +248,7 @@ private:
   int binding_cmd(uint32_t action);
   int add_monitor_sta();
   int enable_monitor_queue();
+  int monitor_smart_fifo(uint32_t state);
   /* MLD API (Bz / BE200) */
   int mld_mac_cmd(uint32_t action);
   int mld_link_add();
