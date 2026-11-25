@@ -8,6 +8,7 @@
  * by side.
  */
 #include "iwx.h"
+#include "iwx_channel.h"
 
 #include "plat.h"
 
@@ -310,7 +311,6 @@ bool IwxDevice::alloc_rings(std::string &error) {
       need.push_back(kPnvmPagesMax);
     }
   }
-  for (int i = 0; i < 4; i++) need.push_back(8); /* margin: first fit is not best fit */
   const auto report = [&](const char *what) {
     _log(std::string("DMA: ") + what + " " + std::to_string(_dma.pages_locked()) + " pages, longest physical run " +
          std::to_string(_dma.longest_run()) + " pages, " + std::to_string(_dma.runs_of(8)) + " runs of 8+; " +
@@ -335,6 +335,8 @@ bool IwxDevice::alloc_rings(std::string &error) {
     }
     report("grew to");
   }
+  if (!_dma.reserve_runs(need))
+    _log("DMA: not enough free runs to reserve all rings and firmware sections");
 
   _ctxt_info = _dma.alloc(std::max(sizeof(iwx_context_info), sizeof(iwx_context_info_gen3)), 4096);
   /* Receive: free list, used list, status word, 512 buffers of 4 KiB. The
@@ -382,7 +384,7 @@ bool IwxDevice::alloc_rings(std::string &error) {
   if (!make_ring(_cmdq, cmd_count, IWX_DQA_CMD_QUEUE, 0) ||
       !make_ring(_dataq, tx_count, 0, kTxPayloadSlot) ||
       !make_ring(_staq, tx_count, 0, kTxPayloadSlot)) {
-    error = "out of DMA memory for the transmit rings (longest run of adjacent pages: " +
+    error = "out of DMA memory for the transmit rings (longest remaining run of adjacent pages: " +
             std::to_string(_dma.longest_run()) + "; " + std::to_string(pages_of(tx_count * sizeof(iwx_tfh_tfd))) +
             " needed)";
     return false;
@@ -751,7 +753,7 @@ bool IwxDevice::load_firmware(std::string &error) {
       } else if (const size_t max_section = pnvm_max_section(_pnvm_raw, cards::mac_type(_hw_rev),
                                                              cards::rf_type(_hw_rf_id))) {
         /* Only this card's largest section (at most 4 pages), not the file. */
-        _pnvm_buf = _dma.alloc(max_section, 4096);
+        _pnvm_buf = _dma.alloc(std::max(max_section, kPnvmPagesMax * DmaPool::kPageBytes), 4096);
         if (!_pnvm_buf) {
           error = "out of DMA memory for the platform NVM (PNVM)";
           return false;
@@ -1740,20 +1742,15 @@ int IwxDevice::phy_ctxt_cmd(uint32_t action) { return phy_cmd(0, _channel, _widt
 
 int IwxDevice::phy_cmd(unsigned phy_id, uint8_t channel, unsigned width_mhz, uint32_t action) {
   const bool is_2ghz = channel <= 14;
-  const uint8_t width = (width_mhz >= 80 && !is_2ghz) ? IWX_PHY_VHT_CHANNEL_MODE80
+  uint8_t width = (width_mhz >= 80 && !is_2ghz) ? IWX_PHY_VHT_CHANNEL_MODE80
                         : (width_mhz >= 40)            ? IWX_PHY_VHT_CHANNEL_MODE40
                                                     : IWX_PHY_VHT_CHANNEL_MODE20;
-  /* The control channel's place inside the 40/80 MHz block, as Apple
-   * devices use 149-161 and 36-48 (ForbiddenItlwm's iwx_get_ctrl_pos). */
+  /* The station can use more 80 MHz blocks than the legacy AWDL choices. */
   uint8_t pos = IWX_PHY_VHT_CTRL_POS_1_BELOW;
   if (width == IWX_PHY_VHT_CHANNEL_MODE80) {
-    switch (channel) {
-    case 36: case 149: pos = IWX_PHY_VHT_CTRL_POS_2_BELOW; break;
-    case 40: case 153: pos = IWX_PHY_VHT_CTRL_POS_1_BELOW; break;
-    case 44: case 157: pos = IWX_PHY_VHT_CTRL_POS_1_ABOVE; break;
-    case 48: case 161: pos = IWX_PHY_VHT_CTRL_POS_2_ABOVE; break;
-    default: pos = IWX_PHY_VHT_CTRL_POS_1_BELOW; break;
-    }
+    const int primary = iwx_primary80_position(channel);
+    if (primary >= 0) pos = static_cast<uint8_t>(primary);
+    else width = IWX_PHY_VHT_CHANNEL_MODE20;
   } else if (width == IWX_PHY_VHT_CHANNEL_MODE40) {
     pos = (channel % 8 == 4 || channel == 149 || channel == 157 || channel <= 7)
               ? IWX_PHY_VHT_CTRL_POS_1_BELOW
@@ -1963,13 +1960,13 @@ int IwxDevice::disable_queue(uint8_t sta_id, uint8_t tid) {
   return send_cmd(IWX_WIDE_ID(IWX_DATA_PATH_GROUP, IWX_SCD_QUEUE_CONFIG_CMD), &cmd, sizeof(cmd), false, nullptr);
 }
 
-int IwxDevice::mld_mac_cmd(uint32_t action) {
+int IwxDevice::mld_mac_cmd(uint32_t action, const uint8_t *address) {
   iwx_mac_config_cmd cmd{};
   cmd.id_and_color = htole32(IWX_FW_CMD_ID_AND_COLOR(0, 0));
   cmd.action = htole32(action);
   if (action != IWX_FW_CTXT_ACTION_REMOVE) {
     cmd.mac_type = htole32(IWX_FW_MAC_TYPE_LISTENER);
-    std::memcpy(cmd.local_mld_addr, _address.data(), 6);
+    std::memcpy(cmd.local_mld_addr, address ? address : _address.data(), 6);
     cmd.filter_flags = htole32((_promisc ? IWX_MAC_CFG_FILTER_PROMISC : 0u) |
                                IWX_MAC_CFG_FILTER_ACCEPT_CONTROL_AND_MGMT |
                                IWX_MAC_CFG_FILTER_ACCEPT_GRP |
@@ -1990,13 +1987,13 @@ int IwxDevice::mld_link_add() {
   return send_cmd(IWX_WIDE_ID(IWX_MAC_CONF_GROUP, IWX_LINK_CONFIG_CMD), &cmd, sizeof(cmd), false, nullptr);
 }
 
-int IwxDevice::mld_link_modify(bool active, uint32_t modify_mask) {
+int IwxDevice::mld_link_modify(bool active, uint32_t modify_mask, const uint8_t *address) {
   iwx_link_config_cmd cmd{};
   cmd.action = htole32(IWX_FW_CTXT_ACTION_MODIFY);
   cmd.link_id = htole32(0);
   cmd.mac_id = htole32(0);
   cmd.phy_id = htole32(0);
-  std::memcpy(cmd.local_link_addr, _address.data(), 6);
+  std::memcpy(cmd.local_link_addr, address ? address : _address.data(), 6);
   cmd.modify_mask = htole32(modify_mask);
   cmd.active = htole32(active ? 1u : 0u);
   cmd.cck_rates = htole32(_channel <= 14 ? 0x0fu : 0u);
@@ -2197,20 +2194,29 @@ bool IwxDevice::set_channel(uint8_t channel, unsigned width_mhz) {
 
 bool IwxDevice::set_address(const uint8_t address[6]) {
   if (std::memcmp(address, _address.data(), 6) == 0) return true;
-  std::memcpy(_address.data(), address, 6);
-  if (!_mac_added) return true;
+  if (!_mac_added) {
+    std::memcpy(_address.data(), address, 6);
+    return true;
+  }
   if (!nic_lock()) return false;
   int err = 0;
   if (use_mld()) {
-    err = mld_mac_cmd(IWX_FW_CTXT_ACTION_MODIFY);
-    if (!err && _link_added) {
-      /* Linux mac-cfg.h: local_link_addr can only change while the link is inactive. */
-      if (_link_active) err = mld_link_modify(false, IWX_LINK_CONTEXT_MODIFY_ACTIVE);
-      if (!err) err = mld_link_modify(false, 0);
-      if (!err && _link_active)
-        err = mld_link_modify(true, IWX_LINK_CONTEXT_MODIFY_ACTIVE | IWX_LINK_CONTEXT_MODIFY_RATES_INFO);
+    /* awdld picks its own address. Change both firmware contexts with the
+     * link inactive, and commit our address only once firmware has accepted it. */
+    const bool reactivate = _link_added && _link_active;
+    if (reactivate) {
+      err = mld_link_modify(false, IWX_LINK_CONTEXT_MODIFY_ACTIVE);
+      if (!err) _link_active = false;
     }
+    if (!err) err = mld_mac_cmd(IWX_FW_CTXT_ACTION_MODIFY, address);
+    if (!err && _link_added) err = mld_link_modify(false, 0, address);
+    if (!err && reactivate) {
+      err = mld_link_modify(true, IWX_LINK_CONTEXT_MODIFY_ACTIVE | IWX_LINK_CONTEXT_MODIFY_RATES_INFO, address);
+      if (!err) _link_active = true;
+    }
+    if (!err) std::memcpy(_address.data(), address, 6);
   } else {
+    std::memcpy(_address.data(), address, 6);
     err = mac_ctxt_cmd(IWX_FW_CTXT_ACTION_MODIFY);
   }
   nic_unlock();

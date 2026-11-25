@@ -8,6 +8,8 @@
 #include <string>
 
 #include "../src/iwxreg.h"
+#include "../src/iwx_channel.h"
+#include "../src/dma_runs.h"
 #include "../src/cards.h"
 #include "../src/fw.h"
 #include "../src/awdl_policy.h"
@@ -31,6 +33,27 @@ static int failures = 0;
   } while (0)
 
 int main(int argc, char **argv) {
+  static_assert(iwx_primary80_position(140) == IWX_PHY_VHT_CTRL_POS_1_ABOVE);
+  static_assert(iwx_primary80_position(136) == IWX_PHY_VHT_CTRL_POS_1_BELOW);
+  static_assert(iwx_primary80_position(144) == IWX_PHY_VHT_CTRL_POS_2_ABOVE);
+  static_assert(iwx_primary80_position(149) == IWX_PHY_VHT_CTRL_POS_2_BELOW);
+  static_assert(iwx_primary80_position(14) == -1 && iwx_primary80_position(146) == -1);
+  {
+    /* An early 4-page ring must not consume the only 8-page firmware span,
+     * and RX's individual pages cannot take either reservation. */
+    DmaRuns runs;
+    runs.reset({100,101,102,103,104,105,106,107, 200,201,202,203, 300});
+    const bool impossible = runs.reserve({9}).has_value();
+    auto planned = runs.reserve({4, 8});
+    if (impossible || !planned || planned->count(4) != 1 || planned->count(8) != 1 ||
+        planned->find(4)->second != 8 || planned->find(8)->second != 0 ||
+        runs.take(1) != std::optional<size_t>{12} || runs.take(1)) {
+      std::printf("FAIL fragmented DMA runs (#30)\n");
+      failures++;
+    } else {
+      std::printf("ok   fragmented DMA runs preserve firmware and rings (#30)\n");
+    }
+  }
   /* Sizes from Linux iwlwifi's fw/api headers for the same API versions. */
   EXPECT_SIZE(iwx_tfh_tb, 10);
   EXPECT_SIZE(iwx_tfh_tfd, 256);

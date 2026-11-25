@@ -1128,8 +1128,16 @@ int main(int argc, char **argv) {
         } else if (req.type == kStaEthernet) {
           if (sta) sta->on_ethernet(req.payload.data(), req.payload.size());
         } else if (req.type == RADIO_LINK_SET_ADDRESS && req.payload.size() == 6) {
+          const bool updated = dev.set_address(req.payload.data());
+          if constexpr (std::is_same_v<Dev, IwxDevice>) {
+            if (dev.uses_mld_listener() && !updated) {
+              log_line("could not set the firmware's AWDL address");
+              failed = true;
+              g_stop = true;
+              break;
+            }
+          }
           std::memcpy(dev_address, req.payload.data(), 6);
-          dev.set_address(req.payload.data());
         } else if (req.type == RADIO_LINK_SET_BSSID_FILTER && req.payload.size() == 6) {
           std::lock_guard<std::mutex> l(filter_mutex);
           std::memcpy(bssid_filter, req.payload.data(), 6);
@@ -1140,6 +1148,7 @@ int main(int argc, char **argv) {
           dev.set_channel(ch, ch <= 14 ? 20 : opt.width);
         }
       }
+      if (stopping()) break;
       /* Block Ack: open the firmware session, then answer from our queue. The
        * peer repeats its request until it hears an answer. */
       if constexpr (caps.supports_rx_ba) {

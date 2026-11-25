@@ -57,6 +57,7 @@ public:
   bool start_monitor(uint8_t channel, unsigned width_mhz, const uint8_t address[6]);
   bool set_channel(uint8_t channel, unsigned width_mhz);
   bool set_address(const uint8_t address[6]);
+  bool uses_mld_listener() const { return use_mld(); }
   /* A Block Ack receive session with `peer` (ForbiddenItlwm's awdlBaHandle):
    * a firmware station for the peer, bound to the listener, and an immediate
    * BA agreement on `tid`. The firmware then answers aggregates by itself. */
@@ -250,9 +251,9 @@ private:
   int enable_monitor_queue();
   int monitor_smart_fifo(uint32_t state);
   /* MLD API (Bz / BE200) */
-  int mld_mac_cmd(uint32_t action);
+  int mld_mac_cmd(uint32_t action, const uint8_t *address = nullptr);
   int mld_link_add();
-  int mld_link_modify(bool active, uint32_t modify_mask);
+  int mld_link_modify(bool active, uint32_t modify_mask, const uint8_t *address = nullptr);
   int mld_add_monitor_sta();
   int mld_sta_mac_cmd(uint32_t action, bool assoc);
   int mld_sta_link_add();

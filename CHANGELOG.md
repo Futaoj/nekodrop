@@ -11,10 +11,16 @@
 ### 中文
 
 - BE200 / Killer BE1750x：启动 AirDrop 监听时，让固件自己管理接收缓冲，并去掉只在连上路由器后才需要的组播设置。针对 [#53](https://github.com/zheznanohana/nekodrop/issues/53) 刚启动就掉线的问题。
+- BE200 / Killer BE1750x：按固件要求更新 AirDrop 设备地址，等网卡接受后才用新地址收发。
+- AX211：先给需要连续内存的固件和队列留位置，再分配单页缓冲，减少内存碎片导致的启动失败。 [#30](https://github.com/zheznanohana/nekodrop/issues/30)
+- AX201：修正并发模式下部分 5 GHz 信道的 80 MHz 设置，包括信道 140。 [#50](https://github.com/zheznanohana/nekodrop/issues/50)
 
 ### English
 
 - BE200 / Killer BE1750x: let firmware manage receive buffering when AirDrop starts listening, and omit multicast configuration meant for an associated Wi‑Fi connection. Addresses the immediate startup failure in [#53](https://github.com/zheznanohana/nekodrop/issues/53).
+- BE200 / Killer BE1750x: switch to the new AirDrop address only after the firmware accepts it.
+- AX211: reserve contiguous memory for firmware and queues before allocating single-page buffers. [#30](https://github.com/zheznanohana/nekodrop/issues/30)
+- AX201: correct 80 MHz setup for additional 5 GHz channels in Concurrent mode, including channel 140. [#50](https://github.com/zheznanohana/nekodrop/issues/50)
 
 ---
 

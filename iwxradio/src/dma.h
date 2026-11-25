@@ -21,6 +21,8 @@
 #include <string>
 #include <vector>
 
+#include "dma_runs.h"
+
 struct DmaBuf {
   uint8_t *va = nullptr;
   uint64_t pa = 0;
@@ -50,8 +52,10 @@ public:
    * frames. Only before the first allocation. */
   bool grow(size_t pages, std::string &error);
   /* Whether buffers of these sizes (in pages) can all be carved from runs of
-   * adjacent frames (first fit, largest first). */
+   * adjacent frames (best fit, largest first). */
   bool fits(std::vector<size_t> runs) const;
+  /* Reserve the tested spans before singles take them. Consumed by alloc(). */
+  bool reserve_runs(std::vector<size_t> runs);
   /* Physical memory Windows has free, in bytes (0 if unknown). */
   static uint64_t available_bytes();
   /* Longest run of adjacent frames, in pages (a diagnostic). */
@@ -67,9 +71,8 @@ private:
   uint8_t *_view = nullptr;
   std::vector<uintptr_t> _frames; /* sorted; index i is mapped at _view + i * 4 KiB */
   std::vector<bool> _taken;
-  size_t _cursor = 0;            /* frames below have been handed out or set aside */
-  size_t _back = 0;              /* single pages are taken downward from here */
-  std::vector<size_t> _spare;    /* set aside while looking for a run */
+  DmaRuns _runs;
+  DmaRuns::Reservations _reserved;
   size_t _part = SIZE_MAX;       /* page being packed with small buffers */
   size_t _part_used = 0;
   size_t _used_pages = 0;
