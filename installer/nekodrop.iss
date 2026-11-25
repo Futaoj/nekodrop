@@ -23,6 +23,9 @@ WizardStyle=modern
 SetupIconFile=../app/assets/nekodrop.ico
 UninstallDisplayIcon={app}\nekodrop.exe
 CloseApplications=yes
+; [Run] starts the new version in the chosen mode; do not let Setup restart
+; the old copy separately (it would not know the chosen mode).
+RestartApplications=no
 
 [Languages]
 Name: "zh"; MessagesFile: "ChineseSimplified.isl"
@@ -57,8 +60,10 @@ Name: "{autoprograms}\nekodrop - diagnostic report"; Filename: "{app}\report.cmd
 ; Started as the signed-in user: the first start registers the Explorer
 ; "用 nekodrop 发送" menu, Send To and the notification protocol for that user.
 Filename: "{app}\nekodrop.exe"; Description: "{cm:StartNow}"; Flags: postinstall nowait skipifsilent runasoriginaluser
-; An update started from nekodrop runs silently: start the new version again.
-Filename: "{app}\nekodrop.exe"; Parameters: "--background"; Flags: nowait runasoriginaluser; Check: WizardSilent
+; An update started from nekodrop runs silently: start the new version again,
+; either with its main panel (the update setting) or in the background.
+Filename: "{app}\nekodrop.exe"; Flags: nowait runasoriginaluser; Check: ShouldLaunchWindow
+Filename: "{app}\nekodrop.exe"; Parameters: "--background"; Flags: nowait runasoriginaluser; Check: ShouldLaunchBackground
 
 [UninstallRun]
 Filename: "{app}\nekodrop.exe"; Parameters: "--unregister"; Flags: waituntilterminated skipifdoesntexist runhidden; RunOnceId: "nekodrop-unregister"
@@ -70,6 +75,26 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Fil
 [Code]
 var
   InstallFailed: Boolean;
+
+function CommandLineHas(const Switch: String): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), Switch) = 0 then
+      Result := True;
+end;
+
+function ShouldLaunchWindow: Boolean;
+begin
+  Result := WizardSilent and CommandLineHas('/SHOWAPP');
+end;
+
+function ShouldLaunchBackground: Boolean;
+begin
+  Result := WizardSilent and not CommandLineHas('/SHOWAPP');
+end;
 
 function GetCustomSetupExitCode: Integer;
 begin

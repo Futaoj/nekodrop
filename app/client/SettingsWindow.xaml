@@ -352,6 +352,19 @@
                   <TextBlock Text="{local:T set.deleteInstallerHint}" Style="{StaticResource Sub12}" Margin="0,2,0,0"/>
                 </StackPanel>
               </DockPanel>
+              <Border Style="{StaticResource Rule}" Margin="0,12"/>
+              <DockPanel>
+                <Border DockPanel.Dock="Right" Style="{StaticResource SegmentBox}" VerticalAlignment="Center" Margin="12,0,0,0">
+                  <StackPanel Orientation="Horizontal">
+                    <RadioButton x:Name="UpdateWindow" Style="{StaticResource Segment}" Content="{local:T set.updateLaunch.window}" GroupName="updatelaunch"/>
+                    <RadioButton x:Name="UpdateTray" Style="{StaticResource Segment}" Content="{local:T set.updateLaunch.tray}" GroupName="updatelaunch"/>
+                  </StackPanel>
+                </Border>
+                <StackPanel VerticalAlignment="Center">
+                  <TextBlock Text="{local:T set.updateLaunch}" FontSize="13" FontWeight="Medium"/>
+                  <TextBlock Text="{local:T set.updateLaunchHint}" Style="{StaticResource Sub12}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+              </DockPanel>
             </StackPanel>
           </Border>
         </StackPanel>

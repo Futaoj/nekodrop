@@ -35,6 +35,8 @@ public sealed class Settings
     public bool PreviewUpdates { get; set; } = true;
     /// <summary>Delete the downloaded installer after a successful update, so %TEMP% does not keep every release.</summary>
     public bool DeleteInstallerAfterInstall { get; set; } = true;
+    /// <summary>After a successful update: "window" (show the main panel) or "background" (tray only).</summary>
+    public string UpdateLaunch { get; set; } = "window";
     /// <summary>This PC's icon on the radar: "auto" (a laptop when there is a battery), "desktop" or "laptop".</summary>
     public string HubIcon { get; set; } = "auto";
     /// <summary>The global shortcut (Win+Shift+D unless recorded otherwise) opens the send window (with Explorer's selection) or the main window.</summary>
