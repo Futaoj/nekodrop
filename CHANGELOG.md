@@ -6,6 +6,22 @@
 
 ---
 
+## v2.2.2 (Preview / 预览版) — 2026-11-25
+
+### 中文
+
+- **通知封面大图预览（B 站 / YouTube / 询问通知 / 视频）**：
+  - 提取 AirDrop `/Ask` 中的 `FileIcon` 预览图（支持 JPEG / PNG，自动通过 WIC 转换苹果 JPEG 2000 缩略图）：询问通知在点击接受前就能看到预览图；B 站分享、视频及 HEIC 照片在完成通知里也会显示封面大图。
+  - 收到 YouTube 链接（`youtube.com/watch`、`youtu.be`、`shorts` 等）且发送方未附带 `FileIcon` 时，自动拉取视频封面图（`i.ytimg.com`，2.5 秒超时静默降级）并在通知中预览。
+
+### English
+
+- **Hero cover previews for Bilibili, YouTube, Ask prompts, and videos:**
+  - Extract `FileIcon` preview thumbnails directly from AirDrop `/Ask` payloads (JPEG / PNG, plus WIC conversion for Apple JPEG 2000 thumbnails) so Ask notifications show a preview before accepting, and Bilibili links, videos, and HEIC photos display cover art in completion notifications.
+  - For YouTube links (`youtube.com/watch`, `youtu.be`, `shorts`, etc.) without an attached `FileIcon`, automatically fetch the video's static cover thumbnail from `i.ytimg.com` (2.5 s timeout, silent fallback if offline).
+
+---
+
 ## v2.2.1 (Preview / 预览版) — 2026-11-25
 
 ### 中文

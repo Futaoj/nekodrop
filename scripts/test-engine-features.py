@@ -53,6 +53,14 @@ class LinkExtractionTests(unittest.TestCase):
         }
         self.assertEqual(transfer.extract_web_links(ask), ['https://b23.tv/mixed123'])
 
+    def test_save_preview_icon_jpeg_and_rejects_junk(self):
+        fake_jpg = b'\xff\xd8\xff\xe0' + b'\x00' * 32
+        path = transfer.save_preview_icon({'FileIcon': fake_jpg}, 't1')
+        self.assertTrue(path.endswith('.jpg'))
+        self.assertTrue(os.path.isfile(path))
+        os.unlink(path)
+        self.assertEqual(transfer.save_preview_icon({'FileIcon': b'not an image at all!'}, 't2'), '')
+
 
 class MediaCapabilitiesTests(unittest.TestCase):
     def tearDown(self):

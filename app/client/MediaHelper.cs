@@ -4,6 +4,8 @@
 using System.Collections.Specialized;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Media.Imaging;
 
@@ -13,7 +15,7 @@ namespace NekoDrop;
 /// File, URL, clipboard, and HEIC/Live Photo helpers shared by notifications,
 /// the main flyout, and the transfer history window.
 /// </summary>
-public static class MediaHelper
+public static partial class MediaHelper
 {
     static readonly HashSet<string> ImageExts = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -257,4 +259,84 @@ public static class MediaHelper
         }
         return total;
     }
+
+    static readonly HttpClient ThumbHttp = new() { Timeout = TimeSpan.FromMilliseconds(2500) };
+
+    /// <summary>
+    /// Ensures a preview icon saved from AirDrop Ask's FileIcon is toast-ready (.jpg/.png).
+    /// Converts .jp2 via WIC if needed; returns null if unreadable.
+    /// </summary>
+    public static string? PrepareToastPreview(string? path)
+    {
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
+        if (IsToastPreviewable(path)) return path;
+        try
+        {
+            var bmp = TryLoadBitmap(path);
+            if (bmp is null) return null;
+            var target = Path.ChangeExtension(path, ".jpg");
+            var enc = new JpegBitmapEncoder { QualityLevel = 88 };
+            enc.Frames.Add(BitmapFrame.Create(bmp));
+            using (var fs = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None))
+                enc.Save(fs);
+            return target;
+        }
+        catch (Exception) { return null; }
+    }
+
+    public static string? TryExtractYoutubeId(string? url)
+    {
+        if (!TransferHistory.IsWebUrl(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri)) return null;
+        var host = uri.Host.ToLowerInvariant();
+        string? candidate = null;
+        if (host is "youtu.be" or "www.youtu.be")
+        {
+            candidate = uri.AbsolutePath.Trim('/').Split('/')[0];
+        }
+        else if (host is "youtube.com" or "www.youtube.com" or "m.youtube.com" or "music.youtube.com")
+        {
+            var segs = uri.AbsolutePath.Trim('/').Split('/');
+            if (segs.Length >= 1 && segs[0].Equals("watch", StringComparison.OrdinalIgnoreCase))
+            {
+                var q = System.Web.HttpUtility.ParseQueryString(uri.Query);
+                candidate = q["v"];
+            }
+            else if (segs.Length >= 2 && (segs[0].Equals("shorts", StringComparison.OrdinalIgnoreCase) ||
+                                          segs[0].Equals("embed", StringComparison.OrdinalIgnoreCase) ||
+                                          segs[0].Equals("live", StringComparison.OrdinalIgnoreCase)))
+            {
+                candidate = segs[1];
+            }
+        }
+        return candidate is not null && YoutubeIdRegex().IsMatch(candidate) ? candidate : null;
+    }
+
+    /// <summary>
+    /// Fetches a YouTube video's static thumbnail from i.ytimg.com (2.5 s timeout)
+    /// when the sender did not attach a FileIcon preview in /Ask.
+    /// </summary>
+    public static async Task<string?> TryFetchYoutubeThumbnailAsync(string? url)
+    {
+        var videoId = TryExtractYoutubeId(url);
+        if (videoId is null) return null;
+        try
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "nekodrop-previews");
+            Directory.CreateDirectory(dir);
+            var target = Path.Combine(dir, $"yt-{videoId}.jpg");
+            if (File.Exists(target) && new FileInfo(target).Length > 1000) return target;
+            using var res = await ThumbHttp.GetAsync($"https://i.ytimg.com/vi/{videoId}/hqdefault.jpg");
+            if (!res.IsSuccessStatusCode) return null;
+            var bytes = await res.Content.ReadAsByteArrayAsync();
+            if (bytes.Length < 1000 || bytes.Length > 2 * 1024 * 1024 || bytes[0] != 0xFF || bytes[1] != 0xD8) return null;
+            var tmp = target + ".tmp";
+            await File.WriteAllBytesAsync(tmp, bytes);
+            File.Move(tmp, target, overwrite: true);
+            return target;
+        }
+        catch (Exception) { return null; }
+    }
+
+    [GeneratedRegex(@"^[A-Za-z0-9_-]{11}$")]
+    private static partial Regex YoutubeIdRegex();
 }

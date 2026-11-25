@@ -74,6 +74,7 @@ public sealed class App : Application
     HistoryWindow? _history;
     readonly Dictionary<string, Request> _requests = [];
     readonly Dictionary<string, string> _askSender = [];
+    readonly Dictionary<string, string> _askIcon = [];
     readonly Dictionary<string, List<string>> _recentBatches = [];
     readonly Dictionary<string, (string DeviceId, string DeviceName, List<string> Files)> _sendInfo = [];
 
@@ -1070,8 +1071,10 @@ public sealed class App : Application
                 var urls = o["urls"] as JsonArray;
                 var waits = (bool?)o["waits"] ?? true;
                 var isContact = (bool?)o["contact"] == true;
+                var preview = MediaHelper.PrepareToastPreview((string?)o["icon"]);
                 var what = Describe(files, linkCount, urls);
                 _askSender[id] = sender;
+                if (!string.IsNullOrEmpty(preview)) _askIcon[id] = preview;
                 var key = $"{sender}|{model}";
                 // Remembered for Settings > Always accept from > Add (#45).
                 if (Settings.RecentSenders.FirstOrDefault() != key)
@@ -1090,7 +1093,7 @@ public sealed class App : Application
                 _requests[id] = r;
                 Model.Requests.Insert(0, r);
                 AttachAsk(r);
-                Shell.AskToast(id, sender, what);
+                Shell.AskToast(id, sender, what, preview);
                 break;
             }
             case "incoming":
@@ -1107,7 +1110,9 @@ public sealed class App : Application
             {
                 var folder = (string?)o["folder"] ?? Settings.SaveFolder;
                 var from = _requests.TryGetValue(id, out var st) ? st.Sender : _askSender.GetValueOrDefault(id, "AirDrop");
+                var askIcon = _askIcon.GetValueOrDefault(id);
                 _askSender.Remove(id);
+                _askIcon.Remove(id);
                 if (st is not null) { _requests.Remove(id); Model.Requests.Remove(st); DetachAsk(st); }
                 var names = new List<string>();
                 if ((o["names"] as JsonArray ?? o["files"] as JsonArray) is { } stored)
@@ -1135,11 +1140,12 @@ public sealed class App : Application
                                                         string.Equals(Path.GetFileNameWithoutExtension(m), stem, StringComparison.OrdinalIgnoreCase));
                     if (mov is not null && pairedMovies.Add(mov)) livePairs[n] = mov;
                 }
-                _ = HandleStoredAsync(id, from, folder, names, livePairs, pairedMovies);
+                _ = HandleStoredAsync(id, from, folder, names, livePairs, pairedMovies, askIcon);
                 break;
             }
             case "lost":
                 _askSender.Remove(id);
+                _askIcon.Remove(id);
                 if (_requests.Remove(id, out var lost))
                 {
                     Model.Requests.Remove(lost);
@@ -1224,7 +1230,7 @@ public sealed class App : Application
     }
 
     async Task HandleStoredAsync(string id, string from, string folder, List<string> names,
-                                 Dictionary<string, string> livePairs, HashSet<string> pairedMovies)
+                                 Dictionary<string, string> livePairs, HashSet<string> pairedMovies, string? askIcon)
     {
         var convertHeic = Settings.AutoConvertHeic;
         var built = await Task.Run(() =>
@@ -1273,6 +1279,10 @@ public sealed class App : Application
             return (records, hero);
         });
 
+        var hero = built.hero ?? askIcon;
+        if (hero is null && built.records.FirstOrDefault(r => r.IsLink) is { } linkRec)
+            hero = await MediaHelper.TryFetchYoutubeThumbnailAsync(linkRec.Url);
+
         await Dispatcher.InvokeAsync(() =>
         {
             foreach (var rec in built.records) AddHistory(rec);
@@ -1285,7 +1295,7 @@ public sealed class App : Application
             var first = built.records[0];
             if (built.records.Count == 1 && first.IsLink)
             {
-                Shell.ReceivedToast(id, L.F("done.receivedLink", from), first.Url, folder, first.Id, isLink: true);
+                Shell.ReceivedToast(id, L.F("done.receivedLink", from), first.Url, folder, first.Id, hero, isLink: true);
                 return;
             }
             var body = built.records.Count == 1
@@ -1295,11 +1305,11 @@ public sealed class App : Application
             {
                 _recentBatches[id] = built.records.SelectMany(r => r.Paths).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 if (_recentBatches.Count > 24) _recentBatches.Remove(_recentBatches.Keys.First());
-                Shell.ReceivedToast(id, L.F("done.received", from), body, folder, first.Id, built.hero, batchId: id);
+                Shell.ReceivedToast(id, L.F("done.received", from), body, folder, first.Id, hero, batchId: id);
             }
             else
             {
-                Shell.ReceivedToast(id, L.F("done.received", from), body, folder, first.Id, built.hero);
+                Shell.ReceivedToast(id, L.F("done.received", from), body, folder, first.Id, hero);
             }
         });
     }
