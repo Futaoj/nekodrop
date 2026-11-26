@@ -378,6 +378,7 @@ public sealed class App : Application
         var windows = new (string Name, Func<Window> Make, double Height)[]
         {
             ("send", () => new SendWindow(), 0),
+            ("warning", () => new WarningWindow(L.T("send.folderTitle"), L.F("send.folderLead", "规则"), L.T("send.unsupportedType")), 0),
             ("main", () => Main("ready"), 1000),
             ("main-list", () => { Settings.DeviceView = "list"; return Main("ready"); }, 1000),
             ("settings-general", () => new SettingsWindow("general"), 0),
@@ -978,14 +979,9 @@ public sealed class App : Application
     {
         if (Model.Files.Count == 0) return;
         var files = Model.Files.ToList();
-        if (SendRules.FirstFolder(files) is { } folder)
+        if (SendRules.Check(files) is { } problem)
         {
-            ShowSendError(L.T("send.folderTitle"), L.F("send.folderBody", SendRules.Name(folder)));
-            return;
-        }
-        if (files.FirstOrDefault(path => !File.Exists(path)) is { } missing)
-        {
-            ShowSendError(L.T("send.notFileTitle"), L.F("send.notFileBody", SendRules.Name(missing)));
+            ShowSendError(problem);
             return;
         }
         var id = Guid.NewGuid().ToString("N")[..12];
@@ -999,16 +995,15 @@ public sealed class App : Application
     }
 
     /// <summary>
-    /// A folder or missing file cannot be sent: say exactly why, what the
-    /// sender accepts, and what to do instead, instead of the old generic
-    /// "发送失败 · not_a_file" status.
+    /// A file that cannot be sent gets the app's own warning card, with the
+    /// reason and the accepted object type, instead of a Win32 message box or
+    /// a bare "发送失败 · not_a_file" status.
     /// </summary>
-    static void ShowSendError(string title, string body)
+    static void ShowSendError(SendProblem problem)
     {
         var owner = Current.Windows.OfType<Window>().FirstOrDefault(w => w.IsActive)
                  ?? Current.Windows.OfType<Window>().FirstOrDefault(w => w.IsVisible);
-        if (owner is null) MessageBox.Show(body, title, MessageBoxButton.OK, MessageBoxImage.Warning);
-        else MessageBox.Show(owner, body, title, MessageBoxButton.OK, MessageBoxImage.Warning);
+        WarningWindow.Show(owner, problem);
     }
 
     string _lastRadio = "", _lastWifi = "";
@@ -1306,7 +1301,7 @@ public sealed class App : Application
                                 d.Status = L.T("dev.ready");
                             }));
                     }
-                    var firstName = info.Files.Count > 0 ? Path.GetFileName(info.Files[0].TrimEnd('\\')) : L.T("what.some");
+                    var firstName = info.Files.Count > 0 ? SendRules.Name(info.Files[0]) : L.T("what.some");
                     var summary = info.Files.Count <= 1 ? firstName : L.F("send.summary", firstName, info.Files.Count, info.Files.Count - 1);
                     var failureDetail = state == "failed" ? SendRules.FailureDetail(reason, info.Files) : "";
                     AddHistory(new TransferRecord
@@ -1322,13 +1317,13 @@ public sealed class App : Application
                     if (state is "sent" or "done") Shell.DoneToast(id, L.F("done.sent", d?.Name ?? info.DeviceName), summary, null);
                     else if (state == "failed")
                     {
-                        // A folder can still arrive here if it was added after the
-                        // preflight check (for example from another drop): make
-                        // the same detailed explanation visible, not just a code.
-                        if (SendRules.IsFolderFailure(reason, info.Files))
-                            ShowSendError(L.T("send.folderTitle"), failureDetail);
+                        // A path can become a folder, or vanish, after the
+                        // preflight check (another drop, Explorer rename, a
+                        // package being opened): explain it the same way.
+                        if (SendRules.FromEngine(reason, info.Files) is { } problem)
+                            ShowSendError(problem);
                         else
-                            Shell.DoneToast(id, L.T(reason == "not_a_file" ? "send.notFileTitle" : "send.failedTitle"), failureDetail, null);
+                            Shell.DoneToast(id, L.T("send.failedTitle"), failureDetail, null);
                     }
                 }
                 Service.Touch();
