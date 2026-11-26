@@ -148,7 +148,7 @@ inline CardInfo select(uint16_t device, uint32_t hw_rev, uint32_t rf_id) {
     c.firmware = "iwlwifi-bz-b0-hr-b0-100.ucode";
     c.pnvm = "iwlwifi-bz-b0-hr-b0.pnvm";
     c.name = "Intel(R) Wi-Fi 6 AX203";
-    c.tested = false; /* experimental until #84 re-verifies this isolated build */
+    c.tested = true; /* verified bidirectionally on Arrow Lake AX203 (v2.2.15, PR #90 / #84) */
   } else {
     c.why = "MAC type " + std::to_string(mac) + " on device " + std::to_string(device) +
             " has no firmware upstream";

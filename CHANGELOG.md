@@ -6,6 +6,28 @@
 
 ---
 
+## v2.2.17 (Preview / 预览版)
+
+### 中文
+
+- **修复 Intel 接收文件 30% 停滞 / HTTP 408（#91）**：新增单播数据帧重传降速（第 2 次重试降两档、第 3 次起回退至稳健的 Legacy 24 Mb/s），同时在连续 4 帧首传失败或出现帧超时放弃时立刻触发 `RateLadder` 降档，避免弱信号/干扰波动时 TCP ACK 死磕高阶 VHT80 MCS 8 导致传输卡死超时。
+- **首传极速冷启动优化（类 Apple 预热）**：80 MHz 下若对端近距离信号足够强（`awdl_dbm >= -54 dBm` 直接从 VHT80 2SS MCS 4 起步，`>= -46 dBm` 从 MCS 7 起步，弱信号或 20/40 MHz 仍保持保守起步）；同时将 TX A-MPDU 聚合触发门槛下调至 **6 个大包（~9 KB，约 1–2 ms 立即触发，不再空等 100 ms 窗口）**，空闲保活微调至 2.5 s（仍完整发送 `DELBA` 清理）。
+- **合并 PR #92（@sh17632）**：新增可选环境变量 `NEKODROP_PIN_CHANNEL=<信道>`，支持将 Intel 射频钉在指定监听信道（默认不设时行为完全不变），方便黑苹果/第三方无线驱动 macOS 场景与固定信道排查（#67）。
+- **MT7922 / RZ616 `<4 GiB` DMA 分配加固（#87）**：AWE 低地址物理页探测新增自适应分批减半与 3 轮重试，并在 `<4 GiB` 内存紧张时自动回退至紧凑环配置（256 RX / 128 TX，仅需 720 页而非 1250 页），显著降低大内存机器重启后报 `only N lockable pages below 4 GiB` 的概率。
+- **AX203 正式标记为已实测验证（#84 / PR #90）**：社区实测原版 v2.2.15 在 Arrow Lake AX203（`8086:7740`）上双向发现与收发均正常；同步在安装器支持网卡提示中补充列出 `AX203`。
+- **Apple ID FIDO 安全密钥登录提示（#89）**：当 Apple ID 登录返回 `-22410` 时，客户端直接补充中文/英文提示说明 Apple 传统 GSA 协议不支持硬件安全密钥，引导改用「从 Mac 导入」。
+
+### English
+
+- **Fix Intel RX mid-transfer stall / HTTP 408 (#91):** added per-retry unicast data rate fallback (drop 2 steps on retry 1, fall back to robust Legacy 24 Mb/s on retry 2+) and immediate `RateLadder` step-down after 4 consecutive first-attempt failures or any abandoned frame, preventing TCP ACKs from getting stuck retrying at VHT80 2SS MCS 8 during SNR dips.
+- **First-transfer instant max speed:** on 80 MHz, seed `RateLadder` initial step from peer AWDL RSSI (`>= -54 dBm` -> VHT80 2SS MCS 4; `>= -46 dBm` -> VHT80 2SS MCS 7; weak signal or 20/40 MHz stays conservative), and enter TX A-MPDU immediately once **6 payload frames (~9 KB)** arrive instead of waiting 100 ms; extended idle DELBA grace modestly from 1.5 s to 2.5 s.
+- **Merged PR #92 (@sh17632):** opt-in `NEKODROP_PIN_CHANNEL=<n>` environment variable in `iwxradio` to keep the radio pinned to a specific peer listen channel (zero impact when unset; helps hackintosh / third-party macOS Wi-Fi drivers and channel debugging, #67).
+- **MT7922 `<4 GiB` DMA hardening (#87):** adaptive batch halving + 3-attempt retry in `mtkradio`'s AWE allocator, plus automatic compact-ring fallback (256 RX / 128 TX, requiring 720 pages instead of 1250) when `<4 GiB` pages are tight.
+- **AX203 marked verified (#84 / PR #90):** promoted Arrow Lake AX203 (`8086:7740`) to `tested = true` following community bidirectional verification on v2.2.15, and listed `AX203` in `install.ps1`'s supported-card message.
+- **Apple ID FIDO security key hint (#89):** show a clear localized hint on `-22410` sign-in failures explaining that Apple's legacy GSA protocol does not support hardware security keys and directing users to "Import from a Mac".
+
+---
+
 ## v2.2.16 (Preview / 预览版)
 
 ### 中文

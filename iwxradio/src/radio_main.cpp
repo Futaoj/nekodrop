@@ -924,10 +924,9 @@ int main(int argc, char **argv) {
     uint64_t resent = 0, gave_up = 0, uq_dropped = 0, missing_status = 0;
     awdl::RateLadder ladder;
     ladder.step = txc.initial_rate_step;
+    bool ladder_seeded = false;
     const bool wide80 = opt.channel > 14 && opt.width >= 80;
-    const auto data_rate = [&]() -> TxRate {
-      if (opt.fixed_rate) return opt.data_rate;
-      const unsigned st = ladder.step;
+    const auto rate_for_step = [&](unsigned st) -> TxRate {
       TxRate r;
       if (st == 0) {
         r.kind = TxRate::Legacy;
@@ -942,6 +941,10 @@ int main(int argc, char **argv) {
         r.wide80 = true;
       }
       return r;
+    };
+    const auto data_rate = [&]() -> TxRate {
+      if (opt.fixed_rate) return opt.data_rate;
+      return rate_for_step(ladder.step);
     };
     dev.set_tx_status_handler([&](unsigned slot, bool acked) {
       /* Find the frame this slot belongs to. With a window several frames are
@@ -958,6 +961,7 @@ int main(int argc, char **argv) {
           return;
         }
         if (tx.expired(now)) {
+          if (f.data && !opt.fixed_rate) ladder.note_give_up();
           tx.abandon = true;
           gave_up++;
           return;
@@ -1033,6 +1037,7 @@ int main(int argc, char **argv) {
             continue;
         }
         if (tx.expired(now)) {
+          if (f.data && !opt.fixed_rate) ladder.note_give_up();
           tx.abandon = true;
           gave_up++;
           removed = true;
@@ -1044,7 +1049,16 @@ int main(int argc, char **argv) {
           continue;
         if (!tx.attempts) {
           tx.first_us = now;
-          if (f.data) f.rate = data_rate();
+          if (f.data) {
+            if (!ladder_seeded && !opt.fixed_rate && awdl_dbm > -120 && ladder.ups == 0 && ladder.downs == 0 &&
+                ladder.ok == 0 && ladder.failed == 0) {
+              ladder.step = awdl::rssi_initial_rate_step(awdl_dbm, wide80, txc.initial_rate_step);
+              ladder_seeded = true;
+            }
+            f.rate = data_rate();
+          }
+        } else if (f.data && !opt.fixed_rate) {
+          f.rate = rate_for_step(awdl::retry_rate_step(ladder.step, tx.attempts));
         }
         const int slot = dev.transmit_slot(f.frame.data(), f.frame.size(), f.rate, !batch_kick);
         if (slot < 0) break; /* ring full: try again next tick */

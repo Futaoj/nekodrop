@@ -222,6 +222,8 @@ public static partial class AppleId
                     break;
                 case "error":
                     failure = (string?)e["msg"] ?? L.T("aid.ended");
+                    if (failure.Contains("-22410", StringComparison.Ordinal))
+                        failure += "\n" + L.T("aid.fidoHint");
                     break;
             }
         }
