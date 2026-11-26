@@ -137,6 +137,7 @@ bool StaConfig::load(const std::string &path, std::string &error) {
     else if (k == "tap") tap = v;
     else if (k == "width") max_width = static_cast<unsigned>(std::atoi(v.c_str()));
     else if (k == "ba") block_ack = v == "1";
+    else if (k == "tap_writers") tap_writers = static_cast<unsigned>(std::atoi(v.c_str()));
   }
   if (ssid.empty() || ssid.size() > 32) error = "ssid missing or longer than 32 bytes";
   else if (!have_bssid) error = "bssid missing";
@@ -176,6 +177,7 @@ bool WifiStation::start(const StaConfig &cfg, std::string &error) {
       return false;
     }
   }
+  _tap.set_write_threads(_cfg.tap_writers);
   if (!_tap.is_open() && !_tap.open(_cfg.tap, error)) return false;
   _addr = _tap.mac();
   _tap.set_connected(false);
@@ -220,6 +222,7 @@ void WifiStation::reset_join_state() {
   _last_reply.clear();
   _addba_answers.clear();
   _ba_token_valid = 0;
+  _rx_reorder.clear();
   _sae_step = SaeStep::None;
   _sae_token.clear();
   _sae_sc = 0;
@@ -321,8 +324,17 @@ bool WifiStation::owns(const RxFrame &f) const {
 
 void WifiStation::on_frame(const RxFrame &f) {
   const uint8_t type = f.data[0] & 0x0c;
-  if (type == 0x00) handle_mgmt(f);
-  else if (type == 0x08) handle_data(f);
+  if (type == 0x00) {
+    handle_mgmt(f);
+  } else if (type == 0x08) {
+    /* A-MPDU MPDUs arrive in hardware order. Reorder only our unicast QoS
+     * data while an RX Block Ack session is active; everything else takes the
+     * direct path. */
+    if ((f.data[4] & 1u) == 0 && std::memcmp(f.data + 4, _addr.data(), 6) == 0 &&
+        _rx_reorder.process(f, _now, [this](const RxFrame &rx) { handle_data(rx); }))
+      return;
+    handle_data(f);
+  }
 }
 
 /* ---------------------------------------------------------- management */
@@ -562,7 +574,9 @@ void WifiStation::send_assoc() {
   }
   if (_ap_ht) {
     /* HT capabilities: 20/40 (if the AP is wide), SM PS off, short GI 20/40,
-     * 1 RX STBC stream; 64 KiB A-MPDU, 8 us spacing; MCS 0-15 (two chains). */
+     * 1 RX STBC stream; 64 KiB A-MPDU, 8 us spacing; MCS 0-15 (two chains).
+     * Keep bit 11 clear (3839-byte max A-MSDU) so frames always fit in the
+     * default 4 KiB RX DMA buffers. */
     const uint16_t htcap = static_cast<uint16_t>((_ap_width >= 40 ? 0x0002 : 0) | 0x000c | 0x0020 |
                                                  (_ap_width >= 40 ? 0x0040 : 0) | 0x0100);
     const uint8_t ht[28] = {45,
@@ -590,7 +604,8 @@ void WifiStation::send_assoc() {
   }
   if (_ap_vht && _cfg.channel > 14) {
     /* VHT capabilities: short GI 80, 1 RX STBC stream, 1 MiB A-MPDU;
-     * MCS 0-9 on two streams. */
+     * MCS 0-9 on two streams. Bits 2-3 = 0b00 already advertises 80 MHz in
+     * IEEE 802.11ac (0b01 would advertise 160 MHz, which this PHY does not). */
     const uint8_t vht[14] = {191, 12, 0x20, 0x01, 0x80, 0x03, 0xfa, 0xff, 0, 0, 0xfa, 0xff, 0, 0};
     f.insert(f.end(), vht, vht + sizeof(vht));
   }
@@ -721,6 +736,7 @@ void WifiStation::handle_mgmt(const RxFrame &in) {
     const unsigned tid = params >> 12;
     if ((params & 0x0800) && tid < 8) {
       _dev.sta_remove_rx_ba(tid);
+      _rx_reorder.on_delba(_cfg.bssid, tid, [this](const RxFrame &rx) { handle_data(rx); });
       _ba_token_valid &= static_cast<uint8_t>(~(1u << tid));
       _log("station: the access point ended Block Ack on TID " + std::to_string(tid) + ", reason " +
            std::to_string(le16(f.data + 28)));
@@ -744,12 +760,19 @@ void WifiStation::handle_mgmt(const RxFrame &in) {
       _ba_ssn[tid] = r.ssn;
       _ba_window[tid] = r.window;
       _ba_token_valid |= static_cast<uint8_t>(1u << tid);
+      if (!same) {
+        /* New dialog: start the scoreboard at the AP's starting sequence. A
+         * repeated request keeps its buffered MPDUs. */
+        _rx_reorder.on_addba(_cfg.bssid, tid, r.ssn, r.window, _now,
+                             [this](const RxFrame &rx) { handle_data(rx); });
+      }
     } else {
       /* Declined: status 37 (request declined); the AP sends unaggregated.
        * Any session left for this TID goes too (round 2 #13). */
       a[27] = 37;
       a[28] = 0;
       _dev.sta_remove_rx_ba(r.tid);
+      _rx_reorder.on_delba(_cfg.bssid, r.tid, [this](const RxFrame &rx) { handle_data(rx); });
       _ba_token_valid &= static_cast<uint8_t>(~(1u << tid));
       if (_declined_ba++ < 3) _log("station: Block Ack request on TID " + std::to_string(r.tid) + " declined");
     }
@@ -785,6 +808,9 @@ void WifiStation::handle_data(const RxFrame &f) {
   if (!group && std::memcmp(f.data + 4, _addr.data(), 6) != 0) return;
   _rx.data++;
   if (!group) _rx.unicast++;
+  _rx.last_rate = f.rate_n_flags;
+  _rx.last_rate_width = static_cast<uint8_t>((f.rate_n_flags >> 11) & 0x7);
+  _rx.last_rate_mcs = static_cast<uint8_t>(f.rate_n_flags & 0x0f);
   const uint8_t *da = f.data + 4, *sa = f.data + 16;
   if (std::memcmp(sa, _addr.data(), 6) == 0) return; /* our own broadcast, echoed */
   const uint8_t *body = f.data + h;
@@ -869,15 +895,9 @@ void WifiStation::deliver(const uint8_t *da, const uint8_t *sa, const uint8_t *b
   }
   if (!plain() && !encrypted) return;
   if (_state != State::Running) return;
-  std::vector<uint8_t> eth;
-  eth.reserve(14 + len);
-  eth.insert(eth.end(), da, da + 6);
-  eth.insert(eth.end(), sa, sa + 6);
-  put_be16(eth, ethertype);
-  eth.insert(eth.end(), body, body + len);
-  if (_tap.write(eth.data(), eth.size())) {
+  if (_tap.write_eth(da, sa, ethertype, body, len)) {
     _rx_packets++;
-    _rx_bytes += eth.size();
+    _rx_bytes += 14 + len;
   } else if (_rx.tap_failed++ < 5) {
     _log("station: writing to the TAP adapter failed");
   }
@@ -1168,6 +1188,8 @@ void WifiStation::handle_eapol(const uint8_t *body, size_t len, bool encrypted) 
 
 void WifiStation::tick(uint64_t now_us) {
   _now = now_us;
+  /* Release a burst whose missing MPDU never arrived after the 40 ms window. */
+  _rx_reorder.flush_expired(now_us, [this](const RxFrame &rx) { handle_data(rx); });
   /* First tick after start() before _now was populated: anchor _state_since so
    * Listening genuinely waits for a beacon instead of timing out immediately. */
   if (_state != State::Idle && _state_since == 0) _state_since = now_us;

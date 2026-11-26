@@ -269,7 +269,8 @@ bool IwxDevice::sta_join(const StaParams &p) {
     else _sta_binding_added = true;
   }
   if (!err && !_fw.has_capa(IWX_UCODE_TLV_CAPA_DYNAMIC_QUOTA)) {
-    /* Air time halves between two bindings. */
+    /* Air time halves between two bindings; keep the listener's half intact
+     * so AirDrop does not lose airtime to the station. */
     iwx_time_quota_cmd q{};
     for (unsigned i = 0; i < IWX_MAX_BINDINGS; i++) q.quotas[i].id_and_color = htole32(IWX_FW_CTXT_INVALID);
     q.quotas[0].id_and_color = htole32(IWX_FW_CMD_ID_AND_COLOR(0, 0));

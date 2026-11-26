@@ -90,6 +90,7 @@ public sealed class Supervisor : IDisposable
                 ["fastUnlock"] = _cfg.FastUnlock,
                 ["coexPlan"] = _cfg.CoexPlan,
                 ["highThroughput"] = _cfg.HighThroughput,
+                ["dataPlaneAccel"] = _cfg.DataPlaneAccel,
                 ["card"] = _cardLabel,
                 ["manualCard"] = _cfg.ManualCard,
                 ["manualModel"] = _cfg.ManualModel,
@@ -268,6 +269,26 @@ public sealed class Supervisor : IDisposable
     }
 
     /// <summary>
+    /// Experimental station data-plane acceleration: RX Block Ack reordering
+    /// (sta.conf ba=1) and two TAP writer threads (tap_writers=2). Off makes
+    /// the AP fall back to single frames and writes TAP on the RX thread;
+    /// a running radio restarts to take the change.
+    /// </summary>
+    public void SetDataPlaneAccel(bool on)
+    {
+        lock (_lock)
+        {
+            if (_cfg.DataPlaneAccel == on) return;
+            _cfg.DataPlaneAccel = on;
+            _cfg.Save();
+        }
+        Say($"experimental data-plane acceleration: {(on ? "on" : "off")}");
+        if (State is RadioState.On or RadioState.Starting)
+            _ = Task.Run(() => Relaunch(_channel == 0 ? _cfg.StartChannel : _channel));
+        Publish();
+    }
+
+    /// <summary>
     /// The user's manual card choice (Settings): a PCI hardware ID and a
     /// CardCatalog.ManualModels key, or "" and "" for automatic. Used only for a
     /// card the catalog does not recognize by its ID. Returns "" or why not.
@@ -331,7 +352,7 @@ public sealed class Supervisor : IDisposable
         try
         {
             KillDaemons();
-            if (giveBack) EnsureVendorDriver();
+            if (giveBack) EnsureVendorDriver(reconnect: true);
             lock (_lock) { State = RadioState.Off; _wifi = ""; _channel = 0; }
         }
         finally { _launchGate.Release(); }
@@ -419,7 +440,7 @@ public sealed class Supervisor : IDisposable
                 lock (_lock) _staSsid = net?.Ssid ?? "";
                 if (net is not null && (net.Open || net.Passphrase is not null || net.PskHex is not null))
                 {
-                    staConf = Wlan.WriteStaConfig(net);
+                    staConf = Wlan.WriteStaConfig(net, _cfg.DataPlaneAccel);
                     Say($"Wi-Fi: joining \"{net.Ssid}\" ({net.Security}, channel {net.Channel}) beside AirDrop");
                 }
                 else if (net is null && !wired && !_userOff && !_userChose &&
@@ -1262,11 +1283,15 @@ public sealed class Supervisor : IDisposable
     /// <summary>The card runs nekodrop's kernel Wi-Fi driver (nekodrop-wlan.sys).</summary>
     static bool KernelDriver => Card.Find() is { } k && Card.ByKernelDriver(k);
 
-    void EnsureVendorDriver()
+    void EnsureVendorDriver(bool reconnect = false)
     {
         var card = Card.Find();
         // Ours (running or not), or left with no driver by a failed bind: the vendor's driver goes back on.
-        if (card is null || (!Card.BoundToProxy(card) && card.InfPath != "")) return;
+        if (card is null || (!Card.BoundToProxy(card) && card.InfPath != ""))
+        {
+            if (reconnect) ReconnectWindowsWifi();
+            return;
+        }
         var vendor = card.Profile.VendorName;
         if (_cfg.VendorInf == "" || !File.Exists(_cfg.VendorInf))
         {
@@ -1302,9 +1327,24 @@ public sealed class Supervisor : IDisposable
             Say($"giving the card back to {Path.GetFileName(fullInf)}");
             Card.Bind(card.HardwareId, fullInf);
             // Once the vendor driver's WLAN interface is up, put back the saved networks it lacks.
-            _ = Task.Run(() => WlanBackup.Restore(Say, TimeSpan.FromSeconds(60)));
+            // On a user-requested give-back, also join the default network instead of leaving
+            // Windows disconnected until the user clicks the Wi-Fi icon.
+            if (reconnect) ReconnectWindowsWifi();
+            else _ = Task.Run(() => WlanBackup.Restore(Say, TimeSpan.FromSeconds(60)));
         }
         catch (Exception e) { Say("giving the card back failed: " + e.Message); }
+    }
+
+    /// <summary>Gives the card back, then asks Windows to join its default saved Wi-Fi.</summary>
+    void ReconnectWindowsWifi()
+    {
+        var preferred = _net?.Ssid;
+        if (_userOff)
+        {
+            Say("Wi-Fi: not reconnecting after AirDrop: Wi-Fi was disconnected in nekodrop");
+            return;
+        }
+        _ = Task.Run(() => WlanBackup.RestoreAndConnect(Say, preferred));
     }
 
     Process Spawn(string exe, IEnumerable<string> args, Action<string> onLine)

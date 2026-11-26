@@ -378,6 +378,7 @@ public sealed class App : Application
         var windows = new (string Name, Func<Window> Make, double Height)[]
         {
             ("send", () => new SendWindow(), 0),
+            ("warning", () => new WarningWindow(L.T("send.folderTitle"), L.F("send.folderLead", "规则"), L.T("send.unsupportedType")), 0),
             ("main", () => Main("ready"), 1000),
             ("main-list", () => { Settings.DeviceView = "list"; return Main("ready"); }, 1000),
             ("settings-general", () => new SettingsWindow("general"), 0),
@@ -977,8 +978,13 @@ public sealed class App : Application
     public void SendTo(Device d)
     {
         if (Model.Files.Count == 0) return;
-        var id = Guid.NewGuid().ToString("N")[..12];
         var files = Model.Files.ToList();
+        if (SendRules.Check(files) is { } problem)
+        {
+            ShowSendError(problem);
+            return;
+        }
+        var id = Guid.NewGuid().ToString("N")[..12];
         _sendInfo[id] = (d.Id, d.Name, files);
         d.Busy = true;
         d.State = "asking";
@@ -986,6 +992,18 @@ public sealed class App : Application
         d.Progress = 0;
         Service.Touch();
         Engine.SendFiles(id, d.Id, files);
+    }
+
+    /// <summary>
+    /// A file that cannot be sent gets the app's own warning card, with the
+    /// reason and the accepted object type, instead of a Win32 message box or
+    /// a bare "发送失败 · not_a_file" status.
+    /// </summary>
+    static void ShowSendError(SendProblem problem)
+    {
+        var owner = Current.Windows.OfType<Window>().FirstOrDefault(w => w.IsActive)
+                 ?? Current.Windows.OfType<Window>().FirstOrDefault(w => w.IsVisible);
+        WarningWindow.Show(owner, problem);
     }
 
     string _lastRadio = "", _lastWifi = "";
@@ -1247,6 +1265,8 @@ public sealed class App : Application
                 if (!_sendInfo.TryGetValue(id, out var info)) break;
                 var d = Model.Devices.FirstOrDefault(x => x.Id == info.DeviceId);
                 var state = (string?)o["state"];
+                var reason = (string?)o["reason"] ?? "";
+                var failure = state == "failed" ? SendRules.FailureStatus(reason, info.Files) : "";
                 if (d is not null)
                 {
                     d.State = state is "done" ? "sent" : state ?? "";
@@ -1260,7 +1280,7 @@ public sealed class App : Application
                         "sending" => txRate is not null ? $"{L.F("send.sending", d.Progress)} · {txRate}" : L.F("send.sending", d.Progress),
                         "sent" or "done" => L.T("send.sent"),
                         "declined" => L.T("send.declined"),
-                        "failed" => L.T("send.failed") + ((string?)o["reason"] ?? ""),
+                        "failed" => L.T("send.failed") + failure,
                         _ => state ?? "",
                     };
                 }
@@ -1281,8 +1301,9 @@ public sealed class App : Application
                                 d.Status = L.T("dev.ready");
                             }));
                     }
-                    var firstName = info.Files.Count > 0 ? Path.GetFileName(info.Files[0].TrimEnd('\\')) : L.T("what.some");
+                    var firstName = info.Files.Count > 0 ? SendRules.Name(info.Files[0]) : L.T("what.some");
                     var summary = info.Files.Count <= 1 ? firstName : L.F("send.summary", firstName, info.Files.Count, info.Files.Count - 1);
+                    var failureDetail = state == "failed" ? SendRules.FailureDetail(reason, info.Files) : "";
                     AddHistory(new TransferRecord
                     {
                         Direction = "sent",
@@ -1291,9 +1312,19 @@ public sealed class App : Application
                         Paths = [.. info.Files],
                         Bytes = MediaHelper.SumBytes(info.Files),
                         Status = state is "sent" or "done" ? "done" : state,
-                        Error = state == "failed" ? (string?)o["reason"] ?? "" : "",
+                        Error = failureDetail,
                     });
                     if (state is "sent" or "done") Shell.DoneToast(id, L.F("done.sent", d?.Name ?? info.DeviceName), summary, null);
+                    else if (state == "failed")
+                    {
+                        // A path can become a folder, or vanish, after the
+                        // preflight check (another drop, Explorer rename, a
+                        // package being opened): explain it the same way.
+                        if (SendRules.FromEngine(reason, info.Files) is { } problem)
+                            ShowSendError(problem);
+                        else
+                            Shell.DoneToast(id, L.T("send.failedTitle"), failureDetail, null);
+                    }
                 }
                 Service.Touch();
                 break;

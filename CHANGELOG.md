@@ -6,6 +6,24 @@
 
 ---
 
+## v2.3.2 (Preview / 预览版)
+
+### 中文
+
+- **合并 PR #93（@GGBond-cer，经安全与协议审查修订）**：
+  - **实验性 Concurrent Wi-Fi 数据面加速（默认关闭）**：新增设置开关 `DataPlaneAccel`（「实验性数据面加速（默认关闭）」），开启后在 Intel 并发模式下启用主机侧 64 槽位 **STA RX Block Ack 重排**（`iwx_rx_ba.h`，下行 ~20 → ~45 Mbps）与**双线程异步 TAP 写入器**（多线程下行实测 156–200 Mbps）；合入时修复了原 PR 中 802.11ac VHT 能力位误报 160 MHz、无条件通告 7935 B A-MSDU、TAP 统计无锁数据竞争及取消等待死锁问题，关闭时零影响。
+  - **发送文件夹明确提示卡片**：新增 `SendRules` 预检与应用内 `WarningWindow` 卡片，拦截文件夹/缺失文件并给出「进文件夹选文件 / 压缩为 ZIP / 分批发送」三种替代方案，取代旧版 `发送失败 · not_a_file` 弹窗。
+  - **还卡后自动重连 Windows Wi-Fi**：停止服务/还卡给原厂驱动后自动请求 Windows 重连默认已保存 Wi-Fi（若用户在 nekodrop 中主动断开则保持断开）。
+
+### English
+
+- **Merged PR #93 (@GGBond-cer, with review fixes):**
+  - **Experimental Concurrent Wi-Fi data-plane acceleration (default off):** single `DataPlaneAccel` toggle enabling host-side 64-slot **STA RX Block Ack reordering** (`iwx_rx_ba.h`, ~20 → ~45 Mbps) and **two async TAP writer threads** (156–200 Mbps multi-connection); fixed the VHT 160 MHz capability bit bug, unconditional 7935-byte A-MSDU bit, lock-free TAP stats race, and unbounded `CancelIoEx` wait before merging.
+  - **Clear folder-send warning card:** preflight `SendRules` + in-app `WarningWindow` explaining why folders cannot be sent directly and offering concrete alternatives instead of bare `not_a_file`.
+  - **Automatic Windows Wi-Fi reconnect on card give-back:** asks Windows to rejoin the default saved Wi-Fi profile when returning the adapter to its vendor driver.
+
+---
+
 ## v2.3.1 (Stable / 稳定版)
 
 ### 中文

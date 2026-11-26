@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "iwx_rx_ba.h"
 #include "sta_device.h"
 #include "tap.h"
 #include "wpa3.h"
@@ -32,13 +33,14 @@ struct StaConfig {
   bool open = false;
   std::string tap;        /* TAP adapter name or GUID; empty: the first */
   unsigned max_width = 80;
-  /* Receive Block Ack sessions with the AP, reordered on the host by
-   * BAID/NSSN as Linux does (rx_reorder.h). ba=0 declines them (status 37)
-   * and the AP sends unaggregated, which costs the air the AWDL listener
-   * shares with it (Concurrent mode). */
-  std::optional<bool> block_ack; /* unset: the active backend chooses */
+  /* Receive Block Ack sessions with the AP. Unset: the active backend
+   * chooses; sta.conf writes 0/1 from the experimental data-plane switch. */
+  std::optional<bool> block_ack;
+  /* 0: write TAP on the station RX thread. 2: queue and use two writer
+   * threads, so the RX thread does not wait for TAP WriteFile. Same switch. */
+  unsigned tap_writers = 0;
 
-  /* key=value lines: ssid, bssid, channel, passphrase, psk, open, tap, width, ba. */
+  /* key=value lines: ssid, bssid, channel, passphrase, psk, open, tap, width, ba, tap_writers. */
   bool load(const std::string &path, std::string &error);
 };
 
@@ -75,6 +77,10 @@ public:
   /* Data frames from the AP and why some never reached Windows. */
   struct RxStats {
     uint64_t data = 0, unicast = 0, undecrypted = 0, not_llc = 0, amsdu = 0, tap_failed = 0;
+    /* Last data frame's firmware rate flags, for the health line: width bits
+     * 11-13, VHT/HT MCS in the low bits. */
+    uint32_t last_rate = 0;
+    uint8_t last_rate_width = 0, last_rate_mcs = 0;
   };
   const RxStats &rx_stats() const { return _rx; }
   /* Leaves and joins again in 5 s (the radio's stall watchdog). */
@@ -188,6 +194,7 @@ private:
 
   std::deque<std::vector<uint8_t>> _addba_answers;
   uint16_t _mgmt_seq = 0;
+  iwx::RxBaReorder _rx_reorder;
   uint64_t _rx_packets = 0, _tx_packets = 0, _tx_unicast = 0, _rx_bytes = 0, _tx_bytes = 0;
   RxStats _rx;
 };

@@ -5,9 +5,23 @@
  * the frames needs rewriting. */
 #pragma once
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
 #include <array>
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 class TapAdapter {
@@ -15,6 +29,11 @@ public:
   ~TapAdapter();
   /* Opens the first tap0901 adapter, or the one whose name or GUID is given. */
   bool open(const std::string &wanted, std::string &error);
+  /* 0: write on the caller (station RX) thread, the original path. 2: queue
+   * and let two writer threads do the blocking TAP WriteFile calls. */
+  void set_write_threads(unsigned threads) {
+    _write_threads = threads > kWriterThreads ? kWriterThreads : threads;
+  }
   bool is_open() const { return _handle != nullptr; }
   const std::array<uint8_t, 6> &mac() const { return _mac; }
   const std::string &name() const { return _name; }
@@ -23,13 +42,63 @@ public:
   /* Blocks up to `timeout_ms` for one Ethernet frame. Empty on timeout. */
   bool read(std::vector<uint8_t> &frame, unsigned timeout_ms);
   bool write(const uint8_t *frame, size_t len);
+  /* Build the Ethernet header in the reusable write buffer and enqueue it.
+   * A dedicated writer thread does the blocking TAP WriteFile call, so the
+   * radio's receive thread never waits 40+ us per frame for the TAP driver. */
+  bool write_eth(const uint8_t *da, const uint8_t *sa, uint16_t ethertype,
+                 const uint8_t *payload, size_t len);
+  struct WriteStats {
+    uint64_t writes = 0, total_us = 0, max_us = 0, queued_max = 0, drops = 0, failed = 0;
+  };
+  WriteStats write_stats() const {
+    return {
+        _stat_writes.load(std::memory_order_relaxed),
+        _stat_total_us.load(std::memory_order_relaxed),
+        _stat_max_us.load(std::memory_order_relaxed),
+        _stat_queued_max.load(std::memory_order_relaxed),
+        _stat_drops.load(std::memory_order_relaxed),
+        _stat_failed.load(std::memory_order_relaxed),
+    };
+  }
 
 private:
+  static constexpr size_t kMaxQueue = 4096;
+  static constexpr unsigned kWriterThreads = 2;
+  struct PendingOp {
+    OVERLAPPED ov{};
+    HANDLE event = nullptr;
+    std::vector<uint8_t> buf;
+    ~PendingOp() {
+      if (event) CloseHandle(event);
+    }
+  };
+  struct WriteCtx {
+    std::unique_ptr<PendingOp> op;
+  };
+  bool enqueue_buffered();
+  bool write_direct();
+  void write_loop(unsigned index);
+  bool write_one(std::vector<uint8_t> &&frame, WriteCtx &ctx);
   void *_handle = nullptr;
-  void *_read_event = nullptr, *_write_event = nullptr;
+  void *_read_event = nullptr;
   bool _read_pending = false;
   std::vector<uint8_t> _read_buf;
+  std::vector<uint8_t> _write_buf;
   std::array<uint8_t, 6> _mac{};
   std::string _name;
   alignas(8) unsigned char _read_ov[64] = {};
+  unsigned _write_threads = 0;
+
+  std::array<std::thread, kWriterThreads> _writers;
+  std::array<WriteCtx, kWriterThreads> _write_ctx{};
+  std::mutex _write_mutex;
+  std::condition_variable _write_cv;
+  std::deque<std::vector<uint8_t>> _write_queue;
+  bool _write_stop = false;
+  std::atomic<uint64_t> _stat_writes{0}, _stat_total_us{0}, _stat_max_us{0},
+      _stat_queued_max{0}, _stat_drops{0}, _stat_failed{0};
 };
+
+
+
+
