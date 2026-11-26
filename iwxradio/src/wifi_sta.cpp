@@ -575,10 +575,10 @@ void WifiStation::send_assoc() {
   if (_ap_ht) {
     /* HT capabilities: 20/40 (if the AP is wide), SM PS off, short GI 20/40,
      * 1 RX STBC stream; 64 KiB A-MPDU, 8 us spacing; MCS 0-15 (two chains).
-     * Bit 11 advertises the 7935-byte maximum A-MSDU size, so the AP may pack
-     * several Ethernet frames into one MPDU instead of one per frame. */
+     * Keep bit 11 clear (3839-byte max A-MSDU) so frames always fit in the
+     * default 4 KiB RX DMA buffers. */
     const uint16_t htcap = static_cast<uint16_t>((_ap_width >= 40 ? 0x0002 : 0) | 0x000c | 0x0020 |
-                                                 (_ap_width >= 40 ? 0x0040 : 0) | 0x0100 | 0x0800);
+                                                 (_ap_width >= 40 ? 0x0040 : 0) | 0x0100);
     const uint8_t ht[28] = {45,
                             26,
                             static_cast<uint8_t>(htcap),
@@ -604,26 +604,9 @@ void WifiStation::send_assoc() {
   }
   if (_ap_vht && _cfg.channel > 14) {
     /* VHT capabilities: short GI 80, 1 RX STBC stream, 1 MiB A-MPDU;
-     * MCS 0-9 on two streams. Bits 2-3 of the capabilities info are the
-     * supported channel width: without setting 80 MHz here the AP can keep
-     * the station at 20/40 MHz even though the PHY and TLC are configured
-     * for 80 MHz. */
-    uint32_t vhtcap = 0x03800120u;
-    if (_ap_width >= 80) vhtcap |= 1u << 2;
-    const uint8_t vht[14] = {191,
-                             12,
-                             static_cast<uint8_t>(vhtcap),
-                             static_cast<uint8_t>(vhtcap >> 8),
-                             static_cast<uint8_t>(vhtcap >> 16),
-                             static_cast<uint8_t>(vhtcap >> 24),
-                             0xfa,
-                             0xff,
-                             0,
-                             0,
-                             0xfa,
-                             0xff,
-                             0,
-                             0};
+     * MCS 0-9 on two streams. Bits 2-3 = 0b00 already advertises 80 MHz in
+     * IEEE 802.11ac (0b01 would advertise 160 MHz, which this PHY does not). */
+    const uint8_t vht[14] = {191, 12, 0x20, 0x01, 0x80, 0x03, 0xfa, 0xff, 0, 0, 0xfa, 0xff, 0, 0};
     f.insert(f.end(), vht, vht + sizeof(vht));
   }
   if (_ap_wmm) {

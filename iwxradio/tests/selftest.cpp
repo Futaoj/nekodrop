@@ -15,6 +15,7 @@
 #include "../src/awdl_policy.h"
 #include "../src/coex_plan.h"
 #include "../src/crypto.h"
+#include "../src/iwx_rx_ba.h"
 #include "../src/wpa3.h"
 #include "radio_backend_test.h"
 #include <cstring>
@@ -527,6 +528,46 @@ int main(int argc, char **argv) {
   CHECK(!awdl::ba_tx_stalled_as_singles(128, 0, 63), "no-BA fallback waits for 64 single completions");
   CHECK(!awdl::ba_tx_stalled_as_singles(256, 1, 200), "no-BA fallback stays quiet once any Block Ack arrives");
   CHECK(awdl::ba_tx_stalled_as_singles(128, 0, 64), "no-BA fallback triggers on 128 frames / 0 BA / 64 singles");
+
+  /* Intel station RX Block Ack reordering (PR #93). */
+  {
+    iwx::RxBaReorder ba;
+    const uint8_t ap[6] = {0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee};
+    const uint8_t me[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55};
+    std::vector<uint16_t> out;
+    const auto emit = [&](const RxFrame &f) {
+      const uint16_t sc = static_cast<uint16_t>(f.data[22] | (f.data[23] << 8));
+      out.push_back(static_cast<uint16_t>((sc >> 4) & 0x0fffu));
+    };
+    const auto make_qos = [&](uint16_t seq, uint8_t tid) {
+      std::vector<uint8_t> buf(32, 0);
+      buf[0] = 0x88; /* QoS Data */
+      std::memcpy(buf.data() + 4, me, 6);
+      std::memcpy(buf.data() + 10, ap, 6);
+      const uint16_t sc = static_cast<uint16_t>(seq << 4);
+      buf[22] = static_cast<uint8_t>(sc);
+      buf[23] = static_cast<uint8_t>(sc >> 8);
+      buf[24] = tid & 0x0fu;
+      return buf;
+    };
+    ba.on_addba(ap, 0, 10, 64, 1000, emit);
+    auto f10 = make_qos(10, 0), f12 = make_qos(12, 0), f11 = make_qos(11, 0), f14 = make_qos(14, 0);
+    auto wrap = [](const std::vector<uint8_t> &b) {
+      RxFrame r{};
+      r.data = b.data();
+      r.len = b.size();
+      return r;
+    };
+    CHECK(ba.process(wrap(f10), 1100, emit) && out.size() == 1 && out[0] == 10, "STA RX BA emits in-order SSN immediately");
+    CHECK(ba.process(wrap(f12), 1200, emit) && out.size() == 1, "STA RX BA buffers out-of-order seq 12");
+    CHECK(ba.process(wrap(f12), 1250, emit) && out.size() == 1, "STA RX BA suppresses duplicate seq 12");
+    CHECK(ba.process(wrap(f11), 1300, emit) && out.size() == 3 && out[1] == 11 && out[2] == 12,
+          "STA RX BA drains 11 and 12 in order once 11 arrives");
+    CHECK(ba.process(wrap(f14), 2000, emit) && out.size() == 3, "STA RX BA buffers seq 14 with gap at 13");
+    ba.flush_expired(2000 + iwx::RxBaReorder::kStallTimeoutUs + 1, emit);
+    CHECK(out.size() == 4 && out[3] == 14, "STA RX BA flushes stalled seq 14 after 40 ms timeout");
+    ba.on_delba(ap, 0, emit);
+  }
 
   std::printf(failures ? "%d FAILED\n" : "all passed\n", failures);
   return failures ? 1 : 0;

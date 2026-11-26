@@ -14,9 +14,11 @@
 #include <windows.h>
 
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -48,19 +50,35 @@ public:
   struct WriteStats {
     uint64_t writes = 0, total_us = 0, max_us = 0, queued_max = 0, drops = 0, failed = 0;
   };
-  const WriteStats &write_stats() const { return _write_stats; }
+  WriteStats write_stats() const {
+    return {
+        _stat_writes.load(std::memory_order_relaxed),
+        _stat_total_us.load(std::memory_order_relaxed),
+        _stat_max_us.load(std::memory_order_relaxed),
+        _stat_queued_max.load(std::memory_order_relaxed),
+        _stat_drops.load(std::memory_order_relaxed),
+        _stat_failed.load(std::memory_order_relaxed),
+    };
+  }
 
 private:
   static constexpr size_t kMaxQueue = 4096;
   static constexpr unsigned kWriterThreads = 2;
-  struct WriteCtx {
-    alignas(8) unsigned char ov[64] = {};
+  struct PendingOp {
+    OVERLAPPED ov{};
     HANDLE event = nullptr;
+    std::vector<uint8_t> buf;
+    ~PendingOp() {
+      if (event) CloseHandle(event);
+    }
+  };
+  struct WriteCtx {
+    std::unique_ptr<PendingOp> op;
   };
   bool enqueue_buffered();
   bool write_direct();
   void write_loop(unsigned index);
-  bool write_one(const std::vector<uint8_t> &frame, WriteCtx &ctx);
+  bool write_one(std::vector<uint8_t> &&frame, WriteCtx &ctx);
   void *_handle = nullptr;
   void *_read_event = nullptr;
   bool _read_pending = false;
@@ -77,7 +95,8 @@ private:
   std::condition_variable _write_cv;
   std::deque<std::vector<uint8_t>> _write_queue;
   bool _write_stop = false;
-  WriteStats _write_stats;
+  std::atomic<uint64_t> _stat_writes{0}, _stat_total_us{0}, _stat_max_us{0},
+      _stat_queued_max{0}, _stat_drops{0}, _stat_failed{0};
 };
 
 
