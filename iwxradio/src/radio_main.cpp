@@ -52,6 +52,20 @@
 #include <map>
 #include "radio_link.h"
 
+/* allow_peer_channel: NEKODROP_PIN_CHANNEL=<n> keeps the service on channel n
+ * even when a peer advertises a different channel sequence.  A macOS peer
+ * publishes its station channel (often 5 GHz) in the sequence while its AWDL
+ * listener stays on the coexist channel, so following the sequence blindly
+ * moves the radio away from the only channel that peer can actually hear. */
+static bool allow_peer_channel(unsigned channel) {
+  static const unsigned pin = [] {
+    const char *value = std::getenv("NEKODROP_PIN_CHANNEL");
+    const int parsed = value ? std::atoi(value) : 0;
+    return parsed > 0 ? static_cast<unsigned>(parsed) : 0u;
+  }();
+  return pin == 0 || pin == channel;
+}
+
 namespace {
 
 std::atomic<bool> g_stop{false};
@@ -779,7 +793,7 @@ int main(int argc, char **argv) {
         if (awdl::peer_sequence(f.data, f.len, seq) && std::memcmp(seq, peer_seq, 16) != 0) {
           std::memcpy(peer_seq, seq, 16);
           const unsigned ch = awdl::peer_channel(seq);
-          if (ch && ch != peer5g) {
+          if (ch && ch != peer5g && allow_peer_channel(ch)) {
             peer5g = ch;
             log_line("event: peer-channel " + std::to_string(ch));
           }
