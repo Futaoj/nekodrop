@@ -614,12 +614,32 @@ bool MtkDevice::dma_init(std::string &error) {
   if (!_dma.init(2048, 1250, error)) return false;
   log("32-bit DMA pool locked " + std::to_string(_dma.pages_locked()) + " pages (< 4 GiB)");
 
-  /* Register close-ops so RegProxy stops WFDMA even if this process crashes. */
+  /* Register crash-safe close-ops so RegProxy immediately disables interrupts,
+   * stops WFDMA, holds WFDMA logic in reset, and holds WFSYS in reset if this
+   * process crashes or is forcefully killed before close() runs (#72).
+   * Normal close() clears these ops after completing a clean wfsys_reset(). */
   const uint32_t glo_off = translate_addr(MT_WFDMA0_GLO_CFG);
   const uint32_t int_off = translate_addr(MT_WFDMA0_HOST_INT_ENA);
+  const uint32_t pcie_int_off = translate_addr(MT_PCIE_MAC_INT_ENABLE);
+  const uint32_t rst_off = translate_addr(MT_WFDMA0_RST);
+  const uint32_t l1_cur = _proxy.read32(MT_HIF_REMAP_L1);
+  const uint32_t l1_wfsys =
+      (l1_cur & ~MT_HIF_REMAP_L1_MASK) |
+      field_prep(MT_HIF_REMAP_L1_MASK, (MT_WFSYS_SW_RST_B >> 16) & 0xffffu);
+  const uint32_t wfsys_off =
+      MT_HIF_REMAP_BASE_L1 + (MT_WFSYS_SW_RST_B & MT_HIF_REMAP_L1_OFFSET);
   std::vector<RegOp> close_ops = {
-      {int_off, 0, 1}, /* write 0 to HOST_INT_ENA */
-      {glo_off, MT_WFDMA0_GLO_CFG_TX_DMA_EN | MT_WFDMA0_GLO_CFG_RX_DMA_EN, 3}, /* clear TX/RX EN */
+      {int_off, 0, 1},      /* write 0 to WFDMA0 HOST_INT_ENA */
+      {pcie_int_off, 0, 1}, /* write 0 to PCIE_MAC_INT_ENABLE */
+      {glo_off,
+       MT_WFDMA0_GLO_CFG_TX_DMA_EN | MT_WFDMA0_GLO_CFG_RX_DMA_EN |
+           MT_WFDMA0_GLO_CFG_CSR_DISP_BASE_PTR_CHAIN_EN | MT_WFDMA0_GLO_CFG_OMIT_TX_INFO |
+           MT_WFDMA0_GLO_CFG_OMIT_RX_INFO | MT_WFDMA0_GLO_CFG_OMIT_RX_INFO_PFET2,
+       3}, /* clear TX/RX DMA EN */
+      {rst_off, MT_WFDMA0_RST_DMASHDL_ALL_RST | MT_WFDMA0_RST_LOGIC_RST,
+       3}, /* hold WFDMA logic & DMASHDL in reset */
+      {MT_HIF_REMAP_L1, l1_wfsys, 1}, /* point L1 remap window to MT_WFSYS_SW_RST_B */
+      {wfsys_off, WFSYS_SW_RST_B, 3}, /* hold WFSYS in reset on crash */
   };
   _proxy.set_close_ops(close_ops);
 
@@ -679,6 +699,7 @@ bool MtkDevice::tx_ring_push(Ring &r, const void *data, size_t len, bool wait_do
   if (wait_done) {
     const uint64_t deadline = now_ms() + 1000;
     while (!(*static_cast<const volatile uint32_t *>(&d[idx].ctrl) & MT_DMA_CTL_DMA_DONE)) {
+      if (_stopping && _stopping()) return false;
       if (now_ms() >= deadline) {
         log("tx_ring_push timeout ring=" + hex32(r.reg_base) +
             " base=" + hex32(rr(r.reg_base + 0x0)) +
@@ -767,6 +788,7 @@ bool MtkDevice::mcu_wait_response(uint8_t seq, std::vector<uint8_t> &out, unsign
   const uint64_t deadline = now_ms() + timeout_ms;
   std::vector<uint8_t> pkt;
   do {
+    if (_stopping && _stopping()) return false;
     /* MCU responses arrive on RX Ring 0 before FW runs, and on RX Ring 4 after FW runs. */
     if (rx_ring_pop(_rx_mcu, pkt) || rx_ring_pop(_rx_mcu_wa, pkt)) {
       if (pkt.size() >= sizeof(MtkMcuRxd) - 4) {
@@ -801,6 +823,7 @@ bool MtkDevice::mcu_wait_response(uint8_t seq, std::vector<uint8_t> &out, unsign
 bool MtkDevice::mcu_send(uint8_t cid, uint8_t ext_cid, uint8_t set_query,
                          const void *payload, size_t len, bool wait_rsp,
                          std::vector<uint8_t> *rsp, unsigned timeout_ms) {
+  if (!_dma_running) return false;
   _mcu_seq = (_mcu_seq + 1) & 0x0fu;
   if (_mcu_seq == 0) _mcu_seq = 1;
   const uint8_t seq = _mcu_seq;
@@ -840,6 +863,7 @@ bool MtkDevice::mcu_send(uint8_t cid, uint8_t ext_cid, uint8_t set_query,
 
 bool MtkDevice::mcu_send_uni(uint16_t cid, const void *payload, size_t len,
                              bool wait_rsp, unsigned timeout_ms) {
+  if (!_dma_running) return false;
   _mcu_seq = (_mcu_seq + 1) & 0x0fu;
   if (_mcu_seq == 0) _mcu_seq = 1;
   const uint8_t seq = _mcu_seq;
@@ -1123,7 +1147,9 @@ bool MtkDevice::load_firmware(const std::string &fw_dir, std::string &error) {
   }
 
   _fw_loaded = true;
-  log("MT7922 firmware booted and ready!");
+  const char *chip_name =
+      (_chip_id == 0x7961) ? "MT7921" : (_chip_id == 0x7920 ? "MT7920" : "MT7922");
+  log(std::string(chip_name) + " firmware booted and ready!");
   return true;
 }
 
@@ -1189,8 +1215,8 @@ bool MtkDevice::mac_init(std::string &error) {
     hdr->alpha2[0] = static_cast<uint8_t>(_country.size() >= 2 ? _country[0] : 'U');
     hdr->alpha2[1] = static_cast<uint8_t>(_country.size() >= 2 ? _country[1] : 'S');
     hdr->bw_2g = 0; /* BW_20_40M */
-    hdr->bw_5g = 3; /* BW_20_40_80_160M */
-    hdr->bw_6g = 3;
+    hdr->bw_5g = (_chip_id == 0x7961) ? 2 : 3; /* MT7921: 80 MHz max; MT7922: 160 MHz */
+    hdr->bw_6g = (_chip_id == 0x7961) ? 0 : 3;
     hdr->n_2ch = static_cast<uint8_t>(sizeof(k2gChans));
     hdr->n_5ch = static_cast<uint8_t>(sizeof(k5gChans));
     hdr->n_6ch = 0;
@@ -1545,12 +1571,50 @@ void MtkDevice::set_timing() { /* mt792x_mac_set_timeing, coverage class 0, shor
   clear(MT_ARB_SCR_BAND0, MT_ARB_SCR_TX_DISABLE | MT_ARB_SCR_RX_DISABLE);
 }
 
+void MtkDevice::apply_rx_filter_mcu() {
+  /* Configure firmware RX filter (matching Linux mt7921_configure_filter and
+   * mt7921_mcu_set_beacon_filter(false)):
+   * 1) mode=1 enables OTHER_BSS reception in firmware;
+   * 2) mode=2 with MT7921_FIF_BIT_CLR clears DROP_OTHER_BEACON / DROP_OTHER_BSS /
+   *    DROP_OTHER_UC / BSSID-drop bits in firmware's cached RFCR so channel switches
+   *    during Wi-Fi scans do not re-enable DROP_OTHER_BEACON (#54, #66, #72).
+   * Note: Linux mt7921_mcu_set_rxfilter passes wait_resp=false; firmware sends no ACK. */
+#pragma pack(push, 1)
+  struct {
+    uint8_t rsv[4];
+    uint8_t mode;
+    uint8_t rsv2[3];
+    uint32_t fif;
+    uint32_t bit_map;
+    uint8_t bit_op;
+    uint8_t pad[51];
+  } rxfilter_req{};
+#pragma pack(pop)
+  rxfilter_req.mode = 1;
+  rxfilter_req.fif = MT7921_FILTER_ENABLE | MT7921_FILTER_OTHER_BSS;
+  (void)mcu_send(MCU_CE_CMD_SET_RX_FILTER, 0, MCU_Q_SET, &rxfilter_req, sizeof(rxfilter_req),
+                 false);
+
+  rxfilter_req = {};
+  rxfilter_req.mode = 2;
+  rxfilter_req.fif = 0;
+  rxfilter_req.bit_op = MT7921_FIF_BIT_CLR;
+  rxfilter_req.bit_map = MT_WF_RFCR_DROP_OTHER_BEACON | MT_WF_RFCR_DROP_OTHER_BSS |
+                         MT_WF_RFCR_DROP_OTHER_UC | MT_WF_RFCR_DROP_A2_BSSID |
+                         MT_WF_RFCR_DROP_A3_BSSID | MT_WF_RFCR_DROP_A3_MAC |
+                         MT_WF_RFCR_DROP_BCAST | MT_WF_RFCR_DROP_MCAST;
+  (void)mcu_send(MCU_CE_CMD_SET_RX_FILTER, 0, MCU_Q_SET, &rxfilter_req, sizeof(rxfilter_req),
+                 false);
+}
+
 void MtkDevice::restore_rx_filter() {
   const uint32_t rfcr = MT_WF_RFCR_DROP_FCSFAIL | MT_WF_RFCR_DROP_VERSION |
                         MT_WF_RFCR_DROP_CTS | MT_WF_RFCR_DROP_RTS |
                         MT_WF_RFCR_DROP_CTL_RSV | MT_WF_RFCR_DROP_NDPA |
                         MT_WF_RFCR_DROP_UNWANTED_CTL;
   wr(MT_WF_RFCR_BAND0, rfcr);
+  /* Ensure an aborted/timed-out channel switch never leaves Band 0 RX disabled (#72). */
+  clear(MT_ARB_SCR_BAND0, MT_ARB_SCR_TX_DISABLE | MT_ARB_SCR_RX_DISABLE);
 }
 
 bool MtkDevice::mcu_set_chan_cmd(uint8_t ext_cid, uint8_t ch, unsigned width_mhz,
@@ -1598,43 +1662,13 @@ bool MtkDevice::set_channel(uint8_t channel, unsigned width_mhz, uint8_t switch_
     if (!mcu_set_chan_cmd(MCU_EXT_CMD_SET_RX_PATH, channel, width_mhz, switch_reason)) return false;
   }
   if (!mcu_set_chan_cmd(MCU_EXT_CMD_CHANNEL_SWITCH, channel, width_mhz, switch_reason)) {
+    apply_rx_filter_mcu();
     restore_rx_filter();
     return false;
   }
 
   if (!_rx_path_set) {
-    /* Configure RX filter synchronously via MCU (matching Linux mt7921_configure_filter
-     * and mt7921_mcu_set_beacon_filter(false)):
-     * 1) mode=1 enables OTHER_BSS reception in firmware;
-     * 2) mode=2 with MT7921_FIF_BIT_CLR clears DROP_OTHER_BEACON / DROP_OTHER_BSS /
-     *    DROP_OTHER_UC / BSSID-drop bits in firmware's cached RFCR so channel switches
-     *    during Wi-Fi scans do not re-enable DROP_OTHER_BEACON (#54, #66). */
-#pragma pack(push, 1)
-    struct {
-      uint8_t rsv[4];
-      uint8_t mode;
-      uint8_t rsv2[3];
-      uint32_t fif;
-      uint32_t bit_map;
-      uint8_t bit_op;
-      uint8_t pad[51];
-    } rxfilter_req{};
-#pragma pack(pop)
-    rxfilter_req.mode = 1;
-    rxfilter_req.fif = MT7921_FILTER_ENABLE | MT7921_FILTER_OTHER_BSS;
-    (void)mcu_send(MCU_CE_CMD_SET_RX_FILTER, 0, MCU_Q_SET, &rxfilter_req, sizeof(rxfilter_req),
-                   true, nullptr, 500);
-
-    rxfilter_req = {};
-    rxfilter_req.mode = 2;
-    rxfilter_req.fif = 0;
-    rxfilter_req.bit_op = MT7921_FIF_BIT_CLR;
-    rxfilter_req.bit_map = MT_WF_RFCR_DROP_OTHER_BEACON | MT_WF_RFCR_DROP_OTHER_BSS |
-                           MT_WF_RFCR_DROP_OTHER_UC | MT_WF_RFCR_DROP_A2_BSSID |
-                           MT_WF_RFCR_DROP_A3_BSSID | MT_WF_RFCR_DROP_A3_MAC |
-                           MT_WF_RFCR_DROP_BCAST | MT_WF_RFCR_DROP_MCAST;
-    (void)mcu_send(MCU_CE_CMD_SET_RX_FILTER, 0, MCU_Q_SET, &rxfilter_req, sizeof(rxfilter_req),
-                   true, nullptr, 500);
+    apply_rx_filter_mcu();
     _rx_path_set = true;
   }
   /* Also clear DROP_OTHER_BEACON / DROP_OTHER_UC / DROP_OTHER_BSS directly in RFCR. */
@@ -2900,8 +2934,14 @@ void MtkDevice::close() {
           " MDP_DCR0=" + hex32(rr(MT_MDP_DCR0)));
     }
     std::string err;
-    dma_disable(false, err);
-    (void)wfsys_reset(err);
+    /* Stop WFDMA (including full WFDMA logic reset) and wait for TX/RX_DMA_BUSY == 0
+     * BEFORE resetting WFSYS and BEFORE DmaPool32 frees any AWE physical pages (#72). */
+    (void)dma_disable(true, err);
+    if (wfsys_reset(err)) {
+      /* Chip is cleanly halted and back in ROM-ready state; clear crash-only close_ops
+       * so RpEvtFileCleanup does not re-assert WFSYS reset on normal handle close. */
+      _proxy.set_close_ops({});
+    }
   }
   _dma_running = false;
   _tx_pending_kick = false;

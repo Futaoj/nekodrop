@@ -6,6 +6,34 @@
 
 ---
 
+## v2.2.11 (Preview / 预览版) — 2026-11-26
+
+### 中文
+
+- **P0 严重修复：MediaTek MT7921 / RZ608（`14C3:7961`、`14C3:0608`）安全模式与 DMA 退出保护（[#72](https://github.com/zheznanohana/nekodrop/issues/72)）**：
+  - **MT7921 强制按需模式（On-Demand Only）**：在 MT7921 真机重启稳定性充分验证之前，将 `14C3:7961` 与 `14C3:0608` 切换为仅按需接管（开机不自动接管、空闲自动交还原厂 `mtkwl6ex` 驱动、服务停止/系统关机时必定归还原厂驱动），避免系统重启后卡死在接管/蓝屏循环；已验证的 MT7922 / RZ616（`14C3:0616`、`14C3:7922`）保持支持 5 GHz 同时模式；
+  - **加固 MT7921/MT7922 DMA 停止与关机时序**：`NekoDropService` 给 `nekodrop-radio-mtk.exe` 的优雅退出等待从 `2 秒` 延长至 `6 秒`；`mtkradio` 在收到 `quit`/关机信号时立即中断阻塞的 MCU 等待并在 join 工作线程前直接执行完整 `dma_disable(force=true)` + `wfsys_reset()`，确保 WFDMA 彻底停止（`TX/RX_DMA_BUSY == 0`）后再释放 AWE 物理内存页；
+  - **增强 RegProxy 崩溃兜底 `close_ops`**：若进程异常终止，`RpEvtFileCleanup` 会自动关闭 WFDMA 与 PCIe MAC 中断、停用 TX/RX DMA、复位 WFDMA 逻辑并将 `WFSYS_SW_RST_B` 保持在复位态（正常 `close()` 完成后清除该兜底规则，保持 ROM 就绪态）。
+- **MediaTek MT7921 切信道超时与收包卡死修复（[#72](https://github.com/zheznanohana/nekodrop/issues/72)）**：
+  - 将 MT7921（`0x7961`）运行时 `CHANNEL_SWITCH` 超时从 `500 ms` 提升至 `1500 ms`（避免跨 80 MHz 子带校准时提前超时并触发重叠切换），并将 `SET_CHAN_DOMAIN` 5 GHz 带宽上限按芯片区分（MT7921 设为 80 MHz，MT7922 保持 160 MHz）；
+  - 修复 `move_to()` 切信道失败一次后将 `move_failed` 反转清零、导致永久放弃回切 AWDL 信道的缺陷，改为带退避的持续重试；
+  - 每次 `CHANNEL_SWITCH` 失败时同步重下发 `MCU_CE_CMD_SET_RX_FILTER`（按 Linux `mt7921_mcu_set_rxfilter` 改为 `wait_resp=false`，启动同时提速约 1 秒）并清零 `MT_ARB_SCR_RX_DISABLE`，防止接收通道被锁死；
+  - 修正固件就绪日志芯片名显示（`0x7961` 正确输出 `MT7921 firmware booted and ready!`）。
+
+### English
+
+- **P0 Critical Safety Fix: MediaTek MT7921 / RZ608 (`14C3:7961`, `14C3:0608`) boot safety & DMA teardown hardening ([#72](https://github.com/zheznanohana/nekodrop/issues/72)):**
+  - **MT7921 forced On-Demand only:** Switched `14C3:7961` and `14C3:0608` to On-Demand mode (`SupportsConcurrentWifi = false`) until reboot safety is verified on real hardware — Windows keeps the vendor `mtkwl6ex` driver at boot and while idle, and `Supervisor.Dispose()` always hands the card back on shutdown. Verified MT7922 / RZ616 (`14C3:0616`, `14C3:7922`) keep 5 GHz Concurrent mode;
+  - **Hardened MT7921/MT7922 DMA shutdown sequence:** Increased `NekoDropService`'s graceful `"quit"` wait for `mtkradio` from `2 s` to `6 s`; `mtkradio` now aborts in-flight MCU waits immediately on shutdown and executes full `dma_disable(force=true)` + `wfsys_reset()` before joining worker threads or releasing AWE physical pages;
+  - **Crash-safe RegProxy `close_ops`:** Added PCIe MAC interrupt disable, WFDMA logic reset, and `WFSYS_SW_RST_B` reset assertion to RegProxy's handle-cleanup ops (cleared on normal `dev.close()` after clean reset).
+- **MediaTek MT7921 channel-switch timeout & RX freeze fixes ([#72](https://github.com/zheznanohana/nekodrop/issues/72)):**
+  - Raised MT7921 (`0x7961`) runtime `CHANNEL_SWITCH` timeout from `500 ms` to `1500 ms` (preventing premature timeouts when calibrating a new 80 MHz subband) and set MT7921 `SET_CHAN_DOMAIN` 5 GHz max width to 80 MHz;
+  - Fixed `move_to()` toggling `move_failed` back to `false` after a failed retune (which permanently abandoned returning to the AWDL channel), replacing it with bounded periodic retries;
+  - Re-apply `MCU_CE_CMD_SET_RX_FILTER` (`wait_resp=false`, matching Linux `mt7921_mcu_set_rxfilter` and saving ~1 s at startup) and clear `MT_ARB_SCR_RX_DISABLE` whenever a channel switch fails;
+  - Fixed firmware-ready log to print `MT7921` for `0x7961` instead of hardcoded `MT7922`.
+
+---
+
 ## v2.2.10 (Preview / 预览版) — 2026-11-26
 
 ### 中文

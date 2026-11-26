@@ -328,6 +328,7 @@ int main(int argc, char **argv) {
   if (channel <= 14) width = 20;
 
   mtk::MtkDevice dev(log_line);
+  dev.set_stop_check(stopping);
   std::string err;
 
   if (probe_only) {
@@ -397,10 +398,12 @@ int main(int argc, char **argv) {
   }
 
   /* Runtime channel moves and STA record commands use bounded timeouts so
-   * timesharing and scans never stall the radio for seconds. MT7922 5 GHz
-   * CHANNEL_SWITCH can exceed 60 ms (especially on first switch / CN band). */
-  dev.move_timeout_ms = 500;
-  dev.sta_cmd_timeout_ms = 500;
+   * timesharing and scans never stall the radio for seconds. MT7921 (0x7961)
+   * needs > 500 ms when entering a new 80 MHz calibration subband (e.g. ch 36 /
+   * 52 / 100 / 116 / 132), and timing out early causes overlapping switches (#72). */
+  const bool is_mt7921 = (dev.chip_id() == 0x7961);
+  dev.move_timeout_ms = is_mt7921 ? 1500u : 500u;
+  dev.sta_cmd_timeout_ms = is_mt7921 ? 1000u : 500u;
 
   std::mutex cmd_mu;
   std::deque<PendingCmd> cmds;
@@ -563,6 +566,7 @@ int main(int argc, char **argv) {
   uint64_t moves = 0, move_us = 0, move_us_max = 0, tx_stale = 0;
   unsigned move_fail_logged = 0;
   bool move_failed = false;
+  Clock::time_point move_retry_at{};
   std::vector<uint8_t> rewritten;
   std::map<std::string, BssSeen> bss_map;
 
@@ -711,6 +715,7 @@ int main(int argc, char **argv) {
         if (!dev.set_channel(awdl_channel, awdl_channel > 14 ? width : 20u)) {
           scan.active = false;
           move_failed = true;
+          move_retry_at = Clock::now() + std::chrono::milliseconds(500);
           log_fmt("scan: could not return to AWDL channel %u", awdl_channel);
           log_line("event: scan-interrupted retune");
           return true;
@@ -767,6 +772,9 @@ int main(int argc, char **argv) {
       if (sta_dev) sta_dev->on_channel(at_router);
       return false;
     }
+    if (move_failed && Clock::now() < move_retry_at) {
+      return false;
+    }
     const bool running = sta && sta->state() == WifiStation::State::Running;
     if (want != at && at_router && sta_dev->associated() && running) {
       if (!ps_asked) {
@@ -790,7 +798,13 @@ int main(int argc, char **argv) {
     move_us += us;
     if (us > move_us_max) move_us_max = us;
     if (!ok && move_fail_logged++ < 5) log_fmt("channel move to %u failed", want);
-    move_failed = !ok && !move_failed;
+    if (ok) {
+      move_failed = false;
+      move_retry_at = {};
+    } else {
+      move_failed = true;
+      move_retry_at = Clock::now() + std::chrono::milliseconds(1000);
+    }
     const bool to_router = station_on_air() && want == sta_dev->channel();
     if (to_router) {
       sta_dev->on_channel(true);
@@ -1236,12 +1250,14 @@ int main(int argc, char **argv) {
   }
 
   g_stop = true;
+  /* Halt WFDMA and reset WFSYS immediately on shutdown (before joining worker
+   * threads) so DMA is guaranteed idle well before process exit frees AWE pages (#72). */
+  log_line("closing MTK radio (WFSYS reset)");
+  dev.close();
   if (reader.joinable()) reader.join();
   if (tap_thread.joinable()) tap_thread.join();
   if (timer.joinable()) timer.join();
   if (sta) sta->stop();
-  log_line("closing MTK radio (WFSYS reset)");
-  dev.close();
   timeEndPeriod(1);
   return 0;
 }

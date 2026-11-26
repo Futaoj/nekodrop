@@ -95,8 +95,12 @@ public static class CardCatalog
     static readonly AdapterCapabilities MediaTekCaps = new(true, false, false, false, 0x10000, StationOn24GHz: false);
     static readonly string[] MediaTekProviders = ["MediaTek"];
     /* Same Connac2 / mt7921 family as MT7902: 2.4 GHz ACKed TX is unverified on
-     * MT7922/MT7921, so Concurrent Wi-Fi stays 5 GHz only until tested on hardware. */
+     * MT7922, so Concurrent Wi-Fi stays 5 GHz only. MT7921 (7961 / RZ608) runs
+     * On-Demand only until verified safe across Windows reboots (#72): Windows
+     * keeps the vendor driver at boot and when idle, and Dispose() always hands
+     * the card back on shutdown. */
     static readonly AdapterCapabilities MtkRadioCaps = new(true, false, false, false, 0x100000, StationOn24GHz: false);
+    static readonly AdapterCapabilities MtkRadioOnDemandCaps = new(false, false, false, false, 0x100000, StationOn24GHz: false);
     static readonly string[] MtkRadioProviders = ["MediaTek", "AMD"];
 
     static AdapterProfile Intel(string device, string family) =>
@@ -140,9 +144,9 @@ public static class CardCatalog
             ProxyInf, ProxyService, ProxyProvider, MtkRadioProviders, Active: true),
         new AdapterProfile("14C3", "7922", "MediaTek", "MT7922", RadioBackendKind.MtkRadio, MtkRadioCaps,
             ProxyInf, ProxyService, ProxyProvider, MtkRadioProviders, Active: true),
-        new AdapterProfile("14C3", "7961", "MediaTek", "MT7921", RadioBackendKind.MtkRadio, MtkRadioCaps,
+        new AdapterProfile("14C3", "7961", "MediaTek", "MT7921", RadioBackendKind.MtkRadio, MtkRadioOnDemandCaps,
             ProxyInf, ProxyService, ProxyProvider, MtkRadioProviders, Active: true),
-        new AdapterProfile("14C3", "0608", "MediaTek", "MT7921 (RZ608)", RadioBackendKind.MtkRadio, MtkRadioCaps,
+        new AdapterProfile("14C3", "0608", "MediaTek", "MT7921 (RZ608)", RadioBackendKind.MtkRadio, MtkRadioOnDemandCaps,
             ProxyInf, ProxyService, ProxyProvider, MtkRadioProviders, Active: true),
     ];
 
@@ -384,10 +388,10 @@ public static class CardCatalog
                   "Mt76 ch 6 default launch args");
         }
 
-        // Built-in MediaTek MT7922 / MT7921: active, MtkRadio backend, 1 MiB BAR, Concurrent
-        // kept (5 GHz only); --country and --sta-config go to the radio, no Intel option does.
-        foreach (var (dev, family) in new[] { ("0616", "MT7922 (RZ616)"), ("7922", "MT7922"),
-                                              ("7961", "MT7921"), ("0608", "MT7921 (RZ608)") })
+        // Built-in MediaTek MT7922 / MT7921: active, MtkRadio backend, 1 MiB BAR.
+        // MT7922 keeps Concurrent (5 GHz only); MT7921 (7961/0608) is forced to OnDemand (#72).
+        foreach (var (dev, family, concurrent) in new[] { ("0616", "MT7922 (RZ616)", true), ("7922", "MT7922", true),
+                                                          ("7961", "MT7921", false), ("0608", "MT7921 (RZ608)", false) })
         {
             var id = $"PCI\\VEN_14C3&DEV_{dev}&SUBSYS_E0CD1A3B&REV_00\\4&1";
             var mtk = MatchActive(id);
@@ -398,13 +402,13 @@ public static class CardCatalog
             Check(mtk.HardwareId == $"PCI\\VEN_14C3&DEV_{dev}", $"14C3:{dev} hardware ID {mtk.HardwareId}");
             Check(mtk.VendorName == "MediaTek" && mtk.FamilyName == family && mtk.Backend == RadioBackendKind.MtkRadio,
                   $"14C3:{dev} vendor {mtk.VendorName} family {mtk.FamilyName} backend {mtk.Backend}");
-            Check(mtk.Capabilities.SupportsConcurrentWifi && !mtk.Capabilities.SupportsFastSend &&
+            Check(mtk.Capabilities.SupportsConcurrentWifi == concurrent && !mtk.Capabilities.SupportsFastSend &&
                   !mtk.Capabilities.SupportsAggregate && !mtk.Capabilities.SupportsKernelDriver &&
                   !mtk.Capabilities.StationOn24GHz,
                   $"14C3:{dev} capabilities");
             Check(mtk.Capabilities.MinBarBytes == 0x100000, $"14C3:{dev} BAR {mtk.Capabilities.MinBarBytes:x}");
-            Check(EffectiveMode(NetMode.Concurrent, mtk.Capabilities) == NetMode.Concurrent,
-                  $"14C3:{dev} Concurrent changed");
+            Check(EffectiveMode(NetMode.Concurrent, mtk.Capabilities) == (concurrent ? NetMode.Concurrent : NetMode.OnDemand),
+                  $"14C3:{dev} Concurrent mode mismatch");
             Check(EffectiveMode(NetMode.OnDemand, mtk.Capabilities) == NetMode.OnDemand, $"14C3:{dev} OnDemand changed");
             Check(EffectiveMode(NetMode.Off, mtk.Capabilities) == NetMode.Off, $"14C3:{dev} Off changed");
             Check(IsVendorProviderMatch(mtk, "MediaTek, Inc."), $"14C3:{dev} MediaTek provider not matched");

@@ -84,11 +84,13 @@ public:
   using Logger = std::function<void(const std::string &)>;
   using RxHandler = std::function<void(const RxFrame &)>;
   using TxStatusHandler = std::function<void(unsigned token, bool acked, unsigned tries)>;
+  using StopCheck = std::function<bool()>;
 
   explicit MtkDevice(Logger log) : _log(std::move(log)) {}
   ~MtkDevice();
 
   void set_tx_status_handler(TxStatusHandler h) { _on_tx_status = std::move(h); }
+  void set_stop_check(StopCheck fn) { _stopping = std::move(fn); }
 
   /* Safe hardware probe: opens RegProxy, reads MT_HW_CHIPID/REV, tests driver-own. */
   bool probe(std::string &error);
@@ -199,6 +201,7 @@ private:
                         uint8_t switch_reason = CH_SWITCH_NORMAL);
   bool add_omac(uint8_t omac, const uint8_t addr[6], const uint8_t bssid[6], bool enable);
   void set_timing();
+  void apply_rx_filter_mcu();
   void restore_rx_filter();
   void handle_tx_free(const uint8_t *data, size_t len);
   void handle_rx_meta(const uint8_t *buf, size_t len);
@@ -240,6 +243,7 @@ private:
 
   Logger _log;
   TxStatusHandler _on_tx_status;
+  StopCheck _stopping;
   RegProxy _proxy;
   DmaPool32 _dma;
 

@@ -1335,8 +1335,10 @@ public sealed class Supervisor : IDisposable
             {
                 if (p is { HasExited: false })
                 {
-                    // MT7921/MT7922 must run MtkDevice::close() -> wfsys_reset() before Windows
-                    // rebinds the MediaTek driver, otherwise the chip can stay stuck on Linux FW (#54).
+                    // MT7921/MT7922 must finish MtkDevice::close() -> dma_disable(true) +
+                    // wfsys_reset() BEFORE the process exits and frees its AWE physical pages,
+                    // otherwise live WFDMA or stale firmware state can corrupt memory or wedge
+                    // the vendor driver on reboot (#54, #72).
                     if (ReferenceEquals(p, _radio) && _profile.Backend == RadioBackendKind.MtkRadio)
                     {
                         try
@@ -1346,7 +1348,8 @@ public sealed class Supervisor : IDisposable
                             p.StandardInput.Close();
                         }
                         catch (Exception) { }
-                        if (p.WaitForExit(2000)) continue;
+                        if (p.WaitForExit(6000)) continue;
+                        Say("WARNING: mtkradio did not exit within 6 s after quit; forcing termination");
                     }
                     p.Kill();
                     p.WaitForExit(5000);
