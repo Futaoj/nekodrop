@@ -365,21 +365,21 @@ int main(int argc, char **argv) {
     CHECK(bf.note(5000004, 43) && !bf.off, "three quiet seconds turn it back on");
 
     awdl::RateLadder rl;
-    for (int k = 0; k < 32; k++) rl.note(true, false);
-    CHECK(rl.step == 1, "32 clean frames step the rate up");
-    for (int k = 0; k < 32; k++) rl.note(k % 3 != 0, false);
+    for (int k = 0; k < 16; k++) rl.note(true, false);
+    CHECK(rl.step == 1, "16 clean frames step the rate up");
+    for (int k = 0; k < 16; k++) rl.note(k % 3 != 0, false);
     CHECK(rl.step == 0, "a third lost steps it back down");
-    for (int k = 0; k < 32 * 8; k++) rl.note(true, false);
+    for (int k = 0; k < 16 * 8; k++) rl.note(true, false);
     CHECK(rl.step == 3, "20 MHz tops out at HT MCS 7");
-    for (int k = 0; k < 32 * 8; k++) rl.note(true, true);
+    for (int k = 0; k < 16 * 8; k++) rl.note(true, true);
     CHECK(rl.step == 6, "80 MHz reaches VHT 2x2 MCS 8");
 
     awdl::BaTxBulk bulk;
     bulk.note(1000000, 0, false);
-    CHECK(!bulk.note(1250000, 23, false) && !bulk.bulk, "BaTxBulk waits for 24 payload frames in 250 ms");
-    CHECK(bulk.note(1500000, 48, false) && bulk.bulk, "BaTxBulk triggers at 24+ payload frames in 250 ms");
-    for (int k = 1; k <= 3; k++) CHECK(!bulk.note(1500000 + uint64_t(k) * 250000, 48, false) && bulk.bulk, "BaTxBulk holds across brief quiet");
-    CHECK(bulk.note(2500000, 48, false) && !bulk.bulk, "BaTxBulk exits after 4 quiet windows (1 s)");
+    CHECK(!bulk.note(1100000, 11, false) && !bulk.bulk, "BaTxBulk waits for 12 payload frames in 100 ms");
+    CHECK(bulk.note(1200000, 24, false) && bulk.bulk, "BaTxBulk triggers at 12+ payload frames in 100 ms");
+    for (int k = 1; k <= 3; k++) CHECK(!bulk.note(1200000 + uint64_t(k) * 250000, 24, false) && bulk.bulk, "BaTxBulk holds across brief quiet");
+    CHECK(bulk.note(2200000, 24, false) && !bulk.bulk, "BaTxBulk exits after 4 quiet windows (1 s)");
   }
 
   /* WPA2 crypto against published vectors. */

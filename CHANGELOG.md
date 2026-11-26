@@ -6,6 +6,20 @@
 
 ---
 
+## v2.2.16 (Preview / 预览版)
+
+### 中文
+
+- **修复连发文件报 `WinError 10061` 发送失败**：每次发送完成后立即主动触发一次 BLE 唤醒重脉冲（趁用户选下一个文件时提前唤醒 iPhone 已关闭的 8770 端口）；若连发撞上对端刚关端口（`10061`），自动重脉冲并每 1.5 秒静默重试（最多 12 秒）等待对端重开端口，不再直接秒报发送失败；真正失败时立即释放设备保活。
+- **更激进的发送速率爬升曲线**：单播速率阶梯（`RateLadder`）升档窗口从 32 帧减半至 **16 帧**（爬升速度翻倍），TX A-MPDU 聚合触发阈值从 250 ms / 24 帧收紧至 **100 ms / 12 帧（~18 KB）**，小/中文件也能瞬间切入 80 MHz 聚帧高速发送。
+
+### English
+
+- **Fix back-to-back send `WinError 10061` failure:** proactively trigger a BLE wake re-pulse right after `sent` finishes (waking iOS `sharingd`'s closed port 8770 before the next send); if a back-to-back send hits `WinError 10061` before `/Ask`, trigger BLE re-pulse and retry every 1.5 s for up to 12 s instead of failing immediately, and release the peer hold immediately on genuine failure.
+- **Faster TX ramp-up curve:** halved `RateLadder` step-up window from 32 to **16 frames** (2× faster climb to VHT80 2SS MCS 8) and tightened `BaTxBulk` A-MPDU entry from 250 ms / 24 frames to **100 ms / 12 frames (~18 KB)** so small and medium files enter A-MPDU almost immediately.
+
+---
+
 ## v2.2.15 (Preview / 预览版)
 
 ### 中文

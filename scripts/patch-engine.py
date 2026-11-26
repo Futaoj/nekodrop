@@ -1631,17 +1631,95 @@ _hook('engine.py', [
     ),
     (
         "        watch.state('asking')" + NL +
-        '        try:' + NL,
-        '        self.looking.keep_alive(watch.peer_key, 15.0)' + NL +
-        "        watch.state('asking')" + NL +
-        '        try:' + NL,
-    ),
-    (
+        '        try:' + NL +
+        '            if peer is None:' + NL +
+        '                peer = self.looking.find(watch.peer_key, FOLLOW_SECONDS)' + NL +
+        '                if peer is None:' + NL +
+        "                    watch.state('failed', reason='gone')" + NL +
+        '                    return' + NL +
+        '            try:' + NL +
+        '                outcome = sender.deliver(peer.address, peer.port, scope, self.context,' + NL +
+        '                                         self.settings.name, files, watch)' + NL +
+        '            except (ConnectionRefusedError, TimeoutError):' + NL +
+        '                # Refused or silent before answering: the receiver may be' + NL +
+        '                # announcing itself again on another port.' + NL +
+        '                if watch.reached or watch.cancelled:' + NL +
+        '                    raise' + NL +
+        '                fresh = self.looking.find(watch.peer_key, FOLLOW_SECONDS)' + NL +
+        '                if fresh is None or (fresh.address, fresh.port) == (peer.address, peer.port):' + NL +
+        '                    raise' + NL +
+        "                logging.info('receiver came back on port %d; sending again', fresh.port)" + NL +
+        '                peer = fresh' + NL +
+        '                outcome = sender.deliver(peer.address, peer.port, scope, self.context,' + NL +
+        '                                         self.settings.name, files, watch)' + NL +
+        '            watch.state(outcome, done=watch.total if outcome == sender.SENT else None)' + NL +
+        '        except TimeoutError:' + NL +
+        "            watch.state('failed', reason='stalled' if watch.was_accepted else 'no_answer')" + NL +
+        '        except (OSError, http.client.HTTPException, ValueError) as error:' + NL +
+        '            if watch.cancelled:' + NL +
+        "                watch.state('cancelled')" + NL +
+        '            else:' + NL +
+        "                watch.state('failed', reason='broken' if watch.reached else 'unreachable'," + NL +
+        '                            detail=str(error) or type(error).__name__)' + NL +
         '        finally:' + NL +
         '            with self._lock:' + NL +
         '                del self._watches[watch.key]' + NL,
+        '        self.looking.keep_alive(watch.peer_key, 15.0)' + NL +
+        "        watch.state('asking')" + NL +
+        '        sent_ok = False' + NL +
+        '        try:' + NL +
+        '            if peer is None:' + NL +
+        '                peer = self.looking.find(watch.peer_key, FOLLOW_SECONDS)' + NL +
+        '                if peer is None:' + NL +
+        "                    watch.state('failed', reason='gone')" + NL +
+        '                    return' + NL +
+        '            # iOS sharingd closes TCP port 8770 right after a transfer finishes' + NL +
+        '            # until a fresh BLE rising edge wakes it (6-8 s). If a back-to-back' + NL +
+        '            # send hits ConnectionRefusedError (10061) before /Ask, trigger BLE' + NL +
+        '            # re-pulse and retry for up to 12 s (checking for a new port too).' + NL +
+        '            retry_deadline = time.monotonic() + 12.0' + NL +
+        '            while True:' + NL +
+        '                try:' + NL +
+        '                    outcome = sender.deliver(peer.address, peer.port, scope, self.context,' + NL +
+        '                                             self.settings.name, files, watch)' + NL +
+        '                    break' + NL +
+        '                except (ConnectionRefusedError, TimeoutError) as error:' + NL +
+        '                    if watch.reached or watch.cancelled:' + NL +
+        '                        raise' + NL +
+        '                    is_refused = isinstance(error, ConnectionRefusedError)' + NL +
+        '                    if is_refused and time.monotonic() < retry_deadline:' + NL +
+        "                        self.looking.repulse_beacon('send_refused')" + NL +
+        '                        self.looking.keep_alive(watch.peer_key, 6.0)' + NL +
+        '                        time.sleep(1.5)' + NL +
+        '                        fresh = self.looking.peer(watch.peer_key)' + NL +
+        '                        if fresh is not None:' + NL +
+        '                            peer = fresh' + NL +
+        '                        continue' + NL +
+        '                    fresh = self.looking.find(watch.peer_key, FOLLOW_SECONDS)' + NL +
+        '                    if fresh is None or (fresh.address, fresh.port) == (peer.address, peer.port):' + NL +
+        '                        raise' + NL +
+        "                    logging.info('receiver came back on port %d; sending again', fresh.port)" + NL +
+        '                    peer = fresh' + NL +
+        '                    outcome = sender.deliver(peer.address, peer.port, scope, self.context,' + NL +
+        '                                             self.settings.name, files, watch)' + NL +
+        '                    break' + NL +
+        '            watch.state(outcome, done=watch.total if outcome == sender.SENT else None)' + NL +
+        '            sent_ok = outcome == sender.SENT' + NL +
+        '            if sent_ok:' + NL +
+        "                self.looking.repulse_beacon('post_send')" + NL +
+        '        except TimeoutError:' + NL +
+        "            watch.state('failed', reason='stalled' if watch.was_accepted else 'no_answer')" + NL +
+        '        except (OSError, http.client.HTTPException, ValueError) as error:' + NL +
+        '            if watch.cancelled:' + NL +
+        "                watch.state('cancelled')" + NL +
+        '            else:' + NL +
+        "                watch.state('failed', reason='broken' if watch.reached else 'unreachable'," + NL +
+        '                            detail=str(error) or type(error).__name__)' + NL +
         '        finally:' + NL +
-        '            self.looking.keep_alive(watch.peer_key, 10.0)' + NL +
+        '            if sent_ok:' + NL +
+        '                self.looking.keep_alive(watch.peer_key, 8.0)' + NL +
+        '            else:' + NL +
+        '                self.looking.release_hold(watch.peer_key)' + NL +
         '            with self._lock:' + NL +
         '                del self._watches[watch.key]' + NL,
     ),

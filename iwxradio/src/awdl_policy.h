@@ -345,7 +345,7 @@ struct UnicastRetry {
 
 /* Unicast data rate ladder: legacy 24, HT MCS 4, 5, 7 (20 MHz, 1 stream),
  * then VHT 80 MHz 2 streams MCS 4, 7 and 8 (with LDPC + SGI) while on 80 MHz.
- * Down after a window of 32 with over 20% failures, up after one with under 5%. */
+ * Down after a window of 16 with over 20% failures, up after one with under 5%. */
 constexpr uint8_t kRateMcs[7] = {0, 4, 5, 7, 4, 7, 8};
 struct RateLadder {
   unsigned step = 0;
@@ -353,7 +353,7 @@ struct RateLadder {
   void note(bool acked, bool wide80) {
     ++(acked ? ok : failed);
     const uint32_t window = ok + failed;
-    if (window < 32) return;
+    if (window < 16) return;
     const unsigned top = wide80 ? 7u : 4u;
     if (failed * 5 > window && step > 0) {
       --step;
@@ -429,19 +429,20 @@ inline size_t build_qos_data(const uint8_t *in, size_t length, uint8_t tid, uint
 /* The A-MPDU path only while a bulk send runs: short exchanges such as a
  * connection's setup stay on the monitor queue, where the host resends a
  * frame lost while the peer is away (the firmware's aggregate queue does
- * not, and those stalled through it upstream). Trigger aggressively (24
- * payload frames in 250 ms, ~35 KB) so even medium files enter A-MPDU fast. */
+ * not, and those stalled through it upstream). Trigger aggressively (12
+ * payload frames in 100 ms, ~18 KB) so small and medium files enter A-MPDU
+ * almost immediately. */
 constexpr uint64_t kBaTxCheckUS = 250000;
-constexpr uint32_t kBaTxBulkFrames = 24, kBaTxQuietFrames = 8, kBaTxQuietChecks = 4;
+constexpr uint64_t kBaTxEntryCheckUS = 100000;
+constexpr uint32_t kBaTxBulkFrames = 12, kBaTxQuietFrames = 8, kBaTxQuietChecks = 4;
 struct BaTxBulk {
   uint64_t last_us = 0;
   uint32_t last_frames = 0, quiet_checks = 0;
   bool bulk = false;
   /* `frames` counts payload-sized unicast data frames to the peer. True on a change. */
   bool note(uint64_t now_us, uint32_t frames, bool fast_entry) {
-    const bool short_sample = fast_entry && !bulk;
-    const uint64_t sample = short_sample ? 100000ULL : kBaTxCheckUS;
-    const uint32_t entry = short_sample ? 8u : kBaTxBulkFrames;
+    const uint64_t sample = !bulk ? kBaTxEntryCheckUS : kBaTxCheckUS;
+    const uint32_t entry = fast_entry ? 8u : kBaTxBulkFrames;
     if (!last_us) {
       last_us = now_us;
       last_frames = frames;
