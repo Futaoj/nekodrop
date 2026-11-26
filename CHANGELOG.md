@@ -1,8 +1,26 @@
 # Changelog / 更新日志
 
 > Release channels / 发布通道：
-> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.2.8`**（首个稳定基线为 `v0.1.22`）。
+> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.2.13`**（首个稳定基线为 `v0.1.22`）。
 > - **Hourly（每时预览版 / Pre-release）**：持续迭代的预览版（客户端默认也会收到；取消勾选「包括预览版」就只收稳定版）；GitHub Releases 仅滚动保留最新 4 个每时版 + 稳定版（最多 5 个 Release），历史 Git Tag 全部保留。
+
+---
+
+## v2.2.14 (Preview / 预览版)
+
+### 中文
+
+- **MT7922 / RZ616 并发扫描修复**：合并 [#86](https://github.com/zheznanohana/nekodrop/pull/86)（感谢 `@YiHoooong`），在 Connac2 固件开启 `MCU_UNI_CMD_SNIFFER (0x24)` 解决并发扫描 0 beacon 问题；同时在有 AirDrop 流量或活跃对端同步期间将后台扫描让渡 15 秒，避免中断传输触发 408 超时。([#54](https://github.com/zheznanohana/nekodrop/issues/54)、[#66](https://github.com/zheznanohana/nekodrop/issues/66)、[#87](https://github.com/zheznanohana/nekodrop/issues/87))
+- **Intel AX203（8086:7740）实验性支持（完全隔离至 Bz 路径）**：基于 [#83](https://github.com/zheznanohana/nekodrop/pull/83) / [#85](https://github.com/zheznanohana/nekodrop/pull/85) 重新合入，并修复了 `keep_on_channel()` 在非 Bz 网卡上返回 `true` 导致主循环 CPU 空转的严重问题，补齐 Bz 监听链路的 `IWX_LINK_CONTEXT_MODIFY_QOS_PARAMS` EDCA 应用标志，同时将 `RxReorder`、STA Block Ack 和中断掩码严格限定在 Bz 分支内，确保 AX200/AX201/AX210/AX211 路径与 v2.2.13 完全一致，且独立 BE200（`8086:272B`）不再触碰 CNVi AUX 寄存器。([#84](https://github.com/zheznanohana/nekodrop/issues/84)、[#53](https://github.com/zheznanohana/nekodrop/issues/53))
+- **新版 iOS / iPadOS 26.2 数据帧解包**：在 `awdld` 接收路径支持 `+HTC` 控制字段剥离及 Apple RFC 1042 封装的 802.3 A-MSDU 子帧解包（修复 `PID 0x05ec` / `0x05df` / `0x04c5` 大量 `unhandled frame` 丢帧问题）。([#30](https://github.com/zheznanohana/nekodrop/issues/30)、[#66](https://github.com/zheznanohana/nekodrop/issues/66)、[#87](https://github.com/zheznanohana/nekodrop/issues/87))
+- **Intel 9462 与待机蓝牙唤醒**：1×1 网卡（如 9462 `8086:06F0`）建 BA 站不再强制置 `MIMO2`；待机蓝牙广播每 60 秒以完整 2.5 秒停顿重脉冲，并保留打开发送窗口时的独立新唤醒边沿，在遇到对端 8770 端口拒连（`WinError 10061`）时也会按冷却时间自动重脉冲唤醒。([#79](https://github.com/zheznanohana/nekodrop/issues/79))
+
+### English
+
+- **MT7922 / RZ616 concurrent scan fix:** merged [PR #86](https://github.com/zheznanohana/nekodrop/pull/86) (thanks `@YiHoooong`) enabling `MCU_UNI_CMD_SNIFFER (0x24)` to fix 0-beacon scans, and extended background-scan yielding to 15 s around active AirDrop traffic or fresh peer sync. ([#54](https://github.com/zheznanohana/nekodrop/issues/54), [#66](https://github.com/zheznanohana/nekodrop/issues/66), [#87](https://github.com/zheznanohana/nekodrop/issues/87))
+- **Intel AX203 (8086:7740) experimental support (strictly Bz-isolated):** re-applied from [#83](https://github.com/zheznanohana/nekodrop/pull/83) / [#85](https://github.com/zheznanohana/nekodrop/pull/85) with critical isolation fixes: fixed `keep_on_channel()` busy-spinning non-Bz cards at 100% CPU, added missing `IWX_LINK_CONTEXT_MODIFY_QOS_PARAMS` for Bz listener EDCA, gated `RxReorder`, STA Block Ack, and Bz interrupt masks strictly to Bz so AX200/AX201/AX210/AX211 stay identical to v2.2.13, and guarded CNVi AUX access for discrete BE200 (`8086:272B`). ([#84](https://github.com/zheznanohana/nekodrop/issues/84), [#53](https://github.com/zheznanohana/nekodrop/issues/53))
+- **iOS / iPadOS 26.2 frame parsing:** added `+HTC` stripping and RFC 1042-encapsulated 802.3 A-MSDU unwrapping in `awdld` (`PID 0x05ec` / `0x05df` / `0x04c5` unhandled frame drops). ([#30](https://github.com/zheznanohana/nekodrop/issues/30), [#66](https://github.com/zheznanohana/nekodrop/issues/66), [#87](https://github.com/zheznanohana/nekodrop/issues/87))
+- **Intel 9462 & Standby BLE wake:** 1×1 cards (e.g. 9462 `8086:06F0`) no longer force `MIMO2` on BA stations; Standby BLE re-pulses every 60 s with a full 2.5 s stop gap while keeping independent fresh wake edges on send-window open and throttled re-pulses on `WinError 10061` refusal. ([#79](https://github.com/zheznanohana/nekodrop/issues/79))
 
 ---
 

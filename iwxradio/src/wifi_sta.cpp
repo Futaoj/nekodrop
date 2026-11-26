@@ -734,7 +734,7 @@ void WifiStation::handle_mgmt(const RxFrame &in) {
     const unsigned tid = r.tid & 7;
     const bool same = ((_ba_token_valid >> tid) & 1) && _ba_token[tid] == r.token && _ba_ssn[tid] == r.ssn &&
                       _ba_window[tid] == r.window;
-    if (_cfg.block_ack && r.immediate && (same || _dev.sta_add_rx_ba(r.tid, r.ssn, r.window))) {
+    if (_cfg.block_ack.value_or(false) && r.immediate && (same || _dev.sta_add_rx_ba(r.tid, r.ssn, r.window))) {
       /* A repeated request (same dialog token) is answered again without
        * touching the firmware's session (round 2 #12). */
       if (!same)

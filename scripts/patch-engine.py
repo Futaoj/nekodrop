@@ -1293,7 +1293,7 @@ _hook('engine.py', [
         "                     self.settings.port, self.settings.dest)" + NL +
         "        if os.environ.get('NEKODROP_BLE_STANDBY') == '1':" + NL +
         '            try:' + NL +
-        '                self.beacon = sender.Beacon()' + NL +
+        '                self.beacon = sender.Beacon(standby_pulse=60)' + NL +
         '                self.beacon.__enter__()' + NL +
         '            except Exception as error:  # noqa: BLE001' + NL +
         "                logging.warning('standby beacon failed: %s', error)" + NL +
@@ -1325,11 +1325,18 @@ _hook('sender.py', [
         'import subprocess' + NL + 'import tempfile' + NL,
     ),
     (
+        '    def __init__(self, script=BEACON_SCRIPT):' + NL +
+        '        self.script = script' + NL +
+        '        self.process = None' + NL +
         '        self.on = False' + NL +
         "        self.said = ''  # why it is off" + NL,
+        '    def __init__(self, script=BEACON_SCRIPT, standby_pulse=0):' + NL +
+        '        self.script = script' + NL +
+        '        self.process = None' + NL +
         '        self.on = False' + NL +
         "        self.said = ''  # why it is off" + NL +
-        '        self._pulse_file = None  # nekodrop: BLE re-pulse trigger' + NL,
+        '        self._pulse_file = None  # nekodrop: BLE re-pulse trigger' + NL +
+        '        self._standby_pulse = int(standby_pulse or 0)' + NL,
     ),
     (
         '            self.process = subprocess.Popen(' + NL +
@@ -1340,6 +1347,10 @@ _hook('sender.py', [
         "            self._pulse_file = os.path.join(tempfile.gettempdir(), f'nekodrop-beacon-{os.getpid()}-{id(self)}.pulse')" + NL +
         '            env = os.environ.copy()' + NL +
         "            env['NEKODROP_BEACON_PULSE'] = self._pulse_file" + NL +
+        '            if self._standby_pulse > 0:' + NL +
+        "                env['NEKODROP_BEACON_STANDBY_S'] = str(self._standby_pulse)" + NL +
+        '            else:' + NL +
+        "                env.pop('NEKODROP_BEACON_STANDBY_S', None)" + NL +
         '            self.process = subprocess.Popen(' + NL +
         "                [shell, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass'," + NL +
         "                 '-File', self.script]," + NL +
@@ -1464,6 +1475,16 @@ _hook('engine.py', [
         "            self.events.say('peer_gone', id=key)" + NL +
         '        if gone and not stop.is_set():' + NL +
         "            self.repulse_beacon('peer_gone')" + NL,
+    ),
+    (
+        "        except sender.Unreachable as error:" + NL +
+        "            logging.info('a receiver at %s does not answer yet: %s', peer.address, error)" + NL +
+        '            found = False' + NL,
+        "        except sender.Unreachable as error:" + NL +
+        "            logging.info('a receiver at %s does not answer yet: %s', peer.address, error)" + NL +
+        '            found = False' + NL +
+        "            if not stop.is_set() and ('10061' in str(error) or 'refused' in str(error).lower()):" + NL +
+        "                self.repulse_beacon('refused')" + NL,
     ),
     (
         '    def progress(self, done):' + NL +
