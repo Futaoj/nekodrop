@@ -6,6 +6,38 @@
 
 ---
 
+## v2.2.12 (Preview / 预览版) — 2026-11-26
+
+### 中文
+
+- **Apple ID 登录 `-27952` 与 `HTTP 503` 多配置回退与诊断（[#42](https://github.com/zheznanohana/nekodrop/issues/42)）**：
+  - 保留 `iCloud/7.21` 默认配置不变；当账号收到 `-27952`（或回退阶段收到 `HTTP 503 / 403`、`-80045` 等头部/平台拒绝）时，按 Windows 平台优先顺序自动步进切换已校验的客户端标识：`7.21` → `icloud-15`（真实 `AuthKitWin/1` + `iCloud/15.3.149`）→ `itunes`（`iTunes/12.12.4.1`）→ `macos-akd`（`Mac OS X` + `akd/1.0`），并持久化有效配置名至 `client.txt`（兼容迁移旧 `15.10`）；
+  - 回退配置下不再原地空等 45 秒，遇到 `HTTP 503` 快速切换下一配置，并在 `appleid.log` 中安全记录非 plist 响应的状态码、`Content-Type` 与前 120 字节错误摘要（不含任何凭据）。
+- **安装器 `.cat` 签名 `0xC0000225` 回退与升级失败服务恢复（[#73](https://github.com/zheznanohana/nekodrop/issues/73)）**：
+  - `installer/install.ps1` 在 `Set-AuthenticodeSignature` 对 `winawdl_regproxy.cat` / `winawdl_regproxy.dll` 签名失败（如 Windows 11 25H2 Build `26200.9974` 返回 `0xC0000225`）时，自动回退调用内置 `shell\signtool.exe` 签名并用 `Get-AuthenticodeSignature` / `signtool verify /pa` 验证；
+  - 升级停止旧版 `NekoDropService` 前记录其运行状态，若后续步骤异常失败，自动尝试重启服务，避免原有可用服务停留在 `Stopped`。
+- **界面优化与实验性开关**：
+  - **雷达实时速度单行完整显示**：加宽节点状态行并禁止折行（悬停可看完整文案），微调上方节点最小轨道间距，避免第二行速度文字被中心电脑图标遮挡；
+  - **待机 BLE 广播开关**：在 **设置 → 网卡与高级 → 实验性功能** 新增 **「待机 BLE 广播（后台持续可被发现）」** 开关（默认关闭，切换后自动重启引擎并下发 `NEKODROP_BLE_STANDBY`）。
+- **MediaTek 驱动共享 32-bit KMDF 公共缓冲区辅助模块（[#74](https://github.com/zheznanohana/nekodrop/pull/74)，感谢 `@Yanlyn`）**：
+  - 新增 `driver/common/` 共享分配器头文件与 `CTest` 单元测试。
+
+### English
+
+- **Apple ID `-27952` / `HTTP 503` multi-profile fallback & diagnostics ([#42](https://github.com/zheznanohana/nekodrop/issues/42)):**
+  - Keeps `iCloud/7.21` unchanged by default; on `-27952` (or header/platform refusals such as `HTTP 503 / 403` and `-80045` on fallback), steps through Windows-first verified client profiles (`7.21` → `icloud-15` with `AuthKitWin/1` → `itunes` → `macos-akd`), persisting the working profile in `client.txt` (migrating legacy `15.10`);
+  - Fails fast on fallback `HTTP 503` instead of sleeping 45 s per header and logs safe diagnostic snippets (status, `Content-Type`, 120-char excerpt, no secrets) on non-plist responses.
+- **Installer `.cat` signing fallback & service recovery ([#73](https://github.com/zheznanohana/nekodrop/issues/73)):**
+  - Falls back to bundled `shell\signtool.exe` (followed by signature verification) when `Set-AuthenticodeSignature` fails on `winawdl_regproxy.cat` / `.dll` (seen on Windows 11 25H2 build `26200.9974` with `0xC0000225`);
+  - Records whether `NekoDropService` was running before stopping it and attempts to restart the service in `trap` if setup fails later.
+- **UI refinements & experimental toggle:**
+  - **Single-line radar transfer speed:** Widened node status text with `NoWrap` + tooltip and slightly raised `minOrbit` clearance so live speed stays readable clear of the center PC icon;
+  - **Standby BLE beacon toggle:** Added **Standby BLE beacon (stay discoverable in background)** under **Settings → Card and advanced → Experimental** (`NEKODROP_BLE_STANDBY`, off by default, restarts engine on change).
+- **Shared 32-bit KMDF common-buffer allocator for MediaTek queues ([#74](https://github.com/zheznanohana/nekodrop/pull/74), thanks `@Yanlyn`):**
+  - Added `driver/common/` headers and `CTest` unit tests.
+
+---
+
 ## v2.2.11 (Preview / 预览版) — 2026-11-26
 
 ### 中文
