@@ -42,11 +42,11 @@
           <TextBlock Text="nekodrop" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,0"/>
           <!-- Status pill: opens the quick controls -->
           <ToggleButton x:Name="StatusPill" shell:WindowChrome.IsHitTestVisibleInChrome="True" Cursor="Hand" FocusVisualStyle="{x:Null}"
-                        Foreground="{DynamicResource Text}" Checked="StatusPill_Checked">
+                        Checked="StatusPill_Checked">
             <ToggleButton.Template>
               <ControlTemplate TargetType="ToggleButton">
                 <Border x:Name="b" CornerRadius="12" Padding="10,4" Background="{DynamicResource Card}" BorderBrush="{DynamicResource Border}" BorderThickness="1">
-                  <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}"/>
+                  <ContentPresenter/>
                 </Border>
                 <ControlTemplate.Triggers>
                   <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="Background" Value="{DynamicResource CardHover}"/></Trigger>

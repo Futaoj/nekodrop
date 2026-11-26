@@ -481,7 +481,6 @@ constexpr uint8_t MT7921_FIF_BIT_CLR = 2u; /* BIT(1) in Linux mt7921/mcu.c */
 constexpr uint16_t MCU_UNI_CMD_DEV_INFO_UPDATE = 0x01;
 constexpr uint16_t MCU_UNI_CMD_BSS_INFO_UPDATE = 0x02;
 constexpr uint16_t MCU_UNI_CMD_STA_REC_UPDATE = 0x03;
-constexpr uint16_t MCU_UNI_CMD_SNIFFER = 0x24;
 
 /* Patch semaphore status */
 constexpr uint8_t PATCH_SEM_RELEASE = 0;

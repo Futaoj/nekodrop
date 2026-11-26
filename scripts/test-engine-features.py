@@ -4,7 +4,6 @@ import json
 import os
 import sys
 import unittest
-from unittest import mock
 
 if len(sys.argv) < 2:
     sys.exit('usage: test-engine-features.py <patched airdrop dir> [unittest args]')
@@ -13,7 +12,6 @@ sys.path.insert(0, sys.argv[1])
 del sys.argv[1]
 
 import receiver  # noqa: E402
-import sender  # noqa: E402
 import transfer  # noqa: E402
 
 
@@ -79,38 +77,6 @@ class MediaCapabilitiesTests(unittest.TestCase):
         self.assertEqual(caps['Version'], 1)
         self.assertIn('hvc1', caps['Codecs'])
         self.assertIn('public.heic', caps['ContainerFormats'])
-
-
-class StandbyBeaconTests(unittest.TestCase):
-    def tearDown(self):
-        os.environ.pop('NEKODROP_BLE_STANDBY', None)
-        sender.Beacon._shared_owner = None
-        sender.Beacon._shared_refs = 0
-
-    def test_standby_shares_single_beacon_process(self):
-        os.environ['NEKODROP_BLE_STANDBY'] = '1'
-        procs = []
-
-        def fake_popen(*_args, **_kwargs):
-            proc = mock.MagicMock()
-            proc.stdout.readline.return_value = 'advertising\n'
-            proc.poll.return_value = None
-            procs.append(proc)
-            return proc
-
-        with mock.patch.object(sender.subprocess, 'Popen', side_effect=fake_popen):
-            b1 = sender.Beacon()
-            b1.__enter__()
-            b2 = sender.Beacon()
-            b2.__enter__()
-            self.assertEqual(len(procs), 1)
-            self.assertTrue(b1.on)
-            self.assertTrue(b2.on)
-            self.assertTrue(b2.repulse())
-            b2.__exit__(None, None, None)
-            procs[0].terminate.assert_not_called()
-            b1.__exit__(None, None, None)
-            procs[0].terminate.assert_called_once()
 
 
 if __name__ == '__main__':

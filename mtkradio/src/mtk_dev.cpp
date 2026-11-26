@@ -1655,69 +1655,6 @@ bool MtkDevice::mcu_set_chan_cmd(uint8_t ext_cid, uint8_t ch, unsigned width_mhz
   return mcu_send(MCU_CMD_EXT_CID, ext_cid, MCU_Q_SET, &req, sizeof(req), true, nullptr, timeout);
 }
 
-bool MtkDevice::sniffer_enable(bool enable) {
-#pragma pack(push, 1)
-  struct {
-    uint8_t band_idx;
-    uint8_t pad[3];
-    uint16_t tag;
-    uint16_t len;
-    uint8_t enable;
-    uint8_t pad2[3];
-  } req{};
-#pragma pack(pop)
-  req.tag = 0;
-  req.len = sizeof(req) - 4;
-  req.enable = enable ? 1u : 0u;
-  return mcu_send_uni(MCU_UNI_CMD_SNIFFER, &req, sizeof(req), true);
-}
-
-bool MtkDevice::sniffer_config(uint8_t ch, unsigned width_mhz) {
-#pragma pack(push, 1)
-  struct {
-    uint8_t band_idx;
-    uint8_t pad[3];
-    uint16_t tag;
-    uint16_t len;
-    uint16_t aid;
-    uint8_t ch_band;
-    uint8_t bw;
-    uint8_t control_ch;
-    uint8_t sco;
-    uint8_t center_ch;
-    uint8_t center_ch2;
-    uint8_t drop_err;
-    uint8_t pad2[3];
-  } req{};
-#pragma pack(pop)
-  static_assert(sizeof(req) - 4 == 16, "sniffer config tlv");
-  req.tag = 1;
-  req.len = sizeof(req) - 4;
-  req.ch_band = ch > 14 ? 2u : 1u;
-  req.bw = width_mhz == 80 ? 1u : 0u;
-  req.control_ch = ch;
-  req.center_ch = center_channel_for(ch, width_mhz);
-  req.sco = req.control_ch < req.center_ch ? 1u : req.control_ch > req.center_ch ? 3u : 0u;
-  req.drop_err = 1u;
-  return mcu_send_uni(MCU_UNI_CMD_SNIFFER, &req, sizeof(req), true);
-}
-
-bool MtkDevice::set_scan_sniffer(bool enable) {
-  if (enable == _scan_sniffer) return true;
-  if (enable) {
-    if (!sniffer_enable(true)) return false;
-    _scan_sniffer = true;
-    (void)sniffer_config(_channel, _width_mhz);
-    restore_rx_filter();
-    return true;
-  }
-  const bool ok = sniffer_enable(false);
-  _scan_sniffer = false;
-  apply_rx_filter_mcu();
-  restore_rx_filter();
-  return ok;
-}
-
 bool MtkDevice::set_channel(uint8_t channel, unsigned width_mhz, uint8_t switch_reason) {
   if (channel <= 14) width_mhz = 20;
   const bool band_changed = !_rx_path_set || ((channel <= 14) != (_channel <= 14));
@@ -1736,7 +1673,6 @@ bool MtkDevice::set_channel(uint8_t channel, unsigned width_mhz, uint8_t switch_
   }
   /* Also clear DROP_OTHER_BEACON / DROP_OTHER_UC / DROP_OTHER_BSS directly in RFCR. */
   restore_rx_filter();
-  if (_scan_sniffer) (void)sniffer_config(channel, width_mhz);
 
   _channel = channel;
   _width_mhz = width_mhz;
@@ -3011,7 +2947,6 @@ void MtkDevice::close() {
   _tx_pending_kick = false;
   _fw_loaded = false;
   _rx_path_set = false;
-  _scan_sniffer = false;
   _sta_iface_up = false;
   _deferred_rx.clear();
   _peers.fill(PeerEntry{});

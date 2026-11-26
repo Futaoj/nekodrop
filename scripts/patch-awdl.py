@@ -585,49 +585,9 @@ patch_once(
     '\t\t\thost_if_write(host, announced, announced_len);\n'
     '\t\tstruct pcap_pkthdr header = {.caplen = (uint32_t) length, .len = (uint32_t) length};\n'
     '\t\tcallback(user, &header, frame);\n'
-        '\t\thandled++;\n'
-        '\t}\n'
-        '\treturn handled;\n'
-        '}\n',
-        'io_win.c batch up to 32 RX frames per pcap_dispatch',
-    )
-
-# 9. upstream/owl/src/rx.c: strip optional +HTC control field and unwrap Apple
-#    RFC 1042-encapsulated 802.3 A-MSDU subframes (#30, #66).
-owl_rx_c = root / 'upstream' / 'owl' / 'src' / 'rx.c'
-patch_once(
-    owl_rx_c,
-    'nekodrop (#30, #66): +HTC control field',
-    '\t\tcase IEEE80211_FTYPE_DATA | IEEE80211_STYPE_DATA | IEEE80211_STYPE_QOS_DATA:\n'
-    '\t\t\tREAD_LE16(frame, 0, &qosc);\n'
-    '\t\t\tBUF_STRIP(frame, IEEE80211_QOS_CTL_LEN);\n',
-    '\t\tcase IEEE80211_FTYPE_DATA | IEEE80211_STYPE_DATA | IEEE80211_STYPE_QOS_DATA:\n'
-    '\t\t\tREAD_LE16(frame, 0, &qosc);\n'
-    '\t\t\tBUF_STRIP(frame, IEEE80211_QOS_CTL_LEN);\n'
-    '\t\t\tif (fc & 0x8000u) /* nekodrop (#30, #66): +HTC control field */\n'
-    '\t\t\t\tBUF_STRIP(frame, 4);\n',
-    'owl rx.c strip +HTC control field when Order bit set',
-)
-patch_once(
-    owl_rx_c,
-    'nekodrop (#30, #66): iOS/iPadOS/macOS TX A-MSDU',
-    '\tif (!awdl_valid_llc_header(frame))\n'
-    '\t\treturn RX_UNEXPECTED_FORMAT;\n',
-    '\t/* nekodrop (#30, #66): iOS/iPadOS/macOS TX A-MSDU bridge converter wraps\n'
-    '\t * inner 802.3 AWDL length (< 0x0600) in an extra 8-byte RFC 1042 LLC/SNAP\n'
-    '\t * header (aa aa 03 00 00 00 <be16 len>) ahead of aa aa 03 00 17 f2 00 08. */\n'
-    '\tif (buf_len(frame) >= 16 && buf_data(frame)[4] == 0x00 && buf_data(frame)[5] == 0x00 &&\n'
-    '\t    buf_data(frame)[0] == 0xaa && buf_data(frame)[1] == 0xaa &&\n'
-    '\t    buf_data(frame)[2] == 0x03 && buf_data(frame)[3] == 0x00) {\n'
-    '\t\tuint16_t inner_len = ((uint16_t) buf_data(frame)[6] << 8) | buf_data(frame)[7];\n'
-    '\t\tif (inner_len >= 16 && inner_len < 0x0600 && 8 + (int) inner_len <= buf_len(frame) &&\n'
-    '\t\t    !memcmp(buf_data(frame) + 8, "\\xaa\\xaa\\x03\\x00\\x17\\xf2\\x00\\x08", 8)) {\n'
-    '\t\t\tbuf_strip(frame, 8);\n'
-    '\t\t\tif (buf_len(frame) > (int) inner_len)\n'
-    '\t\t\t\tbuf_take(frame, buf_len(frame) - (int) inner_len);\n'
-    '\t\t}\n'
+    '\t\thandled++;\n'
     '\t}\n'
-    '\tif (!awdl_valid_llc_header(frame))\n'
-    '\t\treturn RX_UNEXPECTED_FORMAT;\n',
-    'owl rx.c unwrap RFC 1042-encapsulated 802.3 AWDL A-MSDU subframes',
+    '\treturn handled;\n'
+    '}\n',
+    'io_win.c batch up to 32 RX frames per pcap_dispatch',
 )

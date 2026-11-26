@@ -634,27 +634,8 @@ int main(int argc, char **argv) {
     (void)dev.transmit_raw(f.data(), f.size(), mtk::MtkDevice::tx_rate_ofdm(6), 0, true, true);
   };
 
-  auto finish_scan_radio = [&]() {
-    const unsigned awdl_w = awdl_channel > 14 ? width : 20u;
-    if (dev.channel() != awdl_channel || dev.width_mhz() != awdl_w) {
-      dev.kick_tx();
-      if (!dev.set_channel(awdl_channel, awdl_w)) {
-        move_failed = true;
-        move_retry_at = Clock::now() + std::chrono::milliseconds(500);
-      }
-    }
-    (void)dev.set_scan_sniffer(false);
-    if (sta_dev) sta_dev->on_channel(dev.channel() == sta_dev->channel());
-  };
-
   auto start_scan = [&](const std::vector<uint8_t> &ssid, bool background) {
     if (scan.active) return;
-    const uint64_t t = now_us();
-    if (background && ((last_awdl_data_us && t - last_awdl_data_us < 15000000u) || sched.fresh(t))) {
-      log_line("scan: skipped background scan while AirDrop is active");
-      log_line("event: scan-interrupted air-drop");
-      return;
-    }
     scan = Scan{};
     scan.active = true;
     scan.background = background;
@@ -665,20 +646,18 @@ int main(int argc, char **argv) {
     for (uint8_t c = 149; c <= 165; c += 4) scan.channels.push_back(c);
     // The MT792x Concurrent station can join only 5 GHz; probing 2.4 GHz
     // here would waste off-channel time producing results the service discards.
-    if (!dev.set_scan_sniffer(true)) log_line("scan: sniffer enable not confirmed");
     log_line("event: scan-started");
   };
 
   auto scan_step = [&]() -> bool {
     const auto now = Clock::now();
     // A 9.6 s uninterrupted scan expired the AWDL peer in under 3 s, and
-    // cut active uploads in both directions (#54, #56). Yield background scans
-    // for 15 s after AWDL data or while an active peer sync is fresh (#66).
+    // cut active uploads in both directions (#54, #56). Check at start and
+    // during the home windows, before any further off-channel dwell.
     const uint64_t t = now_us();
-    if (scan.background && (scan.next == 0 || scan.home) &&
-        ((last_awdl_data_us && t - last_awdl_data_us < 15000000u) || sched.fresh(t))) {
+    if (scan.background && (scan.next == 0 || scan.home) && last_awdl_data_us &&
+        t - last_awdl_data_us < 3000000u) {
       scan.active = false;
-      finish_scan_radio();
       log_line("scan: yielded to AirDrop traffic");
       log_line("event: scan-interrupted air-drop");
       return true;
@@ -701,7 +680,6 @@ int main(int argc, char **argv) {
     if (scan.until != Clock::time_point{} && now < scan.until) return false;
     if (scan.next >= scan.channels.size()) {
       scan.active = false;
-      finish_scan_radio();
       std::string heard;
       for (const auto &[ch, c] : scan.heard) {
         heard += " " + std::to_string(ch) + ":" + std::to_string(c.first) + "/" +
@@ -736,7 +714,6 @@ int main(int argc, char **argv) {
       if (dev.channel() != awdl_channel || dev.width_mhz() != (awdl_channel > 14 ? width : 20u)) {
         if (!dev.set_channel(awdl_channel, awdl_channel > 14 ? width : 20u)) {
           scan.active = false;
-          (void)dev.set_scan_sniffer(false);
           move_failed = true;
           move_retry_at = Clock::now() + std::chrono::milliseconds(500);
           log_fmt("scan: could not return to AWDL channel %u", awdl_channel);

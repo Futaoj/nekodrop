@@ -15,7 +15,6 @@
 #include "../src/awdl_policy.h"
 #include "../src/coex_plan.h"
 #include "../src/crypto.h"
-#include "../src/rx_reorder.h"
 #include "../src/wpa3.h"
 #include "radio_backend_test.h"
 #include <cstring>
@@ -109,7 +108,6 @@ int main(int argc, char **argv) {
       {0x51F0, 0x370, 0x1010d000, "iwlwifi-so-a0-gf4-a0-68.ucode", true, false, true},   /* AX411 */
       {0x272B, 0x470, 0x00112000, "iwlwifi-gl-c0-fm-c0-100.ucode", true, true, false},   /* BE200: discrete Gl/Fm */
       {0x272B, 0x470, 0x0010d000, nullptr, true, true, false},                           /* Gl with non-FM radio */
-      {0x7740, 0x460, 0x0010a000, "iwlwifi-bz-b0-hr-b0-100.ucode", true, true, true},     /* AX203 on Arrow Lake */
       {0x2726, 0x420, 0x0010d000, nullptr, true, false, true},                           /* SnJ: no firmware */
       {0x1234, 0x354, 0x0010a100, nullptr, false, false, true},
   };
@@ -129,13 +127,6 @@ int main(int argc, char **argv) {
       std::printf("FAIL BE200 transport parameters or family_device(\"be200\")\n");
       failures++;
     }
-  }
-  {
-    const CardInfo c = cards::select(0x7740, 0x460, 0x0010a000);
-    if (!c.known || !c.ax210 || !c.bz || !c.integrated || c.xtal_latency != 12000 ||
-        c.ltr_delay != IWX_SOC_FLAGS_LTR_APPLY_DELAY_2500 || !c.low_latency_xtal || !c.tested ||
-        c.pnvm != "iwlwifi-bz-b0-hr-b0.pnvm")
-      std::printf("FAIL AX203 (8086:7740) transport parameters, PNVM or tested flag\n"), failures++;
   }
   {
     const CardInfo c = cards::select(0x43F0, 0x354, 0x0010a100);
@@ -517,67 +508,6 @@ int main(int argc, char **argv) {
   CHECK(!awdl::ba_tx_stalled_as_singles(128, 0, 63), "no-BA fallback waits for 64 single completions");
   CHECK(!awdl::ba_tx_stalled_as_singles(256, 1, 200), "no-BA fallback stays quiet once any Block Ack arrives");
   CHECK(awdl::ba_tx_stalled_as_singles(128, 0, 64), "no-BA fallback triggers on 128 frames / 0 BA / 64 singles");
-
-  /* RxReorder (#79, #83): zero-copy fast path for in-order frames, buffered
-   * sequential release for out-of-order frames, OLD_SN duplicate drop, and
-   * BAR_FRAME_RELEASE (0xc2) flush. */
-  {
-    std::vector<uint8_t> delivered;
-    RxReorder rr([&](const RxFrame &f) {
-      if (f.len >= 26) delivered.push_back(f.data[25]);
-    });
-    auto mk = [](uint8_t tag) {
-      std::vector<uint8_t> b(26, 0);
-      b[0] = 0x88; /* QoS Data */
-      b[25] = tag;
-      return b;
-    };
-    const uint32_t baid = 2;
-    auto rd = [&](uint16_t sn, uint16_t nssn, bool old_sn = false) {
-      return (old_sn ? 0x80000000u : 0u) | (baid << 24) | ((uint32_t)(sn & 0xfff) << 12) |
-             (nssn & 0xfff);
-    };
-    rr.open(baid, 10, 64);
-
-    /* 1) In-order SN 10: frame() delivers directly via zero-copy fast path
-     *    (stats().held == 0, stats().in_order == 1). */
-    auto f10 = mk(10);
-    RxFrame m10{f10.data(), f10.size(), -40, 149, 0, 0, false};
-    CHECK(rr.frame(m10, rd(10, 11), false, false, 1000) &&
-              delivered == std::vector<uint8_t>({10}) &&
-              rr.stats().in_order == 1 && rr.stats().held == 0,
-          "RxReorder in-order frame uses zero-copy fast path");
-    delivered.clear();
-
-    /* 2) OLD_SN duplicate dropped once session is active. */
-    auto fold = mk(9);
-    RxFrame mold{fold.data(), fold.size(), -40, 149, 0, 0, false};
-    CHECK(rr.frame(mold, rd(9, 11, true), false, false, 1010) && delivered.empty() &&
-              rr.stats().dropped_old == 1,
-          "RxReorder drops OLD_SN duplicate");
-
-    /* 3) Out-of-order SN 12 held until SN 11 arrives, then released in order. */
-    auto f12 = mk(12), f11 = mk(11);
-    RxFrame m12{f12.data(), f12.size(), -40, 149, 0, 0, false};
-    RxFrame m11{f11.data(), f11.size(), -40, 149, 0, 0, false};
-    CHECK(rr.frame(m12, rd(12, 11), false, false, 1020) && delivered.empty() &&
-              rr.stats().held == 1,
-          "RxReorder holds out-of-order frame behind gap");
-    CHECK(rr.frame(m11, rd(11, 13), false, false, 1030) &&
-              delivered == std::vector<uint8_t>({11, 12}),
-          "RxReorder delivers buffered gap frames in sequence order");
-
-    /* 4) BAR / 0xc2 release advances window over a missing frame (SN 13). */
-    delivered.clear();
-    auto f14 = mk(14);
-    RxFrame m14{f14.data(), f14.size(), -40, 149, 0, 0, false};
-    CHECK(rr.frame(m14, rd(14, 13), false, false, 1040) && delivered.empty(),
-          "RxReorder buffers SN 14 past hole at SN 13");
-    rr.release(baid, 15);
-    CHECK(delivered == std::vector<uint8_t>({14}),
-          "RxReorder BAR/FRAME_RELEASE flushes held frames up to NSSN");
-    rr.close(baid);
-  }
 
   std::printf(failures ? "%d FAILED\n" : "all passed\n", failures);
   return failures ? 1 : 0;
