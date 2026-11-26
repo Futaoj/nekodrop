@@ -572,9 +572,11 @@ void WifiStation::send_assoc() {
   }
   if (_ap_ht) {
     /* HT capabilities: 20/40 (if the AP is wide), SM PS off, short GI 20/40,
-     * 1 RX STBC stream; 64 KiB A-MPDU, 8 us spacing; MCS 0-15 (two chains). */
+     * 1 RX STBC stream; 64 KiB A-MPDU, 8 us spacing; MCS 0-15 (two chains).
+     * Bit 11 advertises the 7935-byte maximum A-MSDU size, so the AP may pack
+     * several Ethernet frames into one MPDU instead of one per frame. */
     const uint16_t htcap = static_cast<uint16_t>((_ap_width >= 40 ? 0x0002 : 0) | 0x000c | 0x0020 |
-                                                 (_ap_width >= 40 ? 0x0040 : 0) | 0x0100);
+                                                 (_ap_width >= 40 ? 0x0040 : 0) | 0x0100 | 0x0800);
     const uint8_t ht[28] = {45,
                             26,
                             static_cast<uint8_t>(htcap),
@@ -821,6 +823,9 @@ void WifiStation::handle_data(const RxFrame &f) {
   if (!group && std::memcmp(f.data + 4, _addr.data(), 6) != 0) return;
   _rx.data++;
   if (!group) _rx.unicast++;
+  _rx.last_rate = f.rate_n_flags;
+  _rx.last_rate_width = static_cast<uint8_t>((f.rate_n_flags >> 11) & 0x7);
+  _rx.last_rate_mcs = static_cast<uint8_t>(f.rate_n_flags & 0x0f);
   const uint8_t *da = f.data + 4, *sa = f.data + 16;
   if (std::memcmp(sa, _addr.data(), 6) == 0) return; /* our own broadcast, echoed */
   const uint8_t *body = f.data + h;
@@ -905,15 +910,9 @@ void WifiStation::deliver(const uint8_t *da, const uint8_t *sa, const uint8_t *b
   }
   if (!plain() && !encrypted) return;
   if (_state != State::Running) return;
-  std::vector<uint8_t> eth;
-  eth.reserve(14 + len);
-  eth.insert(eth.end(), da, da + 6);
-  eth.insert(eth.end(), sa, sa + 6);
-  put_be16(eth, ethertype);
-  eth.insert(eth.end(), body, body + len);
-  if (_tap.write(eth.data(), eth.size())) {
+  if (_tap.write_eth(da, sa, ethertype, body, len)) {
     _rx_packets++;
-    _rx_bytes += eth.size();
+    _rx_bytes += 14 + len;
   } else if (_rx.tap_failed++ < 5) {
     _log("station: writing to the TAP adapter failed");
   }

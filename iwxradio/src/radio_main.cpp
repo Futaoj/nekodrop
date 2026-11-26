@@ -1603,6 +1603,7 @@ int main(int argc, char **argv) {
         if constexpr (caps.supports_aggregate) if (agg.on) log_agg_snapshot();
         if (sta) {
           const auto &r = sta->rx_stats();
+          const auto ws = sta->tap().write_stats();
           unsigned sta_acked = 0, sta_failed = 0, sta_submitted = 0; /* sta is only ever set with supports_station */
           if constexpr (caps.supports_station) {
             sta_acked = dev.sta_tx_acked();
@@ -1617,7 +1618,15 @@ int main(int argc, char **argv) {
                    std::to_string(sta_acked) + " acknowledged, " + std::to_string(sta_failed) +
                    " not; from the AP " + std::to_string(r.data) + " data frames (" + std::to_string(r.unicast) + " unicast), " + std::to_string(r.amsdu) +
                    " A-MSDU, dropped " + std::to_string(r.undecrypted) + " undecrypted, " +
-                   std::to_string(r.not_llc) + " not LLC, " + std::to_string(r.tap_failed) + " TAP");
+                   std::to_string(r.not_llc) + " not LLC, " + std::to_string(r.tap_failed) + " TAP; TAP writes " +
+                   std::to_string(ws.writes) + ", queue max " +
+                   std::to_string(ws.queued_max) + ", drops " +
+                   std::to_string(ws.drops) + ", failed " +
+                   std::to_string(ws.failed) + ", write avg " +
+                   std::to_string(ws.writes ? ws.total_us / ws.writes : 0) +
+                   " us, max " + std::to_string(ws.max_us) + " us; last rate 0x" +
+                   std::to_string(r.last_rate) + " width " + std::to_string(r.last_rate_width) +
+                   ", mcs " + std::to_string(r.last_rate_mcs));
           /* Stall watchdog: Windows keeps sending but nearly nothing comes
            * back while the link still looks fine (hardware, 2026-11-17:
            * after ~40 minutes, 300-600 packets a minute out against 50-100

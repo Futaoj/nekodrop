@@ -10,6 +10,7 @@
 #include <winioctl.h>
 
 #include <cstring>
+#include <chrono>
 
 #include "tap.h"
 
@@ -69,6 +70,17 @@ bool ioctl_wait(HANDLE h, DWORD code, void *in, DWORD in_len, void *out, DWORD o
 
 TapAdapter::~TapAdapter() {
   if (_handle) {
+    {
+      std::lock_guard<std::mutex> lock(_write_mutex);
+      _write_stop = true;
+    }
+    _write_cv.notify_all();
+    for (auto &ctx : _write_ctx) {
+      if (ctx.event) CancelIoEx(_handle, reinterpret_cast<OVERLAPPED *>(ctx.ov));
+    }
+    for (auto &writer : _writers) {
+      if (writer.joinable()) writer.join();
+    }
     /* The read may have been started by another thread: cancel it by its
      * OVERLAPPED and wait before its buffer and event go (Codex review #21). */
     if (_read_pending) {
@@ -81,7 +93,9 @@ TapAdapter::~TapAdapter() {
     CloseHandle(_handle);
   }
   if (_read_event) CloseHandle(_read_event);
-  if (_write_event) CloseHandle(_write_event);
+  for (auto &ctx : _write_ctx) {
+    if (ctx.event) CloseHandle(ctx.event);
+  }
 }
 
 bool TapAdapter::open(const std::string &wanted, std::string &error) {
@@ -140,8 +154,12 @@ bool TapAdapter::open(const std::string &wanted, std::string &error) {
   }
   _handle = h;
   _read_event = CreateEventA(nullptr, TRUE, FALSE, nullptr);
-  _write_event = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+  for (unsigned i = 0; i < kWriterThreads; i++) {
+    _write_ctx[i].event = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+    _writers[i] = std::thread(&TapAdapter::write_loop, this, i);
+  }
   _read_buf.resize(2048);
+  _write_buf.reserve(2048);
   return true;
 }
 
@@ -179,36 +197,78 @@ bool TapAdapter::read(std::vector<uint8_t> &frame, unsigned timeout_ms) {
 
 bool TapAdapter::write(const uint8_t *frame, size_t len) {
   if (!_handle) return false;
-  /* The request owns its buffer, OVERLAPPED and event: a write that never
-   * completes must not stop the radio's only thread (Codex review #8), and
-   * a cancellation that never completes either (round 2 #14). After 500 ms
-   * the write is cancelled; if even that has not finished a second later,
-   * the request is left to the kernel (leaked) rather than freed under it. */
-  struct Request {
-    OVERLAPPED ov{};
-    std::vector<uint8_t> buf;
-  };
-  auto *r = new Request;
-  r->buf.assign(frame, frame + len);
-  r->ov.hEvent = CreateEventA(nullptr, TRUE, FALSE, nullptr);
-  if (!r->ov.hEvent) {
-    delete r;
-    return false;
+  _write_buf.assign(frame, frame + len);
+  return enqueue_buffered();
+}
+
+bool TapAdapter::write_eth(const uint8_t *da, const uint8_t *sa, uint16_t ethertype,
+                           const uint8_t *payload, size_t len) {
+  if (!_handle) return false;
+  _write_buf.resize(14 + len);
+  std::memcpy(_write_buf.data(), da, 6);
+  std::memcpy(_write_buf.data() + 6, sa, 6);
+  _write_buf[12] = static_cast<uint8_t>(ethertype >> 8);
+  _write_buf[13] = static_cast<uint8_t>(ethertype);
+  if (len) std::memcpy(_write_buf.data() + 14, payload, len);
+  return enqueue_buffered();
+}
+
+bool TapAdapter::enqueue_buffered() {
+  if (!_handle) return false;
+  {
+    std::lock_guard<std::mutex> lock(_write_mutex);
+    if (_write_stop) return false;
+    if (_write_queue.size() >= kMaxQueue) {
+      _write_stats.drops++;
+      return false;
+    }
+    _write_queue.emplace_back(_write_buf);
+    if (_write_queue.size() > _write_stats.queued_max)
+      _write_stats.queued_max = _write_queue.size();
   }
-  const auto done = [&](bool ok) {
-    CloseHandle(r->ov.hEvent);
-    delete r;
-    return ok;
-  };
+  _write_cv.notify_one();
+  return true;
+}
+
+void TapAdapter::write_loop(unsigned index) {
+  SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+  WriteCtx &ctx = _write_ctx[index];
+  for (;;) {
+    std::vector<uint8_t> frame;
+    {
+      std::unique_lock<std::mutex> lock(_write_mutex);
+      _write_cv.wait(lock, [this] { return _write_stop || !_write_queue.empty(); });
+      if (_write_stop && _write_queue.empty()) break;
+      frame = std::move(_write_queue.front());
+      _write_queue.pop_front();
+    }
+    write_one(frame, ctx);
+  }
+}
+
+void TapAdapter::write_one(const std::vector<uint8_t> &frame, WriteCtx &ctx) {
+  const auto started = std::chrono::steady_clock::now();
+  auto *ov = reinterpret_cast<OVERLAPPED *>(ctx.ov);
+  std::memset(ov, 0, sizeof(*ov));
+  ov->hEvent = ctx.event;
+  ResetEvent(ctx.event);
   DWORD put = 0;
-  if (WriteFile(_handle, r->buf.data(), static_cast<DWORD>(len), &put, &r->ov)) return done(true);
-  if (GetLastError() != ERROR_IO_PENDING) return done(false);
-  if (WaitForSingleObject(r->ov.hEvent, 500) == WAIT_OBJECT_0)
-    return done(GetOverlappedResult(_handle, &r->ov, &put, FALSE) != 0);
-  CancelIoEx(_handle, &r->ov);
-  if (WaitForSingleObject(r->ov.hEvent, 1000) == WAIT_OBJECT_0) {
-    GetOverlappedResult(_handle, &r->ov, &put, FALSE);
-    return done(false);
+  bool ok = false;
+  if (WriteFile(_handle, frame.data(), static_cast<DWORD>(frame.size()), &put, ov)) {
+    ok = true;
+  } else if (GetLastError() == ERROR_IO_PENDING) {
+    if (WaitForSingleObject(ctx.event, 500) == WAIT_OBJECT_0) {
+      ok = GetOverlappedResult(_handle, ov, &put, FALSE) != 0;
+    } else {
+      CancelIoEx(_handle, ov);
+      GetOverlappedResult(_handle, ov, &put, TRUE);
+    }
   }
-  return false; /* still owned by the kernel: leaked on purpose */
+  const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                      std::chrono::steady_clock::now() - started)
+                      .count();
+  _write_stats.writes++;
+  _write_stats.total_us += static_cast<uint64_t>(us);
+  if (static_cast<uint64_t>(us) > _write_stats.max_us) _write_stats.max_us = static_cast<uint64_t>(us);
+  if (!ok) _write_stats.failed++;
 }

@@ -75,6 +75,10 @@ public:
   /* Data frames from the AP and why some never reached Windows. */
   struct RxStats {
     uint64_t data = 0, unicast = 0, undecrypted = 0, not_llc = 0, amsdu = 0, tap_failed = 0;
+    /* Last data frame's firmware rate flags, for the health line: width bits
+     * 11-13, VHT/HT MCS in the low bits. */
+    uint32_t last_rate = 0;
+    uint8_t last_rate_width = 0, last_rate_mcs = 0;
   };
   const RxStats &rx_stats() const { return _rx; }
   /* Leaves and joins again in 5 s (the radio's stall watchdog). */
