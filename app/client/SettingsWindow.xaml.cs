@@ -57,6 +57,7 @@ public partial class SettingsWindow : Window
         FastUnlockBox.IsChecked = (bool?)A.Service.Last?["fastUnlock"] ?? false;
         CoexPlanBox.IsChecked = (bool?)A.Service.Last?["coexPlan"] ?? false;
         HighThroughputBox.IsChecked = (bool?)A.Service.Last?["highThroughput"] ?? false;
+        BleStandbyBox.IsChecked = s.BleStandby;
         CheckUpdatesBox.IsChecked = s.CheckUpdates;
         PreviewUpdatesBox.IsChecked = s.PreviewUpdates;
         DeleteInstallerBox.IsChecked = s.DeleteInstallerAfterInstall;
@@ -334,6 +335,9 @@ public partial class SettingsWindow : Window
         s.Hotkey = HotkeyBox.IsChecked == true;
         s.HotkeyKeys = _hotkeyKeys;
         s.ShowTransferSpeed = ShowSpeedBox.IsChecked == true;
+        var bleStandby = BleStandbyBox.IsChecked == true;
+        var bleStandbyChanged = bleStandby != s.BleStandby;
+        s.BleStandby = bleStandby;
         s.CheckUpdates = CheckUpdatesBox.IsChecked == true;
         s.PreviewUpdates = PreviewUpdatesBox.IsChecked == true;
         s.DeleteInstallerAfterInstall = DeleteInstallerBox.IsChecked == true;
@@ -359,7 +363,7 @@ public partial class SettingsWindow : Window
         if (highThroughput != ((bool?)A.Service.Last?["highThroughput"] ?? false)) A.Service.SetHighThroughput(highThroughput);
         A.Window?.FolderChanged();
         var hotkeyTaken = hotkeyChanged && !A.ApplyHotkey();
-        if (receiveChanged || mediaChanged) A.RestartEngine();
+        if (receiveChanged || mediaChanged || bleStandbyChanged) A.RestartEngine();
         A.Window?.ShowMark();
         if (accentChanged) A.ApplyTheme();
         if (languageChanged) { A.ApplyLanguage(); Close(); return; }

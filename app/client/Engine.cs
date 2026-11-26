@@ -87,6 +87,7 @@ public sealed class Engine : IDisposable
         psi.Environment["PYTHONIOENCODING"] = "utf-8";
         psi.Environment["NEKODROP_SERVICE_ID"] = s.ServiceId; /* one device on the iPhone across restarts */
         if (s.MediaFormat == "original") psi.Environment["NEKODROP_MEDIA_MODE"] = "original";
+        if (s.BleStandby) psi.Environment["NEKODROP_BLE_STANDBY"] = "1";
         // Contacts Only: the Apple ID identity for installer\nekodrop_identity.py.
         if (s.AppleIdOn && AppleId.Present)
         {
