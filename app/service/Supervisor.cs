@@ -90,7 +90,7 @@ public sealed class Supervisor : IDisposable
                 ["fastUnlock"] = _cfg.FastUnlock,
                 ["coexPlan"] = _cfg.CoexPlan,
                 ["highThroughput"] = _cfg.HighThroughput,
-                ["rxBlockAck"] = _cfg.RxBlockAck,
+                ["dataPlaneAccel"] = _cfg.DataPlaneAccel,
                 ["card"] = _cardLabel,
                 ["manualCard"] = _cfg.ManualCard,
                 ["manualModel"] = _cfg.ManualModel,
@@ -269,18 +269,20 @@ public sealed class Supervisor : IDisposable
     }
 
     /// <summary>
-    /// Experimental RX Block Ack reordering for the Intel station (radio sta.conf ba=1):
-    /// off makes the AP fall back to single frames; a running radio restarts to take it.
+    /// Experimental station data-plane acceleration: RX Block Ack reordering
+    /// (sta.conf ba=1) and two TAP writer threads (tap_writers=2). Off makes
+    /// the AP fall back to single frames and writes TAP on the RX thread;
+    /// a running radio restarts to take the change.
     /// </summary>
-    public void SetRxBlockAck(bool on)
+    public void SetDataPlaneAccel(bool on)
     {
         lock (_lock)
         {
-            if (_cfg.RxBlockAck == on) return;
-            _cfg.RxBlockAck = on;
+            if (_cfg.DataPlaneAccel == on) return;
+            _cfg.DataPlaneAccel = on;
             _cfg.Save();
         }
-        Say($"experimental RX Block Ack reordering: {(on ? "on" : "off")}");
+        Say($"experimental data-plane acceleration: {(on ? "on" : "off")}");
         if (State is RadioState.On or RadioState.Starting)
             _ = Task.Run(() => Relaunch(_channel == 0 ? _cfg.StartChannel : _channel));
         Publish();
@@ -438,7 +440,7 @@ public sealed class Supervisor : IDisposable
                 lock (_lock) _staSsid = net?.Ssid ?? "";
                 if (net is not null && (net.Open || net.Passphrase is not null || net.PskHex is not null))
                 {
-                    staConf = Wlan.WriteStaConfig(net, _cfg.RxBlockAck);
+                    staConf = Wlan.WriteStaConfig(net, _cfg.DataPlaneAccel);
                     Say($"Wi-Fi: joining \"{net.Ssid}\" ({net.Security}, channel {net.Channel}) beside AirDrop");
                 }
                 else if (net is null && !wired && !_userOff && !_userChose &&

@@ -32,13 +32,16 @@ struct StaConfig {
   bool open = false;
   std::string tap;        /* TAP adapter name or GUID; empty: the first */
   unsigned max_width = 80;
-  /* Receive Block Ack sessions with the AP. On by default now that the station
-   * has a host-side reorder scoreboard: without it requests are declined
-   * (status 37) and the AP sends unaggregated, losing A-MPDU gain (Codex
-   * review #24, agreed fix). */
-  bool block_ack = true;
+  /* Receive Block Ack sessions with the AP. Off by default: the Settings
+   * "experimental data-plane acceleration" switch turns it on together with
+   * the TAP writer threads. Without it requests are declined (status 37) and
+   * the AP sends unaggregated, losing A-MPDU gain. */
+  bool block_ack = false;
+  /* 0: write TAP on the station RX thread. 2: queue and use two writer
+   * threads, so the RX thread does not wait for TAP WriteFile. Same switch. */
+  unsigned tap_writers = 0;
 
-  /* key=value lines: ssid, bssid, channel, passphrase, psk, open, tap, width, ba. */
+  /* key=value lines: ssid, bssid, channel, passphrase, psk, open, tap, width, ba, tap_writers. */
   bool load(const std::string &path, std::string &error);
 };
 

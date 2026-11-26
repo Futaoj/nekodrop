@@ -285,6 +285,14 @@
             <StackPanel>
               <TextBlock Text="{local:T set.experimental}" Style="{StaticResource T13S}" Margin="0,0,0,10"/>
               <DockPanel>
+                <CheckBox x:Name="DataPlaneAccelBox" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Margin="12,0,0,0"/>
+                <StackPanel>
+                  <TextBlock Text="{local:T set.dataPlaneAccel}" FontSize="13" FontWeight="Medium" TextWrapping="Wrap"/>
+                  <TextBlock Text="{local:T set.dataPlaneAccel.short}" Style="{StaticResource Sub12}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+              </DockPanel>
+              <Border Style="{StaticResource Rule}" Margin="0,12"/>
+              <DockPanel>
                 <CheckBox x:Name="CoexPlanBox" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Margin="12,0,0,0"/>
                 <StackPanel>
                   <TextBlock Text="{local:T set.coexPlan}" FontSize="13" FontWeight="Medium" TextWrapping="Wrap"/>
@@ -305,14 +313,6 @@
                 <StackPanel>
                   <TextBlock Text="{local:T set.highThroughput}" FontSize="13" FontWeight="Medium" TextWrapping="Wrap"/>
                   <TextBlock Text="{local:T set.highThroughput.short}" Style="{StaticResource Sub12}" Margin="0,2,0,0"/>
-                </StackPanel>
-              </DockPanel>
-              <Border Style="{StaticResource Rule}" Margin="0,12"/>
-              <DockPanel>
-                <CheckBox x:Name="RxBlockAckBox" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Margin="12,0,0,0"/>
-                <StackPanel>
-                  <TextBlock Text="{local:T set.rxBlockAck}" FontSize="13" FontWeight="Medium" TextWrapping="Wrap"/>
-                  <TextBlock Text="{local:T set.rxBlockAck.short}" Style="{StaticResource Sub12}" Margin="0,2,0,0" TextWrapping="Wrap"/>
                 </StackPanel>
               </DockPanel>
               <Border Style="{StaticResource Rule}" Margin="0,12"/>

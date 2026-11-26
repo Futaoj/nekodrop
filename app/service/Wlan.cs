@@ -254,7 +254,7 @@ public static class Wlan
     }
 
     /// <summary>Writes the radio's --sta-config file, readable by SYSTEM and Administrators only.</summary>
-    public static string WriteStaConfig(Network n, bool rxBlockAck = true)
+    public static string WriteStaConfig(Network n, bool dataPlaneAccel = false)
     {
         var dir = Path.Combine(ServiceConfig.Folder, "run");
         ServiceConfig.EnsureSecureDirectory();
@@ -264,8 +264,9 @@ public static class Wlan
         var lines = new List<string> { $"ssid={n.Ssid}", $"bssid={n.Bssid}", $"channel={n.Channel}" };
         // nekodrop's own TAP adapter (installer: DHCP on), never another VPN's.
         lines.Add("tap=nekodrop");
-        // The radio's default is on; write it explicitly so the settings switch can turn it off.
-        lines.Add(rxBlockAck ? "ba=1" : "ba=0");
+        // One switch controls both parts: RX Block Ack reordering and the two TAP writers.
+        lines.Add(dataPlaneAccel ? "ba=1" : "ba=0");
+        lines.Add(dataPlaneAccel ? "tap_writers=2" : "tap_writers=0");
         if (n.Open) lines.Add("open=1");
         else if (n.PskHex is not null) lines.Add($"psk={n.PskHex}");
         else lines.Add($"passphrase={n.Passphrase}");

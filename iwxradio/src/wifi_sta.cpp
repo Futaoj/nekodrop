@@ -137,6 +137,7 @@ bool StaConfig::load(const std::string &path, std::string &error) {
     else if (k == "tap") tap = v;
     else if (k == "width") max_width = static_cast<unsigned>(std::atoi(v.c_str()));
     else if (k == "ba") block_ack = v == "1";
+    else if (k == "tap_writers") tap_writers = static_cast<unsigned>(std::atoi(v.c_str()));
   }
   if (ssid.empty() || ssid.size() > 32) error = "ssid missing or longer than 32 bytes";
   else if (!have_bssid) error = "bssid missing";
@@ -176,6 +177,7 @@ bool WifiStation::start(const StaConfig &cfg, std::string &error) {
       return false;
     }
   }
+  _tap.set_write_threads(_cfg.tap_writers);
   if (!_tap.is_open() && !_tap.open(_cfg.tap, error)) return false;
   _addr = _tap.mac();
   _tap.set_connected(false);

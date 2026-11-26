@@ -27,6 +27,11 @@ public:
   ~TapAdapter();
   /* Opens the first tap0901 adapter, or the one whose name or GUID is given. */
   bool open(const std::string &wanted, std::string &error);
+  /* 0: write on the caller (station RX) thread, the original path. 2: queue
+   * and let two writer threads do the blocking TAP WriteFile calls. */
+  void set_write_threads(unsigned threads) {
+    _write_threads = threads > kWriterThreads ? kWriterThreads : threads;
+  }
   bool is_open() const { return _handle != nullptr; }
   const std::array<uint8_t, 6> &mac() const { return _mac; }
   const std::string &name() const { return _name; }
@@ -53,8 +58,9 @@ private:
     HANDLE event = nullptr;
   };
   bool enqueue_buffered();
+  bool write_direct();
   void write_loop(unsigned index);
-  void write_one(const std::vector<uint8_t> &frame, WriteCtx &ctx);
+  bool write_one(const std::vector<uint8_t> &frame, WriteCtx &ctx);
   void *_handle = nullptr;
   void *_read_event = nullptr;
   bool _read_pending = false;
@@ -63,6 +69,7 @@ private:
   std::array<uint8_t, 6> _mac{};
   std::string _name;
   alignas(8) unsigned char _read_ov[64] = {};
+  unsigned _write_threads = 0;
 
   std::array<std::thread, kWriterThreads> _writers;
   std::array<WriteCtx, kWriterThreads> _write_ctx{};

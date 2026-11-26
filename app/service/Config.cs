@@ -48,11 +48,12 @@ public sealed class ServiceConfig
     /// </summary>
     public bool HighThroughput { get; set; }
     /// <summary>
-    /// Experimental RX Block Ack reordering for the Intel station (radio sta.conf ba=1):
-    /// the AP may aggregate unicast QoS data and the radio reorders the 64-slot window.
-    /// On by default: it is the fix for Concurrent mode collapsing to single frames (#71).
+    /// Experimental station data-plane acceleration. It turns on both Intel
+    /// RX Block Ack reordering (sta.conf ba=1) and the two TAP writer threads
+    /// (sta.conf tap_writers=2). Off by default: it can raise multi-connection
+    /// throughput to 150–200 Mbps, but adds TAP queueing jitter and CPU use.
     /// </summary>
-    public bool RxBlockAck { get; set; } = true;
+    public bool DataPlaneAccel { get; set; }
     /// <summary>
     /// The user's manual choice when the card is not recognized by its ID
     /// (Settings, "Wi-Fi card"): its PCI hardware ID ("PCI\VEN_xxxx&amp;DEV_yyyy")

@@ -57,7 +57,7 @@ public partial class SettingsWindow : Window
         FastUnlockBox.IsChecked = (bool?)A.Service.Last?["fastUnlock"] ?? false;
         CoexPlanBox.IsChecked = (bool?)A.Service.Last?["coexPlan"] ?? false;
         HighThroughputBox.IsChecked = (bool?)A.Service.Last?["highThroughput"] ?? false;
-        RxBlockAckBox.IsChecked = (bool?)A.Service.Last?["rxBlockAck"] ?? true;
+        DataPlaneAccelBox.IsChecked = (bool?)A.Service.Last?["dataPlaneAccel"] ?? false;
         BleStandbyBox.IsChecked = s.BleStandby;
         CheckUpdatesBox.IsChecked = s.CheckUpdates;
         PreviewUpdatesBox.IsChecked = s.PreviewUpdates;
@@ -362,8 +362,8 @@ public partial class SettingsWindow : Window
         if (coexPlan != ((bool?)A.Service.Last?["coexPlan"] ?? false)) A.Service.SetCoexPlan(coexPlan);
         var highThroughput = HighThroughputBox.IsChecked == true;
         if (highThroughput != ((bool?)A.Service.Last?["highThroughput"] ?? false)) A.Service.SetHighThroughput(highThroughput);
-        var rxBlockAck = RxBlockAckBox.IsChecked == true;
-        if (rxBlockAck != ((bool?)A.Service.Last?["rxBlockAck"] ?? true)) A.Service.SetRxBlockAck(rxBlockAck);
+        var dataPlaneAccel = DataPlaneAccelBox.IsChecked == true;
+        if (dataPlaneAccel != ((bool?)A.Service.Last?["dataPlaneAccel"] ?? false)) A.Service.SetDataPlaneAccel(dataPlaneAccel);
         A.Window?.FolderChanged();
         var hotkeyTaken = hotkeyChanged && !A.ApplyHotkey();
         if (receiveChanged || mediaChanged || bleStandbyChanged) A.RestartEngine();

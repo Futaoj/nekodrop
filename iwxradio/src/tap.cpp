@@ -156,7 +156,7 @@ bool TapAdapter::open(const std::string &wanted, std::string &error) {
   _read_event = CreateEventA(nullptr, TRUE, FALSE, nullptr);
   for (unsigned i = 0; i < kWriterThreads; i++) {
     _write_ctx[i].event = CreateEventA(nullptr, TRUE, FALSE, nullptr);
-    _writers[i] = std::thread(&TapAdapter::write_loop, this, i);
+    if (i < _write_threads) _writers[i] = std::thread(&TapAdapter::write_loop, this, i);
   }
   _read_buf.resize(2048);
   _write_buf.reserve(2048);
@@ -198,7 +198,7 @@ bool TapAdapter::read(std::vector<uint8_t> &frame, unsigned timeout_ms) {
 bool TapAdapter::write(const uint8_t *frame, size_t len) {
   if (!_handle) return false;
   _write_buf.assign(frame, frame + len);
-  return enqueue_buffered();
+  return _write_threads ? enqueue_buffered() : write_direct();
 }
 
 bool TapAdapter::write_eth(const uint8_t *da, const uint8_t *sa, uint16_t ethertype,
@@ -210,7 +210,11 @@ bool TapAdapter::write_eth(const uint8_t *da, const uint8_t *sa, uint16_t ethert
   _write_buf[12] = static_cast<uint8_t>(ethertype >> 8);
   _write_buf[13] = static_cast<uint8_t>(ethertype);
   if (len) std::memcpy(_write_buf.data() + 14, payload, len);
-  return enqueue_buffered();
+  return _write_threads ? enqueue_buffered() : write_direct();
+}
+
+bool TapAdapter::write_direct() {
+  return write_one(_write_buf, _write_ctx[0]);
 }
 
 bool TapAdapter::enqueue_buffered() {
@@ -246,7 +250,7 @@ void TapAdapter::write_loop(unsigned index) {
   }
 }
 
-void TapAdapter::write_one(const std::vector<uint8_t> &frame, WriteCtx &ctx) {
+bool TapAdapter::write_one(const std::vector<uint8_t> &frame, WriteCtx &ctx) {
   const auto started = std::chrono::steady_clock::now();
   auto *ov = reinterpret_cast<OVERLAPPED *>(ctx.ov);
   std::memset(ov, 0, sizeof(*ov));
@@ -271,4 +275,5 @@ void TapAdapter::write_one(const std::vector<uint8_t> &frame, WriteCtx &ctx) {
   _write_stats.total_us += static_cast<uint64_t>(us);
   if (static_cast<uint64_t>(us) > _write_stats.max_us) _write_stats.max_us = static_cast<uint64_t>(us);
   if (!ok) _write_stats.failed++;
+  return ok;
 }
