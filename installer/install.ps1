@@ -426,8 +426,19 @@ if ((Get-Item -LiteralPath $LogDir -Force).Attributes -band [IO.FileAttributes]:
 & icacls.exe $LogDir /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" | Out-Null
 Remove-Item (Join-Path $LogDir 'install-error.txt') -ErrorAction SilentlyContinue
 if (-not $DryRun) { Start-Transcript (Join-Path $LogDir 'install.log') -Force | Out-Null }
+$script:ServiceWasRunning = $false
 trap {
   $_ | Out-String | Set-Content (Join-Path $LogDir 'install-error.txt') -Encoding utf8
+  # If an upgrade stopped an already-running service and then failed later
+  # (e.g. driver signing), restart the service so a working install isn't left dead (#73).
+  if (-not $DryRun -and $script:ServiceWasRunning) {
+    try {
+      $svc = Get-Service $Service -ErrorAction SilentlyContinue
+      if ($svc -and $svc.Status -ne 'Running') {
+        Start-Service $Service -ErrorAction SilentlyContinue
+      }
+    } catch { }
+  }
   if (-not $DryRun) { Stop-Transcript | Out-Null }
   exit 1
 }
@@ -479,7 +490,9 @@ function Stop-FromTarget {
   $ours
 }
 Step 'stop an earlier service' {
-  if (Get-Service $Service -ErrorAction SilentlyContinue) {
+  $existingSvc = Get-Service $Service -ErrorAction SilentlyContinue
+  if ($existingSvc) {
+    if ($existingSvc.Status -eq 'Running') { $script:ServiceWasRunning = $true }
     Stop-Service $Service -Force -ErrorAction SilentlyContinue
     # Stop-Service returns before the process is gone; wait for it.
     $deadline = (Get-Date).AddSeconds(20)
@@ -546,14 +559,37 @@ Step 'sign the register-proxy driver with a certificate made and trusted on this
     $public = Join-Path $driver 'nekodrop-signing.cer'
     Export-Certificate -Cert $cert -FilePath $public | Out-Null
     foreach ($store in $TrustStores) { Import-Certificate -FilePath $public -CertStoreLocation "Cert:\LocalMachine\$store" | Out-Null }
+    $signtool = Join-Path $Target 'shell\signtool.exe'
     foreach ($file in 'winawdl_regproxy.cat', 'winawdl_regproxy.dll') {
-      $r = Set-AuthenticodeSignature -FilePath (Join-Path $driver $file) -Certificate $cert -HashAlgorithm SHA256
-      if ($r.Status -ne 'Valid') { throw "$file could not be signed: $($r.StatusMessage)" }
+      $full = Join-Path $driver $file
+      $r = Set-AuthenticodeSignature -FilePath $full -Certificate $cert -HashAlgorithm SHA256
+      if ($r.Status -ne 'Valid') {
+        # Windows 11 25H2 (build 26200.9974+) can fail Set-AuthenticodeSignature on
+        # .cat files with 0xC0000225 even though signtool.exe signs them cleanly (#73).
+        if (Test-Path -LiteralPath $signtool) {
+          "    Set-AuthenticodeSignature failed on $file ($($r.Status): $($r.StatusMessage)); retrying with signtool.exe"
+          $stOut = & $signtool sign /fd SHA256 /s My /sha1 $cert.Thumbprint $full 2>&1
+          $stExit = $LASTEXITCODE
+          $v = Get-AuthenticodeSignature -FilePath $full
+          $stVerified = $false
+          if ($stExit -eq 0) {
+            if ($v.Status -eq 'Valid') {
+              $stVerified = $true
+            } else {
+              & $signtool verify /pa /q $full 2>&1 | Out-Null
+              if ($LASTEXITCODE -eq 0) { $stVerified = $true }
+            }
+          }
+          if ($stVerified) { continue }
+          $stMsg = ($stOut | Out-String).Trim()
+          throw "$file could not be signed: Set-AuthenticodeSignature=$($r.StatusMessage); signtool (exit $stExit, verify=$($v.Status)): $stMsg"
+        }
+        throw "$file could not be signed: $($r.StatusMessage)"
+      }
     }
     # The Explorer menu's sparse package (Windows 11 first level), same certificate.
     # Not fatal: the classic menu under "Show more options" works without it.
     $msix = Join-Path $Target 'shell\nekodrop-shell.msix'
-    $signtool = Join-Path $Target 'shell\signtool.exe'
     # An earlier registration was signed by the certificate just replaced: drop it,
     # each user's client registers the new one at its next start.
     Get-AppxPackage -AllUsers -Name nekodrop.shell -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
