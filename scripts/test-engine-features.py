@@ -139,6 +139,15 @@ class BeaconCoordinationTests(unittest.TestCase):
                 self.assertEqual(read_text(mode_file), 'standby')
             self.assertTrue(started[0].terminated)
 
+    def test_idle_peer_gone_does_not_repulse_ble(self):
+        engine_path = os.path.join(os.path.dirname(sender.__file__), 'engine.py')
+        with open(engine_path, encoding='utf-8') as handle:
+            src = handle.read()
+        self.assertNotIn("repulse_beacon('peer_gone')", src)
+        self.assertNotIn('standby_pulse=60', src)
+        self.assertIn("repulse_beacon('post_send')", src)
+        self.assertIn("repulse_beacon('send_refused')", src)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -58,7 +58,6 @@ public partial class SettingsWindow : Window
         CoexPlanBox.IsChecked = (bool?)A.Service.Last?["coexPlan"] ?? false;
         HighThroughputBox.IsChecked = (bool?)A.Service.Last?["highThroughput"] ?? false;
         DataPlaneAccelBox.IsChecked = (bool?)A.Service.Last?["dataPlaneAccel"] ?? false;
-        BleStandbyBox.IsChecked = s.BleStandby;
         CheckUpdatesBox.IsChecked = s.CheckUpdates;
         PreviewUpdatesBox.IsChecked = s.PreviewUpdates;
         DeleteInstallerBox.IsChecked = s.DeleteInstallerAfterInstall;
@@ -336,9 +335,6 @@ public partial class SettingsWindow : Window
         s.Hotkey = HotkeyBox.IsChecked == true;
         s.HotkeyKeys = _hotkeyKeys;
         s.ShowTransferSpeed = ShowSpeedBox.IsChecked == true;
-        var bleStandby = BleStandbyBox.IsChecked == true;
-        var bleStandbyChanged = bleStandby != s.BleStandby;
-        s.BleStandby = bleStandby;
         s.CheckUpdates = CheckUpdatesBox.IsChecked == true;
         s.PreviewUpdates = PreviewUpdatesBox.IsChecked == true;
         s.DeleteInstallerAfterInstall = DeleteInstallerBox.IsChecked == true;
@@ -366,7 +362,7 @@ public partial class SettingsWindow : Window
         if (dataPlaneAccel != ((bool?)A.Service.Last?["dataPlaneAccel"] ?? false)) A.Service.SetDataPlaneAccel(dataPlaneAccel);
         A.Window?.FolderChanged();
         var hotkeyTaken = hotkeyChanged && !A.ApplyHotkey();
-        if (receiveChanged || mediaChanged || bleStandbyChanged) A.RestartEngine();
+        if (receiveChanged || mediaChanged) A.RestartEngine();
         A.Window?.ShowMark();
         if (accentChanged) A.ApplyTheme();
         if (languageChanged) { A.ApplyLanguage(); Close(); return; }

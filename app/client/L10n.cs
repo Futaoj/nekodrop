@@ -285,8 +285,6 @@ public static class L
         ["set.dataPlaneAccel"] = ("实验性数据面加速（默认关闭）", "Experimental data-plane acceleration (off by default)"),
         ["set.dataPlaneAccel.short"] = ("多连接下载从关闭时约 20–45 Mbps 提升到 150–190 Mbps，40 条并发最高约 200 Mbps；单连接仍约 30 Mbps。风险：TAP 排队可能增加 10–20 ms 延迟抖动和 CPU 占用，个别网卡/AP 可能重传或短时断流；只改上网 station，不改 AirDrop listener，但暂无 iPhone 端 A/B。异常或 AirDrop 变慢请关闭。切换时 AirDrop 会重启几秒。",
                                     "Multi-connection downloads rise from about 20–45 Mbps when off to 150–190 Mbps, up to about 200 Mbps with 40 connections; one connection is still about 30 Mbps. Risks: TAP queueing can add 10–20 ms of latency jitter and CPU use, and some cards/APs may see retransmits or brief stalls. It only changes the internet station, not AirDrop's listener, but there is no iPhone-side A/B yet. Turn it off if transfers stall or AirDrop gets slower. AirDrop restarts for a few seconds when this changes."),
-        ["set.bleStandby"] = ("待机 BLE 广播（后台持续可被发现）", "Standby BLE beacon (advertise while receiving)"),
-        ["set.bleStandby.short"] = ("接收待命期间持续发送 AirDrop 蓝牙广播，无需打开主窗口也能让附近的 iPhone / Mac 发现本机（可能略微增加蓝牙功耗）。", "Keep advertising the AirDrop Bluetooth beacon while receiving in the background so nearby iPhones and Macs can see this PC without opening the window."),
         ["set.fastUnlock.short"] = ("网卡不接受国家码时更早扫描，尽快解锁 5 GHz 信道。", "Scans sooner, so a card that refuses the country can use 5 GHz earlier."),
         ["set.diagnostics"] = ("日志与故障排查", "Logs and troubleshooting"),
         ["set.checkNow"] = ("立即检查更新", "Check now"),
