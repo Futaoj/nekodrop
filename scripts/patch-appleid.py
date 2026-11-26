@@ -200,9 +200,9 @@ if CLIENT_MARK not in text:
 ///   3: Windows AuthKitWin + iCloud 15.3 (real Windows iCloud 15 header)
 pub const CLIENT_PROFILES: [(&str, &str); 4] = [
     ("7.21", CLIENT_INFO),
-    ("macos-akd", "<MacPro7,1> <Mac OS X;15.3.1;24D70> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"),
-    ("itunes", "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>"),
     ("icloud-15", "<PC> <Windows;10.0.26100;> <com.apple.AuthKitWin/1 (com.apple.iCloud/15.3.149)>"),
+    ("itunes", "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>"),
+    ("macos-akd", "<MacPro7,1> <Mac OS X;15.3.1;24D70> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"),
 ];
 static CLIENT_PROFILE_IDX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
@@ -220,8 +220,8 @@ pub fn set_client_profile_idx(idx: usize) {
 }
 
 pub fn set_client_profile_by_name(name: &str) -> bool {
-    // Migrate legacy "15.10" saved by earlier nekodrop versions to macos-akd.
-    let target = if name == "15.10" { "macos-akd" } else { name };
+    // Migrate legacy "15.10" saved by earlier nekodrop versions to icloud-15.
+    let target = if name == "15.10" { "icloud-15" } else { name };
     if let Some(idx) = CLIENT_PROFILES.iter().position(|(n, _)| *n == target) {
         set_client_profile_idx(idx);
         true
@@ -480,7 +480,11 @@ fn save_client_info(out: &Path, profile: &str) {
                 }
                 Err(e) => {
                     let retryable = e.contains("-27952")
-                        || (idx > 0 && (e.contains("HTTP 503") || e.contains("HTTP 403")));
+                        || e.contains("-23782")
+                        || (idx > 0
+                            && ["-80045", "-80009", "-22406", "-22410", "HTTP 503", "HTTP 403"]
+                                .iter()
+                                .any(|k| e.contains(k)));
                     if retryable && idx + 1 < gsa::CLIENT_PROFILES.len() {
                         let prev = gsa::client_profile_name();
                         idx += 1;
