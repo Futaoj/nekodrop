@@ -1,8 +1,49 @@
 # Changelog / 更新日志
 
 > Release channels / 发布通道：
-> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.2.13`**（首个稳定基线为 `v0.1.22`）。
+> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.3.1`**（首个稳定基线为 `v0.1.22`）。
 > - **Hourly（每时预览版 / Pre-release）**：持续迭代的预览版（客户端默认也会收到；取消勾选「包括预览版」就只收稳定版）；GitHub Releases 仅滚动保留最新 4 个每时版 + 稳定版（最多 5 个 Release），历史 Git Tag 全部保留。
+
+---
+
+## v2.3.1 (Stable / 稳定版)
+
+### 中文
+
+> 综合 `v2.2.14`–`v2.2.17` 全部实测验证改动的新稳定基线版本（替代 `v2.2.13`）。注：历史上曾短暂发布后回退的 `v2.3.0` Tag 予以保留不覆盖，因此正式稳定版编号为 **`v2.3.1`**，方便所有用户无缝升级。
+
+- **彻底修复亮屏 iPhone 被后台/挂机 BLE 唤醒拉断网**：
+  - 移除设置中的「待机 BLE 广播（`BleStandby`）」开关与后台 60 秒循环重脉冲（AirDrop BLE `0x05 0x12` 本质是发件方唤醒包，待机收件无需发送；后台定时重脉冲会反复把亮屏 iPhone 拉离路由器信道）；
+  - 移除发送窗口空闲挂机时 `peer_gone` 每 35 秒自动重脉冲，仅在打开发送窗口、连发预唤醒（`post_send`）及发送遇 `WinError 10061` 重试时触发精准唤醒，彻底杜绝干扰手机正常 Wi-Fi。
+- **传输提速与连发稳定性（AX201 实测连发 45.5 MB/s、零失败）**：
+  - 修复连发文件报 `WinError 10061` 发送失败（发送完成主动预唤醒 + 遇 10061 自动 12 秒内静默重试）；
+  - 单播速率阶梯（`RateLadder`）窗口减半至 16 帧，80 MHz 近距离高信号（`>= -54 / -46 dBm`）直接 VHT80 2SS 起步，TX A-MPDU 在收到 6 个大包（~9 KB）时立即触发，空闲保活 2.5 s（保留完整 `DELBA` 清理）；
+  - 修复 Intel 接收文件 30% 停滞 / HTTP 408（#91）：新增单播数据帧重传降速（降 2 档 → Legacy 24 Mb/s）及连续 4 帧失败/超时放弃立即降档。
+- **硬件与跨设备兼容性大幅增强**：
+  - **Intel AX203（`8086:7740`，Arrow Lake）** 正式支持并经实测双向收发正常（#84 / PR #90），严格隔离 Bz 与非 Bz 路径保护 AX200/AX201/AX210/AX211 零回归；
+  - **Intel 9462（1×1 SISO）** 自动识别单天线并关闭 2SS（#79）；
+  - **MT7922 / RZ616**：合入 PR #86（`MCU_UNI_CMD_SNIFFER 0x24` 修复并发扫描 0 beacon）、活跃传输期间后台扫描让渡至 15 秒（#54/#66/#87），以及 `<4 GiB` DMA 自适应分批重试与紧凑环回退（#87）；
+  - **`awdld` 协议兼容**：新增 `+HTC` 剥离与 Apple RFC 1042 封装 802.3 A-MSDU 解包，修复 iOS / iPadOS 26.x 大包 `PID 0x05ec`/`0x05df` 丢帧（#30/#66/#87/#88）；
+  - **合并 PR #92（@sh17632）**：支持可选环境变量 `NEKODROP_PIN_CHANNEL=<信道>` 用于固定信道/黑苹果 macOS 场景（#67）；
+  - **UI 与 Apple ID**：修复深色模式状态胶囊文字对比度；Apple ID 登录返回 `-22410` 时提示 FIDO 安全密钥改用「从 Mac 导入」（#89）。
+
+### English
+
+> New **Stable** baseline superseding `v2.2.13`, consolidating all live-verified fixes from `v2.2.14`–`v2.2.17` plus the BLE interference fix. (Versioned `v2.3.1` to preserve the historical `v2.3.0` tag untouched and guarantee seamless upgrades for everyone.)
+
+- **Stop pulling unlocked iPhones off Wi-Fi:**
+  - Removed the `BleStandby` UI toggle and its 60 s background BLE re-pulse loop (AirDrop BLE `0x05 0x12` is a sender wake packet, not needed for receiving in standby, and periodic rising edges repeatedly pulled nearby unlocked iPhones off their router channel);
+  - Removed idle `peer_gone` every-35 s BLE re-pulses while leaving intentional wake pulses for Send open, `post_send` back-to-back readiness, and `WinError 10061` send retries.
+- **Speed & back-to-back reliability (verified 45.5 MB/s back-to-back, 0 failures on AX201):**
+  - Fixed back-to-back send `WinError 10061` failures (`post_send` wake + 12 s auto-retry);
+  - Faster cold-start TX ramp (16-frame `RateLadder`, RSSI-seeded VHT80 2SS start at strong close-range RSSI, immediate TX A-MPDU entry at 6 payload frames / ~9 KB, 2.5 s idle DELBA grace);
+  - Fixed Intel RX 30% stall / HTTP 408 (#91) with per-retry TX rate fallback and immediate step-down on 4 consecutive failures or abandoned frames.
+- **Hardware & protocol compatibility:**
+  - Verified **Intel AX203 (`8086:7740`)** support with strict non-Bz fast-path isolation (#84 / PR #90) and **Intel 9462** 1×1 SISO detection (#79);
+  - **MT7922 / RZ616:** PR #86 (`MCU_UNI_CMD_SNIFFER 0x24`), 15 s background scan yield (#54/#66/#87), and `<4 GiB` DMA adaptive batch retry + compact-ring fallback (#87);
+  - **`awdld`:** `+HTC` stripping & RFC 1042 802.3 A-MSDU unwrapping (#30/#66/#87/#88);
+  - **PR #92 (@sh17632):** opt-in `NEKODROP_PIN_CHANNEL=<n>` (#67);
+  - **UI & Apple ID:** dark-mode status pill text contrast fix and localized `-22410` FIDO security-key guidance (#89).
 
 ---
 

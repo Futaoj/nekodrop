@@ -45,8 +45,6 @@ public sealed class Settings
     public string HotkeyKeys { get; set; } = NekoDrop.Hotkey.Default;
     /// <summary>Show live transfer speed (MB/s or KB/s) next to send and receive progress.</summary>
     public bool ShowTransferSpeed { get; set; } = true;
-    /// <summary>Experimental: keep the AirDrop BLE beacon advertising while receiving in standby (NEKODROP_BLE_STANDBY=1).</summary>
-    public bool BleStandby { get; set; }
     /// <summary>Experimental: use the Apple ID identity (AppleId) at all. Off, the engine stays anonymous (Everyone).</summary>
     public bool AppleIdOn { get; set; }
     /// <summary>Who may send to this PC: "everyone", or "contacts" (needs AppleIdOn and an identity, see AppleId).</summary>

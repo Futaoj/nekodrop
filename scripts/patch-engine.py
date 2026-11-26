@@ -1293,7 +1293,7 @@ _hook('engine.py', [
         "                     self.settings.port, self.settings.dest)" + NL +
         "        if os.environ.get('NEKODROP_BLE_STANDBY') == '1':" + NL +
         '            try:' + NL +
-        "                self.beacon = sender.Beacon(standby_pulse=60, role='standby')" + NL +
+        "                self.beacon = sender.Beacon(standby_pulse=0, role='standby')" + NL +
         '                self.beacon.__enter__()' + NL +
         '            except Exception as error:  # noqa: BLE001' + NL +
         "                logging.warning('standby beacon failed: %s', error)" + NL +
@@ -1588,14 +1588,6 @@ _hook('engine.py', [
         '                self._hold_until.pop(k, None)' + NL +
         '            if held:' + NL +
         '                located = {**located, **{k: (self._peers[k].address, self._peers[k].port) for k in held if k in self._peers and k not in located}}' + NL,
-    ),
-    (
-        '        for key in gone:' + NL +
-        "            self.events.say('peer_gone', id=key)" + NL,
-        '        for key in gone:' + NL +
-        "            self.events.say('peer_gone', id=key)" + NL +
-        '        if gone and not stop.is_set():' + NL +
-        "            self.repulse_beacon('peer_gone')" + NL,
     ),
     (
         "        except sender.Unreachable as error:" + NL +

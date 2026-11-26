@@ -269,8 +269,6 @@ public static class L
         ["set.coexPlan.short"] = ("nekodrop 连的 Wi-Fi 和 AirDrop 不在同一信道时，按苹果的方式分时。", "Apple-style time sharing when nekodrop's Wi-Fi is on another channel than AirDrop."),
         ["set.highThroughput"] = ("高吞吐模式（Wi-Fi 6 HE80 + MTU 1500）", "High-throughput mode (Wi-Fi 6 HE80 + MTU 1500)"),
         ["set.highThroughput.short"] = ("在 5 GHz 80 MHz 下启用 Wi-Fi 6 (HE80) 收发、RX A-MSDU 聚合，并将 awdl0 MTU 提至 1500（适合 AX200+/MT7922；如出现断流请关闭）。", "Enable Wi-Fi 6 (HE80) TX/RX, RX A-MSDU aggregation on 5 GHz 80 MHz, and raise awdl0 MTU to 1500 (for AX200+/MT7922; turn off if transfers stall)."),
-        ["set.bleStandby"] = ("待机 BLE 广播（后台持续可被发现）", "Standby BLE beacon (advertise while receiving)"),
-        ["set.bleStandby.short"] = ("接收待命期间持续发送 AirDrop 蓝牙广播，无需打开主窗口也能让附近的 iPhone / Mac 发现本机（可能略微增加蓝牙功耗）。", "Keep advertising the AirDrop Bluetooth beacon while receiving in the background so nearby iPhones and Macs can see this PC without opening the window."),
         ["set.fastUnlock.short"] = ("网卡不接受国家码时更早扫描，尽快解锁 5 GHz 信道。", "Scans sooner, so a card that refuses the country can use 5 GHz earlier."),
         ["set.diagnostics"] = ("日志与故障排查", "Logs and troubleshooting"),
         ["set.checkNow"] = ("立即检查更新", "Check now"),
