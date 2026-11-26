@@ -467,6 +467,9 @@ int main(int argc, char **argv) {
       std::string err;
       if constexpr (caps.supports_station) {
         if (sta_cfg.load(opt.sta_config, err)) {
+          if constexpr (std::is_same_v<Dev, IwxDevice>) {
+            if (!sta_cfg.block_ack.has_value()) sta_cfg.block_ack = dev.uses_mld_listener();
+          }
           sta_dev.emplace(dev);
           sta = std::make_unique<WifiStation>(*sta_dev, log_line);
         }

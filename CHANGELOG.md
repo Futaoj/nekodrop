@@ -1,8 +1,26 @@
 # Changelog / 更新日志
 
 > Release channels / 发布通道：
-> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.2.8`**（首个稳定基线为 `v0.1.22`）。
+> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.3.0`**（首个稳定基线为 `v0.1.22`）。
 > - **Hourly（每时预览版 / Pre-release）**：持续迭代的预览版（客户端默认也会收到；取消勾选「包括预览版」就只收稳定版）；GitHub Releases 仅滚动保留最新 4 个每时版 + 稳定版（最多 5 个 Release），历史 Git Tag 全部保留。
+
+---
+
+## v2.3.0 (Stable / 稳定版)
+
+### 中文
+
+- **Intel AX203**：加入 [#83](https://github.com/zheznanohana/nekodrop/pull/83) 的支持。贡献者在 AX203（8086:7740）与 Mac mini 上实测双向 AirDrop；iPhone 兼容性仍待验证。
+- **传输与搜索**：调整 Intel 接收帧重排和 AirDrop 数据解包，针对部分 iPhone、iPad 和 Mac 能发现却传不动的情况。MT7922 会在有 AirDrop 流量时推迟后台 Wi-Fi 扫描。([#30](https://github.com/zheznanohana/nekodrop/issues/30)、[#66](https://github.com/zheznanohana/nekodrop/issues/66)、[#79](https://github.com/zheznanohana/nekodrop/issues/79))
+- **待机广播**：开启待机蓝牙广播后，关闭窗口时也会定期重新广播。([#79](https://github.com/zheznanohana/nekodrop/issues/79))
+- **升级与界面**：带入近期预览版的安装签名回退、升级失败后的服务恢复、传输速度显示和深色状态文字修复。MT7921 / RZ608 仍只使用按需模式。
+
+### English
+
+- **Intel AX203:** includes [PR #83](https://github.com/zheznanohana/nekodrop/pull/83). The contributor verified two-way AirDrop with a Mac mini on AX203 (8086:7740); iPhone compatibility is still unverified.
+- **Transfers and discovery:** updated Intel receive reordering and AirDrop frame parsing. Background Wi-Fi scans on MT7922 yield to AirDrop traffic. ([#30](https://github.com/zheznanohana/nekodrop/issues/30), [#66](https://github.com/zheznanohana/nekodrop/issues/66), [#79](https://github.com/zheznanohana/nekodrop/issues/79))
+- **Standby discovery:** with the standby Bluetooth option enabled, periodic advertising restarts continue while the main window is closed. ([#79](https://github.com/zheznanohana/nekodrop/issues/79))
+- **Installation and UI:** includes preview improvements to installer signing, service recovery on an unsuccessful upgrade, transfer speed display, and dark-theme status text. MT7921 / RZ608 remains on-demand only.
 
 ---
 

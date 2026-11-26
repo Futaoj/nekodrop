@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -35,7 +36,7 @@ struct StaConfig {
    * BAID/NSSN as Linux does (rx_reorder.h). ba=0 declines them (status 37)
    * and the AP sends unaggregated, which costs the air the AWDL listener
    * shares with it (Concurrent mode). */
-  bool block_ack = true;
+  std::optional<bool> block_ack; /* unset: the active backend chooses */
 
   /* key=value lines: ssid, bssid, channel, passphrase, psk, open, tap, width, ba. */
   bool load(const std::string &path, std::string &error);

@@ -2500,6 +2500,8 @@ int IwxDevice::mld_link_modify(bool active, uint32_t modify_mask, const uint8_t 
   cmd.mac_id = htole32(0);
   cmd.phy_id = htole32(0);
   std::memcpy(cmd.local_link_addr, address ? address : _address.data(), 6);
+  /* Apply the EDCA values when the listener link is activated. */
+  if (active) modify_mask |= IWX_LINK_CONTEXT_MODIFY_QOS_PARAMS;
   cmd.modify_mask = htole32(modify_mask);
   cmd.active = htole32(active ? 1u : 0u);
   cmd.cck_rates = htole32(_channel <= 14 ? 0x0fu : 0u);
