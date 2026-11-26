@@ -610,9 +610,25 @@ bool MtkDevice::dma_enable(std::string &error) {
 }
 
 bool MtkDevice::dma_init(std::string &error) {
-  /* Need ~1065 4 KiB pages (< 5 MiB) below 4 GiB for 512-entry RX data + 256-entry TX + MCU rings. */
-  if (!_dma.init(2048, 1250, error)) return false;
-  log("32-bit DMA pool locked " + std::to_string(_dma.pages_locked()) + " pages (< 4 GiB)");
+  /* Full rings need ~1065 4 KiB pages (< 5 MiB) below 4 GiB (512 RX data +
+   * 256 TX data + 128 RX MCU WA + MCU/FWDL). On high-RAM PCs where < 4 GiB
+   * physical pages are fragmented (#87), fall back to compact rings (~610
+   * pages, min 720) so the radio still brings up cleanly. */
+  uint32_t tx_data_n = 256, rx_mcu_wa_n = 128, rx_data_n = 512;
+  if (!_dma.init(2048, 1250, error)) {
+    const std::string full_err = error;
+    if (!_dma.init(1024, 720, error)) {
+      error = full_err + "; compact rings fallback failed: " + error;
+      return false;
+    }
+    tx_data_n = 128;
+    rx_mcu_wa_n = 64;
+    rx_data_n = 256;
+    log("32-bit DMA pool using compact rings (" + std::to_string(_dma.pages_locked()) +
+        " pages < 4 GiB; full pool failed: " + full_err + ")");
+  } else {
+    log("32-bit DMA pool locked " + std::to_string(_dma.pages_locked()) + " pages (< 4 GiB)");
+  }
 
   /* Register crash-safe close-ops so RegProxy immediately disables interrupts,
    * stops WFDMA, holds WFDMA logic in reset, and holds WFSYS in reset if this
@@ -645,7 +661,7 @@ bool MtkDevice::dma_init(std::string &error) {
 
   if (!dma_disable(true, error)) return false;
 
-  if (!alloc_tx_ring(_tx_data, MT_TX_RING_BASE + MT7921_TXQ_BAND0 * MT_RING_STRIDE, 256, true,
+  if (!alloc_tx_ring(_tx_data, MT_TX_RING_BASE + MT7921_TXQ_BAND0 * MT_RING_STRIDE, tx_data_n, true,
                      error))
     return false;
   wr(MT_WFDMA0_TX_RING0_EXT_CTRL, 0x4);
@@ -658,8 +674,8 @@ bool MtkDevice::dma_init(std::string &error) {
     return false;
 
   if (!alloc_rx_ring(_rx_mcu, MT_RX_EVENT_RING_BASE, 16, error)) return false;
-  if (!alloc_rx_ring(_rx_mcu_wa, MT_RX_MCU_WA_RING_BASE, 128, error)) return false;
-  if (!alloc_rx_ring(_rx_data, MT_RX_DATA_RING_BASE, 512, error)) return false;
+  if (!alloc_rx_ring(_rx_mcu_wa, MT_RX_MCU_WA_RING_BASE, rx_mcu_wa_n, error)) return false;
+  if (!alloc_rx_ring(_rx_data, MT_RX_DATA_RING_BASE, rx_data_n, error)) return false;
 
   _dma.trim();
   log("WFDMA rings allocated (" + std::to_string(_dma.pages_used()) + " pages used)");
@@ -1594,6 +1610,24 @@ void MtkDevice::apply_rx_filter_mcu() {
   rxfilter_req.fif = MT7921_FILTER_ENABLE | MT7921_FILTER_OTHER_BSS;
   (void)mcu_send(MCU_CE_CMD_SET_RX_FILTER, 0, MCU_Q_SET, &rxfilter_req, sizeof(rxfilter_req),
                  false);
+
+  /* Enable Connac2 sniffer mode (MCU_UNI_CMD_SNIFFER = 0x24, tag 0 = UNI_SNIFFER_ENABLE)
+   * so MT7922 firmware forwards Beacons and Probe Responses to Host RX rings. */
+#pragma pack(push, 1)
+  struct {
+    uint8_t band_idx;
+    uint8_t pad[3];
+    uint16_t tag;
+    uint16_t len;
+    uint8_t enable;
+    uint8_t pad2[3];
+  } sniffer_req{};
+#pragma pack(pop)
+  sniffer_req.band_idx = 0;
+  sniffer_req.tag = 0; /* UNI_SNIFFER_ENABLE */
+  sniffer_req.len = 8;
+  sniffer_req.enable = 1;
+  (void)mcu_send_uni(0x24u, &sniffer_req, sizeof(sniffer_req), true);
 
   rxfilter_req = {};
   rxfilter_req.mode = 2;

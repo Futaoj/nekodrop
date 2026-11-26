@@ -1,6 +1,6 @@
 # AirDrop Throughput Testing
 
-[Back to README](../README.md) · [Client and service design](CLIENT.md) · [Wi-Fi card compatibility](COMPATIBILITY.md)
+[Back to README](../README.en.md) · [Client and service design](CLIENT.md) · [Wi-Fi card compatibility](COMPATIBILITY.md)
 
 This guide describes how to produce AirDrop throughput numbers that can be compared across modes, versions and machines. It is a testing method, not a promise of a particular speed.
 

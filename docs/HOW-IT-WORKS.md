@@ -1,6 +1,6 @@
 # How it works, status and building
 
-English · [简体中文](HOW-IT-WORKS.zh-CN.md) · [Back to README](../README.md)
+English · [简体中文](HOW-IT-WORKS.zh-CN.md) · [Back to README](../README.en.md)
 
 ## How it works
 

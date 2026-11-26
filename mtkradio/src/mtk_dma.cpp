@@ -71,28 +71,39 @@ bool DmaPool32::init(size_t want_pages, size_t min_pages, std::string &error) {
     max_high_pages = static_cast<size_t>((ms.ullAvailPhys * 85 / 100) / kPageBytes);
   }
 
-  constexpr size_t kBatchPages = 65536; /* 256 MiB per batch */
-  std::vector<ULONG_PTR> batch(kBatchPages);
+  constexpr size_t kMaxBatchPages = 65536; /* 256 MiB initial batch */
+  constexpr size_t kMinBatchPages = 1024;  /* 4 MiB fallback batch */
+  std::vector<ULONG_PTR> batch(kMaxBatchPages);
 
-  for (int round = 0; round < 256 && low_frames.size() < want_pages; round++) {
-    ULONG_PTR got = kBatchPages;
-    if (!AllocateUserPhysicalPages(GetCurrentProcess(), &got, batch.data()) || got == 0)
-      break;
-    for (ULONG_PTR i = 0; i < got; i++) {
-      if (batch[i] < kMaxPfn32)
-        low_frames.push_back(batch[i]);
-      else
-        high_frames.push_back(batch[i]);
+  for (int attempt = 0; attempt < 3 && low_frames.size() < min_pages; attempt++) {
+    if (attempt > 0) Sleep(200);
+    size_t batch_pages = kMaxBatchPages;
+    for (int round = 0; round < 256 && low_frames.size() < want_pages; round++) {
+      ULONG_PTR got = batch_pages;
+      if (!AllocateUserPhysicalPages(GetCurrentProcess(), &got, batch.data()) || got == 0) {
+        if (batch_pages > kMinBatchPages) {
+          batch_pages /= 2;
+          continue;
+        }
+        break;
+      }
+      for (ULONG_PTR i = 0; i < got; i++) {
+        if (batch[i] < kMaxPfn32)
+          low_frames.push_back(batch[i]);
+        else
+          high_frames.push_back(batch[i]);
+      }
+      if (high_frames.size() >= max_high_pages)
+        break;
     }
-    if (high_frames.size() >= max_high_pages)
-      break;
-  }
 
-  /* Release all >= 4 GiB frames immediately. */
-  if (!high_frames.empty()) {
-    ULONG_PTR n = high_frames.size();
-    FreeUserPhysicalPages(GetCurrentProcess(), &n, high_frames.data());
-    high_frames.clear();
+    /* Release all >= 4 GiB frames immediately before any retry so Windows can
+     * reclaim/coalesce low pages. */
+    if (!high_frames.empty()) {
+      ULONG_PTR n = high_frames.size();
+      FreeUserPhysicalPages(GetCurrentProcess(), &n, high_frames.data());
+      high_frames.clear();
+    }
   }
 
   if (low_frames.size() < min_pages) {

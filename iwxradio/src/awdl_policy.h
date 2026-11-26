@@ -245,7 +245,7 @@ inline size_t build_delba(uint8_t *out, const uint8_t *peer, const uint8_t *own,
  * DELBA (sent when its side times the session out) never arrives, and the
  * next send's frames went out as A-MPDUs the peer no longer accepted:
  * connection refused, then the peer gone until the radio restarted (#4). */
-constexpr uint64_t kBaTxIdleEndUS = 1500000;
+constexpr uint64_t kBaTxIdleEndUS = 2500000;
 inline bool ba_tx_session_idle(bool bulk, size_t waiting, unsigned queued, uint64_t last_agg_us, uint64_t agreed_us,
                                uint64_t now_us) {
   if (bulk || waiting || queued) return false;
@@ -345,16 +345,28 @@ struct UnicastRetry {
 
 /* Unicast data rate ladder: legacy 24, HT MCS 4, 5, 7 (20 MHz, 1 stream),
  * then VHT 80 MHz 2 streams MCS 4, 7 and 8 (with LDPC + SGI) while on 80 MHz.
- * Down after a window of 32 with over 20% failures, up after one with under 5%. */
+ * Down after a window of 16 with over 20% failures (or immediately after 4
+ * consecutive failures / an abandoned frame, #91), up after one with under 5%. */
 constexpr uint8_t kRateMcs[7] = {0, 4, 5, 7, 4, 7, 8};
 struct RateLadder {
   unsigned step = 0;
-  uint32_t ok = 0, failed = 0, ups = 0, downs = 0;
+  uint32_t ok = 0, failed = 0, consec_fail = 0, ups = 0, downs = 0;
   void note(bool acked, bool wide80) {
-    ++(acked ? ok : failed);
-    const uint32_t window = ok + failed;
-    if (window < 32) return;
     const unsigned top = wide80 ? 7u : 4u;
+    if (acked) {
+      ++ok;
+      consec_fail = 0;
+    } else {
+      ++failed;
+      if (++consec_fail >= 4 && step > 0) {
+        --step;
+        ++downs;
+        ok = failed = consec_fail = 0;
+        return;
+      }
+    }
+    const uint32_t window = ok + failed;
+    if (window < 16) return;
     if (failed * 5 > window && step > 0) {
       --step;
       ++downs;
@@ -363,9 +375,40 @@ struct RateLadder {
       ++ups;
     }
     if (step >= top) step = top - 1;
-    ok = failed = 0;
+    ok = failed = consec_fail = 0;
+  }
+  /* A unicast data frame timed out across all retries: drop quickly so a
+   * stalled link (e.g. TCP ACKs failing at VHT80 MCS 8, #91) recovers
+   * immediately instead of waiting for 16 first-attempt frames. */
+  void note_give_up() {
+    if (step > 0) {
+      step = step > 2 ? step - 2 : 0u;
+      ++downs;
+    }
+    ok = failed = consec_fail = 0;
   }
 };
+
+/* On 80 MHz with strong close-range RSSI from the peer's AWDL sync frames,
+ * seed the rate ladder directly into VHT80 2SS (step 4 = MCS 4 at >= -54 dBm,
+ * step 5 = MCS 7 at >= -46 dBm) so the very first transfer starts fast;
+ * weak signal or 20/40 MHz keeps the conservative base_step. */
+inline unsigned rssi_initial_rate_step(int dbm, bool wide80, unsigned base_step) {
+  if (!wide80 || dbm <= -120) return base_step;
+  unsigned want = base_step;
+  if (dbm >= -46) want = 5u;
+  else if (dbm >= -54) want = 4u;
+  return want > base_step ? want : base_step;
+}
+
+/* Per-retry rate fallback (#91): when a unicast data frame (such as a TCP ACK)
+ * fails at a high MCS, step down on retry 1 and fall back to robust Legacy 24
+ * (step 0) on retry 2+ so brief SNR dips never stall a transfer into HTTP 408. */
+inline unsigned retry_rate_step(unsigned current_step, unsigned attempts) {
+  if (attempts == 0) return current_step;
+  if (attempts == 1) return current_step > 2 ? current_step - 2 : 0u;
+  return 0u;
+}
 
 
 /* ---- Sending with Block Ack (experimental --aggregate), from ForbiddenItlwm's
@@ -429,33 +472,39 @@ inline size_t build_qos_data(const uint8_t *in, size_t length, uint8_t tid, uint
 /* The A-MPDU path only while a bulk send runs: short exchanges such as a
  * connection's setup stay on the monitor queue, where the host resends a
  * frame lost while the peer is away (the firmware's aggregate queue does
- * not, and those stalled through it upstream). Trigger aggressively (24
- * payload frames in 250 ms, ~35 KB) so even medium files enter A-MPDU fast. */
+ * not, and those stalled through it upstream). Trigger immediately once 6
+ * payload frames (~9 KB; 4 frames / ~6 KB if already agreed) arrive within
+ * 100 ms so the very first file upload enters A-MPDU in a few milliseconds. */
 constexpr uint64_t kBaTxCheckUS = 250000;
-constexpr uint32_t kBaTxBulkFrames = 24, kBaTxQuietFrames = 8, kBaTxQuietChecks = 4;
+constexpr uint64_t kBaTxEntryCheckUS = 100000;
+constexpr uint32_t kBaTxBulkFrames = 6, kBaTxQuietFrames = 8, kBaTxQuietChecks = 4;
 struct BaTxBulk {
   uint64_t last_us = 0;
   uint32_t last_frames = 0, quiet_checks = 0;
   bool bulk = false;
   /* `frames` counts payload-sized unicast data frames to the peer. True on a change. */
   bool note(uint64_t now_us, uint32_t frames, bool fast_entry) {
-    const bool short_sample = fast_entry && !bulk;
-    const uint64_t sample = short_sample ? 100000ULL : kBaTxCheckUS;
-    const uint32_t entry = short_sample ? 8u : kBaTxBulkFrames;
+    const uint64_t sample = !bulk ? kBaTxEntryCheckUS : kBaTxCheckUS;
+    const uint32_t entry = fast_entry ? 4u : kBaTxBulkFrames;
     if (!last_us) {
       last_us = now_us;
       last_frames = frames;
       return false;
     }
-    if (now_us - last_us < sample) return false;
     const uint32_t delta = frames - last_frames;
+    if (!bulk && delta >= entry) {
+      last_us = now_us;
+      last_frames = frames;
+      quiet_checks = 0;
+      bulk = true;
+      return true;
+    }
+    if (now_us - last_us < sample) return false;
     last_us = now_us;
     last_frames = frames;
     if (!bulk) {
       quiet_checks = 0;
-      if (delta < entry) return false;
-      bulk = true;
-      return true;
+      return false;
     }
     if (delta >= kBaTxQuietFrames) {
       quiet_checks = 0;

@@ -652,11 +652,11 @@ int main(int argc, char **argv) {
   auto scan_step = [&]() -> bool {
     const auto now = Clock::now();
     // A 9.6 s uninterrupted scan expired the AWDL peer in under 3 s, and
-    // cut active uploads in both directions (#54, #56). Check at start and
-    // during the home windows, before any further off-channel dwell.
+    // cut active uploads in both directions (#54, #56). Yield background scans
+    // for 15 s after AWDL data or while an active peer sync is fresh (#66, #87).
     const uint64_t t = now_us();
-    if (scan.background && (scan.next == 0 || scan.home) && last_awdl_data_us &&
-        t - last_awdl_data_us < 3000000u) {
+    if (scan.background && (scan.next == 0 || scan.home) &&
+        ((last_awdl_data_us && t - last_awdl_data_us < 15000000u) || sched.fresh(t))) {
       scan.active = false;
       log_line("scan: yielded to AirDrop traffic");
       log_line("event: scan-interrupted air-drop");

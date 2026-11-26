@@ -1,6 +1,6 @@
 # 代码来源、贡献者与许可
 
-[English](CREDITS.md) · 简体中文 · [返回 README](../README.zh-CN.md)
+[English](CREDITS.md) · 简体中文 · [返回 README](../README.md)
 
 ## 贡献者
 

@@ -225,6 +225,7 @@ public static class L
         ["aid.codeShort"] = ("验证码是 6 位数字", "The code has 6 digits"),
         ["aid.cancelled"] = ("已取消", "Cancelled"),
         ["aid.ended"] = ("登录没有完成", "The sign-in did not finish"),
+        ["aid.fidoHint"] = ("如果该 Apple ID 启用了 FIDO/硬件安全密钥，Apple 的传统 GSA 协议不支持安全密钥验证；请改用下方的「从 Mac 导入」配置身份证书。", "If this Apple ID uses FIDO/hardware security keys, Apple's legacy GSA sign-in does not support them; please use \"Import from a Mac\" below instead."),
         ["aid.noTool"] = ("这个版本没有附带 Apple ID 登录组件", "This build has no Apple ID sign-in"),
         ["aid.done"] = ("已登录，AirDrop 身份已生效", "Signed in; the AirDrop identity is in use"),
         ["aid.pickMac"] = ("选择 certificate.pem、key.pem、validation_record.cms 所在的文件夹", "Pick the folder with certificate.pem, key.pem and validation_record.cms"),

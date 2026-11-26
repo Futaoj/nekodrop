@@ -1,6 +1,6 @@
 # 使用指南
 
-[English](USAGE.md) · 简体中文 · [返回 README](../README.zh-CN.md)
+[English](USAGE.md) · 简体中文 · [返回 README](../README.md)
 
 ## 功能
 

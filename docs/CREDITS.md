@@ -1,6 +1,6 @@
 # Credits, contributors and license
 
-English · [简体中文](CREDITS.zh-CN.md) · [Back to README](../README.md)
+English · [简体中文](CREDITS.zh-CN.md) · [Back to README](../README.en.md)
 
 ## Contributors
 

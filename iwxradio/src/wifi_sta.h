@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -32,11 +33,9 @@ struct StaConfig {
   bool open = false;
   std::string tap;        /* TAP adapter name or GUID; empty: the first */
   unsigned max_width = 80;
-  /* Receive Block Ack sessions with the AP. Off by default: the Settings
-   * "experimental data-plane acceleration" switch turns it on together with
-   * the TAP writer threads. Without it requests are declined (status 37) and
-   * the AP sends unaggregated, losing A-MPDU gain. */
-  bool block_ack = false;
+  /* Receive Block Ack sessions with the AP. Unset: the active backend
+   * chooses; sta.conf writes 0/1 from the experimental data-plane switch. */
+  std::optional<bool> block_ack;
   /* 0: write TAP on the station RX thread. 2: queue and use two writer
    * threads, so the RX thread does not wait for TAP WriteFile. Same switch. */
   unsigned tap_writers = 0;

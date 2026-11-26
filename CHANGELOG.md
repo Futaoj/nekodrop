@@ -1,8 +1,76 @@
 # Changelog / 更新日志
 
 > Release channels / 发布通道：
-> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.2.8`**（首个稳定基线为 `v0.1.22`）。
+> - **Stable（稳定版 / Latest）**：长期保留、经过稳定基线锁定的版本。当前稳定版为 **`v2.2.13`**（首个稳定基线为 `v0.1.22`）。
 > - **Hourly（每时预览版 / Pre-release）**：持续迭代的预览版（客户端默认也会收到；取消勾选「包括预览版」就只收稳定版）；GitHub Releases 仅滚动保留最新 4 个每时版 + 稳定版（最多 5 个 Release），历史 Git Tag 全部保留。
+
+---
+
+## v2.2.17 (Preview / 预览版)
+
+### 中文
+
+- **修复 Intel 接收文件 30% 停滞 / HTTP 408（#91）**：新增单播数据帧重传降速（第 2 次重试降两档、第 3 次起回退至稳健的 Legacy 24 Mb/s），同时在连续 4 帧首传失败或出现帧超时放弃时立刻触发 `RateLadder` 降档，避免弱信号/干扰波动时 TCP ACK 死磕高阶 VHT80 MCS 8 导致传输卡死超时。
+- **首传极速冷启动优化（类 Apple 预热）**：80 MHz 下若对端近距离信号足够强（`awdl_dbm >= -54 dBm` 直接从 VHT80 2SS MCS 4 起步，`>= -46 dBm` 从 MCS 7 起步，弱信号或 20/40 MHz 仍保持保守起步）；同时将 TX A-MPDU 聚合触发门槛下调至 **6 个大包（~9 KB，约 1–2 ms 立即触发，不再空等 100 ms 窗口）**，空闲保活微调至 2.5 s（仍完整发送 `DELBA` 清理）。
+- **合并 PR #92（@sh17632）**：新增可选环境变量 `NEKODROP_PIN_CHANNEL=<信道>`，支持将 Intel 射频钉在指定监听信道（默认不设时行为完全不变），方便黑苹果/第三方无线驱动 macOS 场景与固定信道排查（#67）。
+- **MT7922 / RZ616 `<4 GiB` DMA 分配加固（#87）**：AWE 低地址物理页探测新增自适应分批减半与 3 轮重试，并在 `<4 GiB` 内存紧张时自动回退至紧凑环配置（256 RX / 128 TX，仅需 720 页而非 1250 页），显著降低大内存机器重启后报 `only N lockable pages below 4 GiB` 的概率。
+- **AX203 正式标记为已实测验证（#84 / PR #90）**：社区实测原版 v2.2.15 在 Arrow Lake AX203（`8086:7740`）上双向发现与收发均正常；同步在安装器支持网卡提示中补充列出 `AX203`。
+- **Apple ID FIDO 安全密钥登录提示（#89）**：当 Apple ID 登录返回 `-22410` 时，客户端直接补充中文/英文提示说明 Apple 传统 GSA 协议不支持硬件安全密钥，引导改用「从 Mac 导入」。
+
+### English
+
+- **Fix Intel RX mid-transfer stall / HTTP 408 (#91):** added per-retry unicast data rate fallback (drop 2 steps on retry 1, fall back to robust Legacy 24 Mb/s on retry 2+) and immediate `RateLadder` step-down after 4 consecutive first-attempt failures or any abandoned frame, preventing TCP ACKs from getting stuck retrying at VHT80 2SS MCS 8 during SNR dips.
+- **First-transfer instant max speed:** on 80 MHz, seed `RateLadder` initial step from peer AWDL RSSI (`>= -54 dBm` -> VHT80 2SS MCS 4; `>= -46 dBm` -> VHT80 2SS MCS 7; weak signal or 20/40 MHz stays conservative), and enter TX A-MPDU immediately once **6 payload frames (~9 KB)** arrive instead of waiting 100 ms; extended idle DELBA grace modestly from 1.5 s to 2.5 s.
+- **Merged PR #92 (@sh17632):** opt-in `NEKODROP_PIN_CHANNEL=<n>` environment variable in `iwxradio` to keep the radio pinned to a specific peer listen channel (zero impact when unset; helps hackintosh / third-party macOS Wi-Fi drivers and channel debugging, #67).
+- **MT7922 `<4 GiB` DMA hardening (#87):** adaptive batch halving + 3-attempt retry in `mtkradio`'s AWE allocator, plus automatic compact-ring fallback (256 RX / 128 TX, requiring 720 pages instead of 1250) when `<4 GiB` pages are tight.
+- **AX203 marked verified (#84 / PR #90):** promoted Arrow Lake AX203 (`8086:7740`) to `tested = true` following community bidirectional verification on v2.2.15, and listed `AX203` in `install.ps1`'s supported-card message.
+- **Apple ID FIDO security key hint (#89):** show a clear localized hint on `-22410` sign-in failures explaining that Apple's legacy GSA protocol does not support hardware security keys and directing users to "Import from a Mac".
+
+---
+
+## v2.2.16 (Preview / 预览版)
+
+### 中文
+
+- **修复连发文件报 `WinError 10061` 发送失败**：每次发送完成后立即主动触发一次 BLE 唤醒重脉冲（趁用户选下一个文件时提前唤醒 iPhone 已关闭的 8770 端口）；若连发撞上对端刚关端口（`10061`），自动重脉冲并每 1.5 秒静默重试（最多 12 秒）等待对端重开端口，不再直接秒报发送失败；真正失败时立即释放设备保活。
+- **更激进的发送速率爬升曲线**：单播速率阶梯（`RateLadder`）升档窗口从 32 帧减半至 **16 帧**（爬升速度翻倍），TX A-MPDU 聚合触发阈值从 250 ms / 24 帧收紧至 **100 ms / 12 帧（~18 KB）**，小/中文件也能瞬间切入 80 MHz 聚帧高速发送。
+
+### English
+
+- **Fix back-to-back send `WinError 10061` failure:** proactively trigger a BLE wake re-pulse right after `sent` finishes (waking iOS `sharingd`'s closed port 8770 before the next send); if a back-to-back send hits `WinError 10061` before `/Ask`, trigger BLE re-pulse and retry every 1.5 s for up to 12 s instead of failing immediately, and release the peer hold immediately on genuine failure.
+- **Faster TX ramp-up curve:** halved `RateLadder` step-up window from 32 to **16 frames** (2× faster climb to VHT80 2SS MCS 8) and tightened `BaTxBulk` A-MPDU entry from 250 ms / 24 frames to **100 ms / 12 frames (~18 KB)** so small and medium files enter A-MPDU almost immediately.
+
+---
+
+## v2.2.15 (Preview / 预览版)
+
+### 中文
+
+- **修复发完文件立刻断联**：批量发送结束后不再立即撤销设备保活，改为顺延 10 秒宽限期等待 mDNS 刷新，避免刚传完 0.15 秒就误报 `peer_gone`。
+- **修复待机蓝牙广播下的重连慢 / 重脉冲失效**：统一全进程为**唯一一个** WinRT BLE 广播器（杜绝 `Receiving` 与 `Looking` 同时跑两个广播互相掩盖 2.5 秒静默间隔的问题）；打开发送窗口接入待机广播时立刻执行一次完整的 2.5 秒停播再重启（`OFF → ON` 上升沿），并在发送窗口打开期间暂停 60 秒后台定时重脉冲。
+
+### English
+
+- **Fix immediate disconnect after sending:** keep the peer alive for a 10 s grace window after a transfer completes instead of dropping the hold immediately, preventing false `peer_gone` right after large sends.
+- **Fix slow rediscovery under Standby BLE:** coordinate a single process-wide WinRT BLE publisher so `repulse()` always creates a genuine 2.5 s silent gap over the air; attaching `Looking` to an existing standby beacon immediately triggers a fresh 2.5 s `OFF → ON` rising edge and pauses the 60 s background standby timer while the send window is open.
+
+---
+
+## v2.2.14 (Preview / 预览版)
+
+### 中文
+
+- **MT7922 / RZ616 并发扫描修复**：合并 [#86](https://github.com/zheznanohana/nekodrop/pull/86)（感谢 `@YiHoooong`），在 Connac2 固件开启 `MCU_UNI_CMD_SNIFFER (0x24)` 解决并发扫描 0 beacon 问题；同时在有 AirDrop 流量或活跃对端同步期间将后台扫描让渡 15 秒，避免中断传输触发 408 超时。([#54](https://github.com/zheznanohana/nekodrop/issues/54)、[#66](https://github.com/zheznanohana/nekodrop/issues/66)、[#87](https://github.com/zheznanohana/nekodrop/issues/87))
+- **Intel AX203（8086:7740）实验性支持（完全隔离至 Bz 路径）**：基于 [#83](https://github.com/zheznanohana/nekodrop/pull/83) / [#85](https://github.com/zheznanohana/nekodrop/pull/85) 重新合入，并修复了 `keep_on_channel()` 在非 Bz 网卡上返回 `true` 导致主循环 CPU 空转的严重问题，补齐 Bz 监听链路的 `IWX_LINK_CONTEXT_MODIFY_QOS_PARAMS` EDCA 应用标志，同时将 `RxReorder`、STA Block Ack 和中断掩码严格限定在 Bz 分支内，确保 AX200/AX201/AX210/AX211 路径与 v2.2.13 完全一致，且独立 BE200（`8086:272B`）不再触碰 CNVi AUX 寄存器。([#84](https://github.com/zheznanohana/nekodrop/issues/84)、[#53](https://github.com/zheznanohana/nekodrop/issues/53))
+- **新版 iOS / iPadOS 26.2 数据帧解包**：在 `awdld` 接收路径支持 `+HTC` 控制字段剥离及 Apple RFC 1042 封装的 802.3 A-MSDU 子帧解包（修复 `PID 0x05ec` / `0x05df` / `0x04c5` 大量 `unhandled frame` 丢帧问题）。([#30](https://github.com/zheznanohana/nekodrop/issues/30)、[#66](https://github.com/zheznanohana/nekodrop/issues/66)、[#87](https://github.com/zheznanohana/nekodrop/issues/87))
+- **Intel 9462 与待机蓝牙唤醒**：1×1 网卡（如 9462 `8086:06F0`）建 BA 站不再强制置 `MIMO2`；待机蓝牙广播每 60 秒以完整 2.5 秒停顿重脉冲，并保留打开发送窗口时的独立新唤醒边沿，在遇到对端 8770 端口拒连（`WinError 10061`）时也会按冷却时间自动重脉冲唤醒。([#79](https://github.com/zheznanohana/nekodrop/issues/79))
+
+### English
+
+- **MT7922 / RZ616 concurrent scan fix:** merged [PR #86](https://github.com/zheznanohana/nekodrop/pull/86) (thanks `@YiHoooong`) enabling `MCU_UNI_CMD_SNIFFER (0x24)` to fix 0-beacon scans, and extended background-scan yielding to 15 s around active AirDrop traffic or fresh peer sync. ([#54](https://github.com/zheznanohana/nekodrop/issues/54), [#66](https://github.com/zheznanohana/nekodrop/issues/66), [#87](https://github.com/zheznanohana/nekodrop/issues/87))
+- **Intel AX203 (8086:7740) experimental support (strictly Bz-isolated):** re-applied from [#83](https://github.com/zheznanohana/nekodrop/pull/83) / [#85](https://github.com/zheznanohana/nekodrop/pull/85) with critical isolation fixes: fixed `keep_on_channel()` busy-spinning non-Bz cards at 100% CPU, added missing `IWX_LINK_CONTEXT_MODIFY_QOS_PARAMS` for Bz listener EDCA, gated `RxReorder`, STA Block Ack, and Bz interrupt masks strictly to Bz so AX200/AX201/AX210/AX211 stay identical to v2.2.13, and guarded CNVi AUX access for discrete BE200 (`8086:272B`). ([#84](https://github.com/zheznanohana/nekodrop/issues/84), [#53](https://github.com/zheznanohana/nekodrop/issues/53))
+- **iOS / iPadOS 26.2 frame parsing:** added `+HTC` stripping and RFC 1042-encapsulated 802.3 A-MSDU unwrapping in `awdld` (`PID 0x05ec` / `0x05df` / `0x04c5` unhandled frame drops). ([#30](https://github.com/zheznanohana/nekodrop/issues/30), [#66](https://github.com/zheznanohana/nekodrop/issues/66), [#87](https://github.com/zheznanohana/nekodrop/issues/87))
+- **Intel 9462 & Standby BLE wake:** 1×1 cards (e.g. 9462 `8086:06F0`) no longer force `MIMO2` on BA stations; Standby BLE re-pulses every 60 s with a full 2.5 s stop gap while keeping independent fresh wake edges on send-window open and throttled re-pulses on `WinError 10061` refusal. ([#79](https://github.com/zheznanohana/nekodrop/issues/79))
 
 ---
 

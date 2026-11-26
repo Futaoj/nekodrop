@@ -1,6 +1,6 @@
 # Using nekodrop
 
-English · [简体中文](USAGE.zh-CN.md) · [Back to README](../README.md)
+English · [简体中文](USAGE.zh-CN.md) · [Back to README](../README.en.md)
 
 ## What it does
 

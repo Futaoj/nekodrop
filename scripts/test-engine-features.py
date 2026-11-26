@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import unittest
+from unittest import mock
 
 if len(sys.argv) < 2:
     sys.exit('usage: test-engine-features.py <patched airdrop dir> [unittest args]')
@@ -12,6 +13,7 @@ sys.path.insert(0, sys.argv[1])
 del sys.argv[1]
 
 import receiver  # noqa: E402
+import sender  # noqa: E402
 import transfer  # noqa: E402
 
 
@@ -77,6 +79,65 @@ class MediaCapabilitiesTests(unittest.TestCase):
         self.assertEqual(caps['Version'], 1)
         self.assertIn('hvc1', caps['Codecs'])
         self.assertIn('public.heic', caps['ContainerFormats'])
+
+
+class BeaconCoordinationTests(unittest.TestCase):
+    def setUp(self):
+        sender.Beacon._owner = None
+        sender.Beacon._refs = 0
+        sender.Beacon._looking_refs = 0
+
+    def tearDown(self):
+        sender.Beacon._owner = None
+        sender.Beacon._refs = 0
+        sender.Beacon._looking_refs = 0
+
+    def test_single_publisher_with_rising_edge_when_looking_joins_standby(self):
+        started = []
+
+        class FakeProc:
+            def __init__(self, env):
+                self.env = env
+                self.stdout = mock.Mock()
+                self.stdout.readline.return_value = sender.BEACON_READY + '\n'
+                self.terminated = False
+
+            def poll(self):
+                return 0 if self.terminated else None
+
+            def terminate(self):
+                self.terminated = True
+
+            def wait(self):
+                return 0
+
+        def fake_popen(cmd, **kwargs):
+            proc = FakeProc(kwargs.get('env', {}))
+            started.append(proc)
+            return proc
+
+        def read_text(path):
+            with open(path, encoding='ascii') as handle:
+                return handle.read().strip()
+
+        with mock.patch.object(sender.subprocess, 'Popen', side_effect=fake_popen):
+            with sender.Beacon(standby_pulse=60, role='standby') as standby:
+                self.assertEqual(len(started), 1)
+                mode_file = started[0].env['NEKODROP_BEACON_MODE']
+                pulse_file = started[0].env['NEKODROP_BEACON_PULSE']
+                self.assertEqual(read_text(mode_file), 'standby')
+                self.assertFalse(os.path.exists(pulse_file))
+                with sender.Beacon(role='looking') as looking:
+                    # Must NOT spawn a second WinRT BLE publisher, MUST switch mode to
+                    # looking, and MUST trigger a fresh 2.5 s rising-edge repulse.
+                    self.assertEqual(len(started), 1)
+                    self.assertTrue(looking.on)
+                    self.assertEqual(read_text(mode_file), 'looking')
+                    self.assertTrue(os.path.exists(pulse_file))
+                # Exiting looking restores standby mode without killing standby publisher.
+                self.assertFalse(started[0].terminated)
+                self.assertEqual(read_text(mode_file), 'standby')
+            self.assertTrue(started[0].terminated)
 
 
 if __name__ == '__main__':

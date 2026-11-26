@@ -108,6 +108,7 @@ int main(int argc, char **argv) {
       {0x51F0, 0x370, 0x1010d000, "iwlwifi-so-a0-gf4-a0-68.ucode", true, false, true},   /* AX411 */
       {0x272B, 0x470, 0x00112000, "iwlwifi-gl-c0-fm-c0-100.ucode", true, true, false},   /* BE200: discrete Gl/Fm */
       {0x272B, 0x470, 0x0010d000, nullptr, true, true, false},                           /* Gl with non-FM radio */
+      {0x7740, 0x460, 0x0010a000, "iwlwifi-bz-b0-hr-b0-100.ucode", true, true, true},     /* AX203 on Arrow Lake */
       {0x2726, 0x420, 0x0010d000, nullptr, true, false, true},                           /* SnJ: no firmware */
       {0x1234, 0x354, 0x0010a100, nullptr, false, false, true},
   };
@@ -127,6 +128,13 @@ int main(int argc, char **argv) {
       std::printf("FAIL BE200 transport parameters or family_device(\"be200\")\n");
       failures++;
     }
+  }
+  {
+    const CardInfo c = cards::select(0x7740, 0x460, 0x0010a000);
+    if (!c.known || !c.ax210 || !c.bz || !c.integrated || c.xtal_latency != 12000 ||
+        c.ltr_delay != IWX_SOC_FLAGS_LTR_APPLY_DELAY_2500 || !c.low_latency_xtal || !c.tested ||
+        c.pnvm != "iwlwifi-bz-b0-hr-b0.pnvm")
+      std::printf("FAIL AX203 (8086:7740) transport parameters, PNVM or tested flag\n"), failures++;
   }
   {
     const CardInfo c = cards::select(0x43F0, 0x354, 0x0010a100);
@@ -264,8 +272,9 @@ int main(int argc, char **argv) {
       CHECK(!awdl::ba_tx_session_idle(false, 3, 0, 1000000, 500000, 9000000), "BA session kept while frames wait");
       CHECK(!awdl::ba_tx_session_idle(false, 0, 1, 1000000, 500000, 9000000), "BA session kept while frames are queued");
       CHECK(!awdl::ba_tx_session_idle(false, 0, 0, 1000000, 500000, 2000000), "BA session kept 1 s after the last A-MPDU");
-      CHECK(awdl::ba_tx_session_idle(false, 0, 0, 1000000, 500000, 2600000), "BA session ended 1.6 s after the last A-MPDU");
-      CHECK(awdl::ba_tx_session_idle(false, 0, 0, 0, 500000, 2100000), "BA session with no A-MPDU ends 1.6 s after agreeing");
+      CHECK(!awdl::ba_tx_session_idle(false, 0, 0, 1000000, 500000, 3400000), "BA session kept 2.4 s after the last A-MPDU");
+      CHECK(awdl::ba_tx_session_idle(false, 0, 0, 1000000, 500000, 3600000), "BA session ended 2.6 s after the last A-MPDU");
+      CHECK(awdl::ba_tx_session_idle(false, 0, 0, 0, 500000, 3100000), "BA session with no A-MPDU ends 2.6 s after agreeing");
     }
     {
       /* --coex-plan (ForbiddenItlwm PR #30). */
@@ -357,21 +366,31 @@ int main(int argc, char **argv) {
     CHECK(bf.note(5000004, 43) && !bf.off, "three quiet seconds turn it back on");
 
     awdl::RateLadder rl;
-    for (int k = 0; k < 32; k++) rl.note(true, false);
-    CHECK(rl.step == 1, "32 clean frames step the rate up");
-    for (int k = 0; k < 32; k++) rl.note(k % 3 != 0, false);
+    for (int k = 0; k < 16; k++) rl.note(true, false);
+    CHECK(rl.step == 1, "16 clean frames step the rate up");
+    for (int k = 0; k < 16; k++) rl.note(k % 3 != 0, false);
     CHECK(rl.step == 0, "a third lost steps it back down");
-    for (int k = 0; k < 32 * 8; k++) rl.note(true, false);
+    for (int k = 0; k < 16 * 8; k++) rl.note(true, false);
     CHECK(rl.step == 3, "20 MHz tops out at HT MCS 7");
-    for (int k = 0; k < 32 * 8; k++) rl.note(true, true);
+    for (int k = 0; k < 16 * 8; k++) rl.note(true, true);
     CHECK(rl.step == 6, "80 MHz reaches VHT 2x2 MCS 8");
+    for (int k = 0; k < 4; k++) rl.note(false, true);
+    CHECK(rl.step == 5, "4 consecutive failures step down immediately (#91)");
+    rl.note_give_up();
+    CHECK(rl.step == 3, "abandoned unicast frame steps down by 2 (#91)");
+    CHECK(awdl::rssi_initial_rate_step(-42, true, 1) == 5, "strong 80 MHz RSSI (>=-46 dBm) seeds VHT80 MCS 7");
+    CHECK(awdl::rssi_initial_rate_step(-52, true, 1) == 4, "good 80 MHz RSSI (>=-54 dBm) seeds VHT80 MCS 4");
+    CHECK(awdl::rssi_initial_rate_step(-58, true, 1) == 1, "moderate/weak RSSI keeps conservative base step");
+    CHECK(awdl::rssi_initial_rate_step(-40, false, 1) == 1, "20/40 MHz keeps conservative base step");
+    CHECK(awdl::retry_rate_step(6, 0) == 6 && awdl::retry_rate_step(6, 1) == 4 && awdl::retry_rate_step(6, 2) == 0,
+          "retries fall back two steps then Legacy 24 (#91)");
 
     awdl::BaTxBulk bulk;
     bulk.note(1000000, 0, false);
-    CHECK(!bulk.note(1250000, 23, false) && !bulk.bulk, "BaTxBulk waits for 24 payload frames in 250 ms");
-    CHECK(bulk.note(1500000, 48, false) && bulk.bulk, "BaTxBulk triggers at 24+ payload frames in 250 ms");
-    for (int k = 1; k <= 3; k++) CHECK(!bulk.note(1500000 + uint64_t(k) * 250000, 48, false) && bulk.bulk, "BaTxBulk holds across brief quiet");
-    CHECK(bulk.note(2500000, 48, false) && !bulk.bulk, "BaTxBulk exits after 4 quiet windows (1 s)");
+    CHECK(!bulk.note(1005000, 5, false) && !bulk.bulk, "BaTxBulk waits for 6 payload frames");
+    CHECK(bulk.note(1006000, 6, false) && bulk.bulk, "BaTxBulk triggers immediately at 6+ payload frames");
+    for (int k = 1; k <= 3; k++) CHECK(!bulk.note(1006000 + uint64_t(k) * 250000, 6, false) && bulk.bulk, "BaTxBulk holds across brief quiet");
+    CHECK(bulk.note(2006000, 6, false) && !bulk.bulk, "BaTxBulk exits after 4 quiet windows (1 s)");
   }
 
   /* WPA2 crypto against published vectors. */

@@ -11,7 +11,7 @@ body:
         SSID、MAC 地址、内网 IP、用户名和电脑名会自动替换成占位符，发出前请先看一眼。0.1.6 及更早的版本：下载 [report.ps1](https://github.com/zheznanohana/nekodrop/blob/main/installer/report.ps1)，运行 `powershell -ExecutionPolicy Bypass -File report.ps1`。
         SSIDs, MAC and private IP addresses, your user name and computer name are replaced by placeholders; please look it over before posting. On 0.1.6 or older, download [report.ps1](https://github.com/zheznanohana/nekodrop/blob/main/installer/report.ps1) and run `powershell -ExecutionPolicy Bypass -File report.ps1`.
 
-        完整步骤 / Full steps: [README](https://github.com/zheznanohana/nekodrop/blob/main/README.zh-CN.md#反馈问题诊断报告) · [README (English)](https://github.com/zheznanohana/nekodrop#reporting-a-problem-the-diagnostic-report)
+        完整步骤 / Full steps: [诊断报告](https://github.com/zheznanohana/nekodrop/blob/main/docs/SUPPORT.zh-CN.md#反馈问题诊断报告) · [Diagnostic report (English)](https://github.com/zheznanohana/nekodrop/blob/main/docs/SUPPORT.md#reporting-a-problem-the-diagnostic-report)
   - type: input
     id: version
     attributes:

@@ -1,6 +1,6 @@
 # Troubleshooting, restore and diagnostic report
 
-English · [简体中文](SUPPORT.zh-CN.md) · [Back to README](../README.md)
+English · [简体中文](SUPPORT.zh-CN.md) · [Back to README](../README.en.md)
 
 ## Troubleshooting
 

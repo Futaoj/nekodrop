@@ -136,29 +136,52 @@ public static class AirDropBeaconWatch {
 
   # Optional re-pulse trigger file from sender.Beacon.repulse(): briefly stop
   # and restart advertising (2.5 s gap) so iOS sharingd sees a fresh BLE wake
-  # edge after a transfer ends instead of deduplicating the old continuous ad.
+  # edge instead of deduplicating the old continuous ad.
+  # Optional mode file (NEKODROP_BEACON_MODE): 'looking' suppresses periodic
+  # standby re-pulses while the Send window is active; 'standby' (default)
+  # re-pulses every NEKODROP_BEACON_STANDBY_S seconds with a full 2.5 s gap (#79).
   $pulseFile = $env:NEKODROP_BEACON_PULSE
+  $modeFile = $env:NEKODROP_BEACON_MODE
   $lastPulse = [DateTime]::MinValue
   if ($pulseFile -and (Test-Path -LiteralPath $pulseFile)) {
     try { $lastPulse = (Get-Item -LiteralPath $pulseFile -ErrorAction Stop).LastWriteTimeUtc } catch { }
   }
+  $standbyInterval = 0
+  if ($env:NEKODROP_BEACON_STANDBY_S) {
+    try { $standbyInterval = [int]$env:NEKODROP_BEACON_STANDBY_S } catch { $standbyInterval = 0 }
+  }
+  $nextStandbyPulse = if ($standbyInterval -gt 0) { (Get-Date).AddSeconds($standbyInterval) } else { [DateTime]::MaxValue }
   $ticks = 0
   while ($true) {
     Start-Sleep -Milliseconds 500
     $ticks++
     if (($ticks % 4) -eq 0 -and (Test-ParentGone)) { break }
+    $doPulse = $false
     if ($pulseFile -and (Test-Path -LiteralPath $pulseFile)) {
       $mt = [DateTime]::MinValue
       try { $mt = (Get-Item -LiteralPath $pulseFile -ErrorAction Stop).LastWriteTimeUtc } catch { }
       if ($mt -gt $lastPulse) {
         $lastPulse = $mt
-        try { if ($publisher) { $publisher.Stop() } } catch { }
-        for ($w = 0; $w -lt 5; $w++) {
-          if (Test-ParentGone) { break }
-          Start-Sleep -Milliseconds 500
-        }
+        $doPulse = $true
+      }
+    }
+    $isLooking = $false
+    if ($modeFile -and (Test-Path -LiteralPath $modeFile)) {
+      try { $isLooking = ((Get-Content -LiteralPath $modeFile -Raw -ErrorAction Stop).Trim() -eq 'looking') } catch { }
+    }
+    if (-not $doPulse -and -not $isLooking -and $standbyInterval -gt 0 -and (Get-Date) -ge $nextStandbyPulse) {
+      $doPulse = $true
+    }
+    if ($doPulse) {
+      try { if ($publisher) { $publisher.Stop() } } catch { }
+      for ($w = 0; $w -lt 5; $w++) {
         if (Test-ParentGone) { break }
-        $publisher = Start-AirDropPublisher
+        Start-Sleep -Milliseconds 500
+      }
+      if (Test-ParentGone) { break }
+      $publisher = Start-AirDropPublisher
+      if ($standbyInterval -gt 0) {
+        $nextStandbyPulse = (Get-Date).AddSeconds($standbyInterval)
       }
     }
   }
