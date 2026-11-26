@@ -220,6 +220,7 @@ void WifiStation::reset_join_state() {
   _last_reply.clear();
   _addba_answers.clear();
   _ba_token_valid = 0;
+  _rx_reorder.clear();
   _sae_step = SaeStep::None;
   _sae_token.clear();
   _sae_sc = 0;
@@ -321,8 +322,17 @@ bool WifiStation::owns(const RxFrame &f) const {
 
 void WifiStation::on_frame(const RxFrame &f) {
   const uint8_t type = f.data[0] & 0x0c;
-  if (type == 0x00) handle_mgmt(f);
-  else if (type == 0x08) handle_data(f);
+  if (type == 0x00) {
+    handle_mgmt(f);
+  } else if (type == 0x08) {
+    /* A-MPDU MPDUs arrive in hardware order. Reorder only our unicast QoS
+     * data while an RX Block Ack session is active; everything else takes the
+     * direct path. */
+    if ((f.data[4] & 1u) == 0 && std::memcmp(f.data + 4, _addr.data(), 6) == 0 &&
+        _rx_reorder.process(f, _now, [this](const RxFrame &rx) { handle_data(rx); }))
+      return;
+    handle_data(f);
+  }
 }
 
 /* ---------------------------------------------------------- management */
@@ -721,6 +731,7 @@ void WifiStation::handle_mgmt(const RxFrame &in) {
     const unsigned tid = params >> 12;
     if ((params & 0x0800) && tid < 8) {
       _dev.sta_remove_rx_ba(tid);
+      _rx_reorder.on_delba(_cfg.bssid, tid, [this](const RxFrame &rx) { handle_data(rx); });
       _ba_token_valid &= static_cast<uint8_t>(~(1u << tid));
       _log("station: the access point ended Block Ack on TID " + std::to_string(tid) + ", reason " +
            std::to_string(le16(f.data + 28)));
@@ -744,12 +755,19 @@ void WifiStation::handle_mgmt(const RxFrame &in) {
       _ba_ssn[tid] = r.ssn;
       _ba_window[tid] = r.window;
       _ba_token_valid |= static_cast<uint8_t>(1u << tid);
+      if (!same) {
+        /* New dialog: start the scoreboard at the AP's starting sequence. A
+         * repeated request keeps its buffered MPDUs. */
+        _rx_reorder.on_addba(_cfg.bssid, tid, r.ssn, r.window, _now,
+                             [this](const RxFrame &rx) { handle_data(rx); });
+      }
     } else {
       /* Declined: status 37 (request declined); the AP sends unaggregated.
        * Any session left for this TID goes too (round 2 #13). */
       a[27] = 37;
       a[28] = 0;
       _dev.sta_remove_rx_ba(r.tid);
+      _rx_reorder.on_delba(_cfg.bssid, r.tid, [this](const RxFrame &rx) { handle_data(rx); });
       _ba_token_valid &= static_cast<uint8_t>(~(1u << tid));
       if (_declined_ba++ < 3) _log("station: Block Ack request on TID " + std::to_string(r.tid) + " declined");
     }
@@ -1168,6 +1186,8 @@ void WifiStation::handle_eapol(const uint8_t *body, size_t len, bool encrypted) 
 
 void WifiStation::tick(uint64_t now_us) {
   _now = now_us;
+  /* Release a burst whose missing MPDU never arrived after the 40 ms window. */
+  _rx_reorder.flush_expired(now_us, [this](const RxFrame &rx) { handle_data(rx); });
   /* First tick after start() before _now was populated: anchor _state_since so
    * Listening genuinely waits for a beacon instead of timing out immediately. */
   if (_state != State::Idle && _state_since == 0) _state_since = now_us;

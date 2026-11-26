@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "iwx_rx_ba.h"
 #include "sta_device.h"
 #include "tap.h"
 #include "wpa3.h"
@@ -31,10 +32,11 @@ struct StaConfig {
   bool open = false;
   std::string tap;        /* TAP adapter name or GUID; empty: the first */
   unsigned max_width = 80;
-  /* Receive Block Ack sessions with the AP. Off by default until the host
-   * reorders by BAID/NSSN as Linux does: requests are declined (status 37)
-   * and the AP sends unaggregated (Codex review #24, agreed fix). */
-  bool block_ack = false;
+  /* Receive Block Ack sessions with the AP. On by default now that the station
+   * has a host-side reorder scoreboard: without it requests are declined
+   * (status 37) and the AP sends unaggregated, losing A-MPDU gain (Codex
+   * review #24, agreed fix). */
+  bool block_ack = true;
 
   /* key=value lines: ssid, bssid, channel, passphrase, psk, open, tap, width, ba. */
   bool load(const std::string &path, std::string &error);
@@ -186,6 +188,7 @@ private:
 
   std::deque<std::vector<uint8_t>> _addba_answers;
   uint16_t _mgmt_seq = 0;
+  iwx::RxBaReorder _rx_reorder;
   uint64_t _rx_packets = 0, _tx_packets = 0, _tx_unicast = 0, _rx_bytes = 0, _tx_bytes = 0;
   RxStats _rx;
 };
