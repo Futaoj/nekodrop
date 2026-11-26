@@ -89,11 +89,21 @@ Intel AX201、Windows 11、`v2.2.9+`，开启高吞吐模式（HE80 + MTU 1500�
 | [致谢](docs/CREDITS.zh-CN.md) | 贡献者、代码来源、许可证 |
 | [更新日志](CHANGELOG.md) | 版本历史 |
 
+## 交流群
+
+欢迎加入 nekodrop 用户 QQ 群：**1137780084**
+
+<p>
+  <img src="docs/community/qq-group.jpg" width="240" alt="nekodrop 用户 QQ 群二维码，群号 1137780084">
+</p>
+
+社区友链：[LINUX DO](https://linux.do/)。
+
 ## 贡献者
 
 感谢 [@BaiBaiAi](https://github.com/BaiBaiAi)、[@XXD051030](https://github.com/XXD051030)、[@GGBond-cer](https://github.com/GGBond-cer)、[@DaiJiequn](https://github.com/DaiJiequn)、[@sh17632](https://github.com/sh17632)、[@YiHoooong](https://github.com/YiHoooong)、[@Yanlyn](https://github.com/Yanlyn)，以及所有提交日志的朋友。每个人做了什么：[致谢](docs/CREDITS.zh-CN.md#贡献者)。
 
-欢迎在 [Issues](../../issues) 反馈问题，请附上[诊断报告](docs/SUPPORT.zh-CN.md#反馈问题诊断报告)。社区友链：[LINUX DO](https://linux.do/)。
+欢迎在 [Issues](../../issues) 反馈问题，请附上[诊断报告](docs/SUPPORT.zh-CN.md#反馈问题诊断报告)。
 
 ## 许可
 

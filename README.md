@@ -89,11 +89,21 @@ More screenshots and every feature: [Using nekodrop](docs/USAGE.md).
 | [Credits](docs/CREDITS.md) | Contributors, where the code comes from, licenses |
 | [Changelog](CHANGELOG.md) | Release history |
 
+## Community
+
+Join the nekodrop QQ group to chat with other users: **1137780084**
+
+<p>
+  <img src="docs/community/qq-group.jpg" width="240" alt="nekodrop QQ group QR code, group number 1137780084">
+</p>
+
+Community link: [LINUX DO](https://linux.do/).
+
 ## Contributors
 
 Thanks to [@BaiBaiAi](https://github.com/BaiBaiAi), [@XXD051030](https://github.com/XXD051030), [@GGBond-cer](https://github.com/GGBond-cer), [@DaiJiequn](https://github.com/DaiJiequn), [@sh17632](https://github.com/sh17632), [@YiHoooong](https://github.com/YiHoooong), [@Yanlyn](https://github.com/Yanlyn) and everyone who sent logs. What each of them did: [Credits](docs/CREDITS.md#contributors).
 
-Bug reports with a [diagnostic report](docs/SUPPORT.md#reporting-a-problem-the-diagnostic-report) are welcome in [Issues](../../issues). Community: [LINUX DO](https://linux.do/).
+Bug reports with a [diagnostic report](docs/SUPPORT.md#reporting-a-problem-the-diagnostic-report) are welcome in [Issues](../../issues).
 
 ## License
 
