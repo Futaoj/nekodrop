@@ -1,6 +1,6 @@
 # Wi-Fi Card Compatibility
 
-English · [简体中文](COMPATIBILITY.zh-CN.md) · [Back to README](../README.md) · [Architecture & Driver Roadmap](HARDWARE.md)
+English · [简体中文](COMPATIBILITY.zh-CN.md) · [Back to README](../README.en.md) · [Architecture & Driver Roadmap](HARDWARE.md)
 
 nekodrop drives the Wi-Fi chip directly from user mode so Windows can speak Apple's AWDL protocol natively. As nekodrop expands beyond Intel into multi-vendor cards, every card family uses a modular backend behind `CardCatalog` and `radio_backend.h`:
 

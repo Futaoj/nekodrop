@@ -152,7 +152,7 @@ There is no Windows toolchain on the maintainer's Mac; CI is the build.
 
 ## 7. Docs and release
 
-- `README.md` + `README.zh-CN.md` card table and badge, `docs/COMPATIBILITY*.md`, a `docs/<CARD>.md` for
+- `README.md` (中文) + `README.en.md` card table and badge, `docs/COMPATIBILITY*.md`, a `docs/<CARD>.md` for
   anything non-trivial (what's done, what needs hardware), `CHANGELOG.md` (one line per item: 新增 xx 支持).
 - Contributors section in both READMEs for whoever ported or tested it.
 - Release as a **preview** until a real card has run it; the notes ask owners for a diagnostic report and

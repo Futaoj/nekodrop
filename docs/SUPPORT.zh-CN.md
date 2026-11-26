@@ -1,6 +1,6 @@
 # 常见问题、一键回退与诊断报告
 
-[English](SUPPORT.md) · 简体中文 · [返回 README](../README.zh-CN.md)
+[English](SUPPORT.md) · 简体中文 · [返回 README](../README.md)
 
 ## 常见问题
 

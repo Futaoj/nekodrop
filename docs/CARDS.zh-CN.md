@@ -1,6 +1,6 @@
 # 支持的网卡与适配新网卡
 
-[English](CARDS.md) · 简体中文 · [返回 README](../README.zh-CN.md)
+[English](CARDS.md) · 简体中文 · [返回 README](../README.md)
 
 ## 支持的网卡
 

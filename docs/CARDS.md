@@ -1,6 +1,6 @@
 # Supported cards and adding new ones
 
-English · [简体中文](CARDS.zh-CN.md) · [Back to README](../README.md)
+English · [简体中文](CARDS.zh-CN.md) · [Back to README](../README.en.md)
 
 ## Supported hardware
 

@@ -1,6 +1,6 @@
 # 工作原理、进度与构建
 
-[English](HOW-IT-WORKS.md) · 简体中文 · [返回 README](../README.zh-CN.md)
+[English](HOW-IT-WORKS.md) · 简体中文 · [返回 README](../README.md)
 
 ## 工作原理
 
