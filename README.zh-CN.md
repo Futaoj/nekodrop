@@ -28,12 +28,12 @@
 
 ## 亮点
 
-- 🚀 **双向 53 MB/s**：Intel AX201 上 846 MB 文件约 16 秒传完，0 丢包（[详细数据](#速度)）。
-- 📶 **AirDrop 时照常上网**：一张网卡同时连 Wi-Fi 和跑 AirDrop。
-- 💻 **用你现有的网卡**：Intel AX200 / AX201 / AX210 / AX211 / 9560、Realtek RTL8852CE、MediaTek MT7902 / MT7921 / MT7922，不用买 USB 网卡（[全部网卡](#支持的网卡)）。
-- 📱 **像 Mac 一样用**：iPhone、iPad、Mac 的 AirDrop 列表里直接出现你的电脑；资源管理器右键 **用 nekodrop 发送**，或用 Windows 分享面板。
-- 👥 **仅限联系人**（实验性）：登录 Apple ID 或导入 Mac 证书（[怎么用](docs/USAGE.zh-CN.md#仅限联系人apple-id实验性)）。
-- 🛠️ **装上就不用管**：一个安装包、自动更新、服务自动恢复，出问题一键回退到 Windows 自带 Wi-Fi。
+- **双向 53 MB/s**：Intel AX201 上 846 MB 文件约 16 秒传完，0 丢包（[详细数据](#速度)）。
+- **AirDrop 时照常上网**：一张网卡同时连 Wi-Fi 和跑 AirDrop。
+- **用你现有的网卡**：Intel AX200 / AX201 / AX210 / AX211 / 9560、Realtek RTL8852CE、MediaTek MT7902 / MT7921 / MT7922，不用买 USB 网卡（[全部网卡](#支持的网卡)）。
+- **像 Mac 一样用**：iPhone、iPad、Mac 的 AirDrop 列表里直接出现你的电脑；资源管理器右键 **用 nekodrop 发送**，或用 Windows 分享面板。
+- **仅限联系人**（实验性）：登录 Apple ID 或导入 Mac 证书（[怎么用](docs/USAGE.zh-CN.md#仅限联系人apple-id实验性)）。
+- **装上就不用管**：一个安装包、自动更新、服务自动恢复，出问题一键回退到 Windows 自带 Wi-Fi。
 
 ## 速度
 
@@ -50,11 +50,11 @@ Intel AX201、Windows 11、`v2.2.9+`，开启高吞吐模式（HE80 + MTU 1500�
 
 | 厂商 | 型号 | 状态 |
 |---|---|---|
-| **Intel** | AX201 · AX200 · AX210 · AX211 · AX411 / Killer AX1690 · 9560 | ✅ 实测可用（AX201 作者实测，其余为用户反馈） |
-| **Intel** | BE200（Wi-Fi 7） | 🧪 实验性 |
-| **Realtek** | RTL8852CE | ✅ 用户实测，约 24.5 MB/s（按需接管） |
-| **MediaTek** | MT7902 | ✅ 双向实测，可同时连 Wi-Fi |
-| **MediaTek** | MT7922 / RZ616 · MT7921 / RZ608 | 🧪 实验性（MT7922 双向实测） |
+| **Intel** | AX201 · AX200 · AX210 · AX211 · AX411 / Killer AX1690 · 9560 | 实测可用（AX201 作者实测，其余为用户反馈） |
+| **Intel** | BE200（Wi-Fi 7） | 实验性 |
+| **Realtek** | RTL8852CE | 用户实测，约 24.5 MB/s（按需接管） |
+| **MediaTek** | MT7902 | 双向实测，可同时连 Wi-Fi |
+| **MediaTek** | MT7922 / RZ616 · MT7921 / RZ608 | 实验性（MT7922 双向实测） |
 
 表里没有的就是不支持（高通、博通、Intel BE201/BE211 等）。PCI ID、固件和每张卡的说明：**[网卡兼容性](docs/COMPATIBILITY.zh-CN.md)** · **[网卡状态与适配新网卡](docs/CARDS.zh-CN.md)**。
 
@@ -82,12 +82,12 @@ Intel AX201、Windows 11、`v2.2.9+`，开启高吞吐模式（HE80 + MTU 1500�
 
 | | |
 |---|---|
-| 📖 [使用指南](docs/USAGE.zh-CN.md) | 功能、安装细节、联网方式、Wi-Fi 加密、仅限联系人、实验性功能、更新、卸载 |
-| 🩺 [常见问题](docs/SUPPORT.zh-CN.md) | 常见问题、一键回退、诊断报告 |
-| 📡 [网卡兼容性](docs/COMPATIBILITY.zh-CN.md) · [网卡状态](docs/CARDS.zh-CN.md) | 每张卡的 PCI ID 和固件；怎么适配新网卡 |
-| ⚙️ [工作原理](docs/HOW-IT-WORKS.zh-CN.md) | 架构、开发进度、从源码构建 |
-| 🙏 [致谢](docs/CREDITS.zh-CN.md) | 贡献者、代码来源、许可证 |
-| 📝 [更新日志](CHANGELOG.md) | 版本历史 |
+| [使用指南](docs/USAGE.zh-CN.md) | 功能、安装细节、联网方式、Wi-Fi 加密、仅限联系人、实验性功能、更新、卸载 |
+| [常见问题](docs/SUPPORT.zh-CN.md) | 常见问题、一键回退、诊断报告 |
+| [网卡兼容性](docs/COMPATIBILITY.zh-CN.md) · [网卡状态](docs/CARDS.zh-CN.md) | 每张卡的 PCI ID 和固件；怎么适配新网卡 |
+| [工作原理](docs/HOW-IT-WORKS.zh-CN.md) | 架构、开发进度、从源码构建 |
+| [致谢](docs/CREDITS.zh-CN.md) | 贡献者、代码来源、许可证 |
+| [更新日志](CHANGELOG.md) | 版本历史 |
 
 ## 贡献者
 
