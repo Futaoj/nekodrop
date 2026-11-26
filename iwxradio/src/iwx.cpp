@@ -2478,6 +2478,22 @@ int IwxDevice::mld_link_add() {
 }
 
 int IwxDevice::mld_link_modify(bool active, uint32_t modify_mask, const uint8_t *address) {
+  /* EDCA defaults for a link (802.11-2016 table 9-137), firmware AC order.
+   * The listener needs them as much as a station link: with a Wi-Fi station
+   * time-sharing the radio, an AWDL link without EDCA/QoS parameters loses
+   * its transmit opportunities (Concurrent mode). */
+  struct Edca {
+    uint16_t cw_min, cw_max;
+    uint8_t aifsn;
+    uint16_t txop_32us;
+    uint8_t fifo;
+  };
+  static constexpr Edca kEdca[IWX_AC_NUM] = {
+      {15, 1023, 7, 0, IWX_GEN2_EDCA_TX_FIFO_BK},
+      {15, 1023, 3, 0, IWX_GEN2_EDCA_TX_FIFO_BE},
+      {7, 15, 2, 94, IWX_GEN2_EDCA_TX_FIFO_VI},
+      {3, 7, 2, 47, IWX_GEN2_EDCA_TX_FIFO_VO},
+  };
   iwx_link_config_cmd cmd{};
   cmd.action = htole32(IWX_FW_CTXT_ACTION_MODIFY);
   cmd.link_id = htole32(0);
@@ -2489,6 +2505,18 @@ int IwxDevice::mld_link_modify(bool active, uint32_t modify_mask, const uint8_t 
   cmd.cck_rates = htole32(_channel <= 14 ? 0x0fu : 0u);
   cmd.ofdm_rates = htole32(0x15u); /* 6, 12, 24 */
   cmd.short_slot = htole32(_channel > 14 ? 1u : 0u);
+  for (unsigned ac = 0; ac < IWX_AC_NUM; ac++) {
+    cmd.ac[ac].cw_min = htole16(kEdca[ac].cw_min);
+    cmd.ac[ac].cw_max = htole16(kEdca[ac].cw_max);
+    cmd.ac[ac].aifsn = kEdca[ac].aifsn;
+    cmd.ac[ac].fifos_mask = static_cast<uint8_t>(1u << kEdca[ac].fifo);
+    cmd.ac[ac].edca_txop = htole16(static_cast<uint16_t>(kEdca[ac].txop_32us * 32));
+  }
+  cmd.qos_flags = htole32(IWX_MAC_QOS_FLG_UPDATE_EDCA |
+                          (_width > 20 && _channel > 14 ? IWX_MAC_QOS_FLG_TGN : 0u));
+  cmd.bi = htole32(100);
+  cmd.dtim_interval = htole32(100);
+  cmd.spec_link_id = 0;
   return send_cmd(IWX_WIDE_ID(IWX_MAC_CONF_GROUP, IWX_LINK_CONFIG_CMD), &cmd, sizeof(cmd), false, nullptr);
 }
 
