@@ -410,7 +410,8 @@ private:
   unsigned _sta_tx_acked = 0, _sta_tx_failed = 0, _sta_tx_fail_logged = 0, _sta_tx_submitted = 0;
   bool _promisc = true;
   bool _ba_station = false;
-  uint8_t _ba_peer[6] = {}, _ba_tids = 0, _ba_token[8] = {};
+  uint8_t _ba_peer[6] = {}, _ba_tids = 0, _ba_token[8] = {},
+          _ba_baid[8] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
   /* Bz: one firmware station per AWDL Block Ack peer (IWX_BZ_PEER_STA_ID..),
    * so peers taking turns keep their sessions; the least recently used goes
    * when another arrives. */

@@ -105,6 +105,9 @@ public:
   bool start_monitor(uint8_t channel, unsigned width_mhz, const uint8_t address[6]);
   bool set_channel(uint8_t channel, unsigned width_mhz, uint8_t switch_reason = CH_SWITCH_NORMAL);
   bool set_address(const uint8_t address[6]);
+  /* Temporary Connac2 sniffer mode while scanning Wi-Fi channels so firmware
+   * delivers beacons/probe responses without altering steady-state RX (#66). */
+  bool set_scan_sniffer(bool enable);
 
   /* Second own address (own MAC 1, BSS 1) for the concurrent Wi-Fi station. */
   bool set_station_identity(const uint8_t addr[6], const uint8_t bssid[6]);
@@ -199,6 +202,8 @@ private:
   bool mcu_set_eeprom();
   bool mcu_set_chan_cmd(uint8_t ext_cid, uint8_t ch, unsigned width_mhz,
                         uint8_t switch_reason = CH_SWITCH_NORMAL);
+  bool sniffer_enable(bool enable);
+  bool sniffer_config(uint8_t ch, unsigned width_mhz);
   bool add_omac(uint8_t omac, const uint8_t addr[6], const uint8_t bssid[6], bool enable);
   void set_timing();
   void apply_rx_filter_mcu();
@@ -265,6 +270,7 @@ private:
   bool _tx_pending_kick = false;
   bool _fw_loaded = false;
   bool _rx_path_set = false;
+  bool _scan_sniffer = false;
 
   Ring _tx_data;
   Ring _tx_fwdl;

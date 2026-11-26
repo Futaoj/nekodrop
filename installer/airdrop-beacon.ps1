@@ -137,29 +137,44 @@ public static class AirDropBeaconWatch {
   # Optional re-pulse trigger file from sender.Beacon.repulse(): briefly stop
   # and restart advertising (2.5 s gap) so iOS sharingd sees a fresh BLE wake
   # edge after a transfer ends instead of deduplicating the old continuous ad.
+  # When standby mode is on (NEKODROP_BLE_STANDBY=1), also re-pulse every 45 s
+  # so nearby iPhones get a fresh BLE wake edge even with the UI closed (#79).
   $pulseFile = $env:NEKODROP_BEACON_PULSE
   $lastPulse = [DateTime]::MinValue
   if ($pulseFile -and (Test-Path -LiteralPath $pulseFile)) {
     try { $lastPulse = (Get-Item -LiteralPath $pulseFile -ErrorAction Stop).LastWriteTimeUtc } catch { }
   }
+  $standby = ($env:NEKODROP_BLE_STANDBY -eq '1')
+  $standbyInterval = 45
+  $nextStandbyPulse = (Get-Date).AddSeconds($standbyInterval)
   $ticks = 0
   while ($true) {
     Start-Sleep -Milliseconds 500
     $ticks++
     if (($ticks % 4) -eq 0 -and (Test-ParentGone)) { break }
+    $doPulse = $false
+    $pulseGapSteps = 5
     if ($pulseFile -and (Test-Path -LiteralPath $pulseFile)) {
       $mt = [DateTime]::MinValue
       try { $mt = (Get-Item -LiteralPath $pulseFile -ErrorAction Stop).LastWriteTimeUtc } catch { }
       if ($mt -gt $lastPulse) {
         $lastPulse = $mt
-        try { if ($publisher) { $publisher.Stop() } } catch { }
-        for ($w = 0; $w -lt 5; $w++) {
-          if (Test-ParentGone) { break }
-          Start-Sleep -Milliseconds 500
-        }
-        if (Test-ParentGone) { break }
-        $publisher = Start-AirDropPublisher
+        $doPulse = $true
       }
+    }
+    if (-not $doPulse -and $standby -and (Get-Date) -ge $nextStandbyPulse) {
+      $doPulse = $true
+      $pulseGapSteps = 1
+    }
+    if ($doPulse) {
+      try { if ($publisher) { $publisher.Stop() } } catch { }
+      for ($w = 0; $w -lt $pulseGapSteps; $w++) {
+        if (Test-ParentGone) { break }
+        Start-Sleep -Milliseconds 500
+      }
+      if (Test-ParentGone) { break }
+      $publisher = Start-AirDropPublisher
+      $nextStandbyPulse = (Get-Date).AddSeconds($standbyInterval)
     }
   }
   try { if ($publisher) { $publisher.Stop() } } catch { }

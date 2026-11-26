@@ -1322,21 +1322,77 @@ _hook('engine.py', [
 _hook('sender.py', [
     (
         'import subprocess' + NL,
-        'import subprocess' + NL + 'import tempfile' + NL,
+        'import subprocess' + NL + 'import tempfile' + NL + 'import threading' + NL,
     ),
     (
+        'class Beacon:' + NL +
+        '    """The Bluetooth advertisement that makes Apple devices nearby turn AWDL' + NL +
+        '    on and announce AirDrop. Windows PowerShell sends it: it reaches the' + NL +
+        '    Bluetooth API with nothing installed."""' + NL +
+        '' + NL +
+        '    def __init__(self, script=BEACON_SCRIPT):' + NL +
+        '        self.script = script' + NL +
+        '        self.process = None' + NL +
         '        self.on = False' + NL +
         "        self.said = ''  # why it is off" + NL,
+        'class Beacon:' + NL +
+        '    """The Bluetooth advertisement that makes Apple devices nearby turn AWDL' + NL +
+        '    on and announce AirDrop. Windows PowerShell sends it: it reaches the' + NL +
+        '    Bluetooth API with nothing installed."""' + NL +
+        '' + NL +
+        '    _shared_lock = threading.Lock()' + NL +
+        '    _shared_owner = None' + NL +
+        '    _shared_refs = 0' + NL +
+        '' + NL +
+        '    def __init__(self, script=BEACON_SCRIPT):' + NL +
+        '        self.script = script' + NL +
+        '        self.process = None' + NL +
         '        self.on = False' + NL +
         "        self.said = ''  # why it is off" + NL +
-        '        self._pulse_file = None  # nekodrop: BLE re-pulse trigger' + NL,
+        '        self._pulse_file = None  # nekodrop: BLE re-pulse trigger' + NL +
+        '        self._shared_proxy = False' + NL,
     ),
     (
+        '    def __enter__(self):' + NL +
+        "        shell = os.path.join(os.environ.get('SYSTEMROOT', r'C:\\Windows'), 'System32'," + NL +
+        "                             'WindowsPowerShell', 'v1.0', 'powershell.exe')" + NL +
+        '        try:' + NL +
+        '            # A PC that never ran a script of its own refuses script files; this' + NL +
+        '            # one is the project\'s, and the setting holds for this process only.' + NL +
         '            self.process = subprocess.Popen(' + NL +
         "                [shell, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass'," + NL +
         "                 '-File', self.script]," + NL +
         '                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,' + NL +
-        '                stderr=subprocess.STDOUT, text=True)' + NL,
+        '                stderr=subprocess.STDOUT, text=True)' + NL +
+        '            said = self.process.stdout.readline().strip()' + NL +
+        '        except OSError as error:' + NL +
+        '            said = str(error)' + NL +
+        '        self.on = said == BEACON_READY' + NL +
+        "        self.said = '' if self.on else said or 'no answer'" + NL,
+        '    def __enter__(self):' + NL +
+        "        standby = os.environ.get('NEKODROP_BLE_STANDBY') == '1'" + NL +
+        '        if standby:' + NL +
+        '            with Beacon._shared_lock:' + NL +
+        '                owner = Beacon._shared_owner' + NL +
+        '                alive = (owner is not None and owner.on and' + NL +
+        '                         (owner.process is None or owner.process.poll() is None))' + NL +
+        '                if alive:' + NL +
+        '                    Beacon._shared_refs += 1' + NL +
+        '                    self._shared_proxy = True' + NL +
+        '                    self.on = owner.on' + NL +
+        '                    self.said = owner.said' + NL +
+        '                    self.process = None' + NL +
+        '                    self._pulse_file = owner._pulse_file' + NL +
+        '                    return self' + NL +
+        '                return self._start_unlocked(register_shared=True)' + NL +
+        '        return self._start_unlocked(register_shared=False)' + NL +
+        '' + NL +
+        '    def _start_unlocked(self, register_shared=False):' + NL +
+        "        shell = os.path.join(os.environ.get('SYSTEMROOT', r'C:\\Windows'), 'System32'," + NL +
+        "                             'WindowsPowerShell', 'v1.0', 'powershell.exe')" + NL +
+        '        try:' + NL +
+        '            # A PC that never ran a script of its own refuses script files; this' + NL +
+        '            # one is the project\'s, and the setting holds for this process only.' + NL +
         "            self._pulse_file = os.path.join(tempfile.gettempdir(), f'nekodrop-beacon-{os.getpid()}-{id(self)}.pulse')" + NL +
         '            env = os.environ.copy()' + NL +
         "            env['NEKODROP_BEACON_PULSE'] = self._pulse_file" + NL +
@@ -1344,7 +1400,15 @@ _hook('sender.py', [
         "                [shell, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass'," + NL +
         "                 '-File', self.script]," + NL +
         '                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,' + NL +
-        '                stderr=subprocess.STDOUT, text=True, env=env)' + NL,
+        '                stderr=subprocess.STDOUT, text=True, env=env)' + NL +
+        '            said = self.process.stdout.readline().strip()' + NL +
+        '        except OSError as error:' + NL +
+        '            said = str(error)' + NL +
+        '        self.on = said == BEACON_READY' + NL +
+        "        self.said = '' if self.on else said or 'no answer'" + NL +
+        '        if register_shared and self.on:' + NL +
+        '            Beacon._shared_owner = self' + NL +
+        '            Beacon._shared_refs = 1' + NL,
     ),
     (
         '    def __exit__(self, *_):' + NL +
@@ -1353,6 +1417,10 @@ _hook('sender.py', [
         '            self.process.wait()' + NL,
         '    def repulse(self):' + NL +
         '        """Signal airdrop-beacon.ps1 to stop for 2.5 s and restart advertising."""' + NL +
+        '        if self._shared_proxy:' + NL +
+        '            with Beacon._shared_lock:' + NL +
+        '                owner = Beacon._shared_owner' + NL +
+        '            return owner.repulse() if owner and owner is not self else False' + NL +
         '        if not self.on or not self._pulse_file:' + NL +
         '            return False' + NL +
         '        try:' + NL +
@@ -1363,15 +1431,36 @@ _hook('sender.py', [
         '            return False' + NL +
         '' + NL +
         '    def __exit__(self, *_):' + NL +
-        '        if self.process:' + NL +
-        '            self.process.terminate()' + NL +
-        '            self.process.wait()' + NL +
-        '        if self._pulse_file:' + NL +
+        '        target = self' + NL +
+        "        if os.environ.get('NEKODROP_BLE_STANDBY') == '1' or self._shared_proxy or Beacon._shared_owner is self:" + NL +
+        '            with Beacon._shared_lock:' + NL +
+        '                if Beacon._shared_owner is self:' + NL +
+        '                    if Beacon._shared_refs > 1:' + NL +
+        '                        Beacon._shared_refs -= 1' + NL +
+        '                        return' + NL +
+        '                    Beacon._shared_refs = 0' + NL +
+        '                    Beacon._shared_owner = None' + NL +
+        '                elif self._shared_proxy:' + NL +
+        '                    self._shared_proxy = False' + NL +
+        '                    self._pulse_file = None' + NL +
+        '                    if Beacon._shared_refs > 1:' + NL +
+        '                        Beacon._shared_refs -= 1' + NL +
+        '                        return' + NL +
+        '                    Beacon._shared_refs = 0' + NL +
+        '                    target = Beacon._shared_owner' + NL +
+        '                    Beacon._shared_owner = None' + NL +
+        '                    if target is None:' + NL +
+        '                        return' + NL +
+        '        if target.process:' + NL +
+        '            target.process.terminate()' + NL +
+        '            target.process.wait()' + NL +
+        '            target.process = None' + NL +
+        '        if target._pulse_file:' + NL +
         '            try:' + NL +
-        '                os.unlink(self._pulse_file)' + NL +
+        '                os.unlink(target._pulse_file)' + NL +
         '            except OSError:' + NL +
         '                pass' + NL +
-        '            self._pulse_file = None' + NL,
+        '            target._pulse_file = None' + NL,
     ),
 ], 'NEKODROP_BEACON_PULSE')
 

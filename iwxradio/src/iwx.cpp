@@ -551,11 +551,12 @@ bool IwxDevice::start_hw() {
     return false;
   }
   clear_persistence_bit();
-  if (bz()) {
-    /* Bz needs MAC_INIT before nic_lock, so apm_init runs once before the
-     * reset and once after. The AUX bus is claimed for the MAC before the
-     * reset (Linux get_crf_id leaves it held), and the CNVi
-     * reports the MAC step that CSR_HW_REV does not carry on Bz. */
+  if (bz() && _integrated) {
+    /* Integrated Bz (CNVi, e.g. AX203) needs MAC_INIT before nic_lock, so
+     * apm_init runs once before the reset and once after. The AUX bus is
+     * claimed for the MAC before the reset (Linux get_crf_id leaves it held),
+     * and CNVI_AUX_MISC_CHIP reports the MAC step. Discrete BE200 (Gl,
+     * !_integrated) has no CNVi AUX block and carries its step in CSR_HW_REV. */
     if (!apm_init()) return false;
     if (!nic_lock()) {
       _log("Bz: MAC access failed before the reset");
@@ -856,8 +857,8 @@ bool IwxDevice::load_firmware(std::string &error) {
     auto &ctrl = scratch->ctrl_cfg;
     ctrl.version.version = 0;
     uint16_t mac_id = static_cast<uint16_t>(rd(IWX_CSR_HW_REV));
-    if (bz()) /* Linux info.hw_rev: CSR_HW_REV with the CNVi step OR-ed in */
-      mac_id = static_cast<uint16_t>(mac_id | _hw_rev_step);
+    if (bz() && _integrated) /* Linux info.hw_rev: CNVi MAC step from CNVI_AUX_MISC_CHIP */
+      mac_id = static_cast<uint16_t>((mac_id & ~0x3u) | (_hw_rev_step & 0x3u));
     ctrl.version.mac_id = htole16(mac_id);
     ctrl.version.size = htole16(sizeof(*scratch) / 4);
     const uint32_t rb_flag =
@@ -1332,6 +1333,7 @@ void IwxDevice::stop() {
   _use_mld = false;
   _ba_station = _agg_queue_enabled = _agg_active = false;
   _ba_tids = 0;
+  std::fill(std::begin(_ba_baid), std::end(_ba_baid), 0xffu);
   for (auto &p : _bz_peers) p = BzPeer{};
   _reorder.clear();
   _deferred_rx.clear();
@@ -1859,6 +1861,10 @@ bool IwxDevice::add_rx_ba(const uint8_t peer[6], unsigned tid, uint16_t ssn, uin
     cmd.modify_mask = IWX_STA_MODIFY_REMOVE_BA_TID;
     status = IWX_ADD_STA_SUCCESS;
     send_cmd_status(IWX_ADD_STA, &cmd, sizeof(cmd), &status);
+    if (_ba_baid[tid] < RxReorder::kMaxBaid) {
+      _reorder.close(_ba_baid[tid]);
+      _ba_baid[tid] = 0xff;
+    }
     _ba_tids &= static_cast<uint8_t>(~(1u << tid));
   }
   if (!((_ba_tids >> tid) & 1)) {
@@ -1878,10 +1884,20 @@ bool IwxDevice::add_rx_ba(const uint8_t peer[6], unsigned tid, uint16_t ssn, uin
       _log("Block Ack: session refused (err " + std::to_string(err) + ", status " + hex(status) + ")");
       return false;
     }
+    const uint8_t baid =
+        static_cast<uint8_t>((status & IWX_ADD_STA_BAID_MASK) >> IWX_ADD_STA_BAID_SHIFT);
+    if (_ba_baid[tid] < RxReorder::kMaxBaid && _ba_baid[tid] != baid) {
+      _reorder.close(_ba_baid[tid]);
+      _ba_baid[tid] = 0xff;
+    }
+    if (baid < RxReorder::kMaxBaid) {
+      _ba_baid[tid] = baid;
+      _reorder.open(baid, ssn, window);
+    }
     _ba_tids |= static_cast<uint8_t>(1u << tid);
     _ba_token[tid] = token;
-    _log("Block Ack: receive session open, tid " + std::to_string(tid) + ", window " +
-         std::to_string(window));
+    _log("Block Ack: receive session open (BAID " + std::to_string(baid) + "), tid " +
+         std::to_string(tid) + ", window " + std::to_string(window));
   }
   nic_unlock();
   return true;
@@ -1898,6 +1914,12 @@ bool IwxDevice::ensure_ba_station(const uint8_t peer[6]) {
     iwx_rm_sta_cmd rm{};
     rm.sta_id = kBaStation;
     send_cmd(IWX_REMOVE_STA, &rm, sizeof(rm), false, nullptr);
+    for (unsigned t = 0; t < 8; t++) {
+      if (_ba_baid[t] < RxReorder::kMaxBaid) {
+        _reorder.close(_ba_baid[t]);
+        _ba_baid[t] = 0xff;
+      }
+    }
     _ba_station = false;
     _ba_tids = 0;
     _agg_queue_enabled = false;
@@ -1912,7 +1934,10 @@ bool IwxDevice::ensure_ba_station(const uint8_t peer[6]) {
   std::memcpy(cmd.addr, peer, 6);
   cmd.tid_disable_tx = htole16(0xffff);
   const bool wide = _width >= 80 && _channel > 14;
-  uint32_t flags = (wide ? IWX_STA_FLG_FAT_EN_80MHZ : IWX_STA_FLG_FAT_EN_20MHZ) | IWX_STA_FLG_MIMO_EN_MIMO2;
+  const uint8_t rx_ant = valid_rx_ant();
+  const bool mimo2 = (rx_ant & (rx_ant - 1)) != 0; /* 1x1 cards (e.g. 9462) stay SISO (#79) */
+  uint32_t flags = (wide ? IWX_STA_FLG_FAT_EN_80MHZ : IWX_STA_FLG_FAT_EN_20MHZ) |
+                   (mimo2 ? IWX_STA_FLG_MIMO_EN_MIMO2 : 0u);
   uint32_t mask = IWX_STA_FLG_FAT_EN_MSK | IWX_STA_FLG_MIMO_EN_MSK;
   if (_aggq.count) {
     /* As ForbiddenItlwm adds the peer for sending: the largest aggregate the
@@ -2159,7 +2184,10 @@ bool IwxDevice::remove_rx_ba(unsigned tid, const uint8_t *peer) {
   uint32_t status = IWX_ADD_STA_SUCCESS;
   const int err = send_cmd_status(IWX_ADD_STA, &cmd, sizeof(cmd), &status);
   nic_unlock();
+  const uint8_t baid = _ba_baid[tid];
+  _ba_baid[tid] = 0xff;
   _ba_tids &= static_cast<uint8_t>(~(1u << tid));
+  if (baid < RxReorder::kMaxBaid) _reorder.close(baid);
   return err == 0;
 }
 

@@ -35,10 +35,11 @@ Get-Repo WirDrop https://github.com/JungyoKim/WirDrop.git 7c5308ca7fb9ee3d375e4c
 # does not carry: iwlwifi-bz-b0-hr-b0-100 (core 97, the newest for this RF; the
 # file's "100" is the packaging version) from linux-firmware (Intel licence).
 $fwDir = Join-Path $tp 'firmware'
+$lfwBz = '9473456ee8abc23c0ac1ef1d4982e4805f7b9b5f'
 New-Item -ItemType Directory -Force $fwDir | Out-Null
-Get-File 'https://gitlab.com/kernel-firmware/linux-firmware/-/raw/main/intel/iwlwifi/iwlwifi-bz-b0-hr-b0-100.ucode' `
+Get-File "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/$lfwBz/intel/iwlwifi/iwlwifi-bz-b0-hr-b0-100.ucode" `
          "$fwDir\iwlwifi-bz-b0-hr-b0-100.ucode" '589ACC51DD2753BE24C0355AF8074A72A43DBABCBF2A34D709F7D8AAE4FFC2ED'
-Get-File 'https://gitlab.com/kernel-firmware/linux-firmware/-/raw/main/intel/iwlwifi/iwlwifi-bz-b0-hr-b0.pnvm' `
+Get-File "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/$lfwBz/intel/iwlwifi/iwlwifi-bz-b0-hr-b0.pnvm" `
          "$fwDir\iwlwifi-bz-b0-hr-b0.pnvm" '9C6BFCD07D6E15711EB8E5E7ABA83018999C2D65079FE38997641001C0A46EEB'
 'iwlwifi-bz-b0-hr-b0-100.ucode + pnvm (Bz-hr, AX203)'
 
