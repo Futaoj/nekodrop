@@ -15,8 +15,8 @@
 
 <p align="center">
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-0078d4">
-  <img alt="speed" src="https://img.shields.io/badge/AirDrop-53%20MB%2Fs%20both%20ways-2ea44f">
-  <img alt="card" src="https://img.shields.io/badge/card-Intel%20%C2%B7%20Realtek%20%C2%B7%20MediaTek-6c5ce7">
+  <img alt="speed" src="docs/badges/speed.svg">
+  <img alt="card" src="docs/badges/card.svg">
   <img alt="license" src="https://img.shields.io/badge/license-GPL--2.0-blue">
 </p>
 
