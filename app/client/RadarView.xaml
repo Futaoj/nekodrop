@@ -164,7 +164,8 @@
             </Grid>
             <TextBlock Text="{Binding Name}" FontSize="12" FontWeight="SemiBold" TextAlignment="Center"
                        TextTrimming="CharacterEllipsis" Margin="2,4,2,0" ToolTip="{Binding Name}"/>
-            <TextBlock x:Name="status" Text="{Binding Status}" Style="{StaticResource StateText}" TextAlignment="Center" TextWrapping="Wrap" Margin="2,1,2,0"/>
+            <TextBlock x:Name="status" Text="{Binding Status}" Style="{StaticResource StateText}" TextAlignment="Center"
+                       TextWrapping="NoWrap" Margin="-20,1,-20,0" ToolTip="{Binding Status}"/>
           </StackPanel>
         </Button>
 

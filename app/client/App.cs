@@ -347,7 +347,7 @@ public sealed class App : Application
         Model.Update = "0.1.40";
         Motion.ForceOn = true;
         Model.Devices.Add(new Device { Id = "a", Name = "iPhone", Model = "iPhone15,2" });
-        Model.Devices.Add(new Device { Id = "b", Name = "MacBook Air", Model = "Mac14,2", Busy = true, Progress = 0.42, State = "sending", Status = L.F("send.sending", 0.42) });
+        Model.Devices.Add(new Device { Id = "b", Name = "MacBook Air", Model = "Mac14,2", Busy = true, Progress = 0.42, State = "sending", Status = $"{L.F("send.sending", 0.42)} · 48.5 MB/s" });
         Model.Devices.Add(new Device { Id = "c", Name = "iPad Pro", Model = "iPad14,5", State = "sent", Status = L.T("send.sent") });
         Model.Devices.Add(new Device { Id = "d", Name = "iPhone 15 Pro Max", Model = "iPhone16,2", State = "declined", Status = L.T("send.declined") });
         var asking = new Request { Id = "r", Sender = "iPhone", Model = "iPhone15,2", What = L.F("what.photos", 3) };
@@ -389,7 +389,7 @@ public sealed class App : Application
             ("wifi", () => { var w = new WifiWindow(); w.Render(wifiState); return w; }, 0),
             ("wifi-windows", () => { var w = new WifiWindow(); wifiState["mode"] = "ondemand"; w.Render(wifiState); return w; }, 0),
             ("tray", () => { var m = new TrayMenu(); m.Loaded += (_, _) => m.OpenModes(); return m; }, 0),
-            ("main-receiving", () => { Settings.DeviceView = "radar"; asking.Receiving = true; asking.Progress = 0.6; asking.Status = L.F("req.receivingPct", 0.6); return Main("ready"); }, 0),
+            ("main-receiving", () => { Settings.DeviceView = "radar"; asking.Receiving = true; asking.Progress = 0.6; asking.Status = $"{L.F("req.receivingPct", 0.6)} · 46.2 MB/s"; return Main("ready"); }, 0),
             ("main-done", () => { asking.Receiving = false; var w = Main("ready"); w.Loaded += (_, _) => Dispatcher.BeginInvoke(Model.RaiseStored); return w; }, 0),
             ("main-empty", () => { Settings.DeviceView = "radar"; Model.Devices.Clear(); Model.Requests.Clear(); return Main("ready"); }, 0),
             ("main-starting", () => Main("starting"), 0),

@@ -32,8 +32,8 @@ public readonly record struct RadarGeometry(Point Center, double Orbit, double I
         var byWidth = stage.Width / 2 - NodeWidth / 2 - 8;
         var byTop = stage.Height / 2 - Node / 2 - 8;
         var byBottom = (stage.Height / 2 - (NodeHeight - Node / 2) - 8) / 0.93;
-        // Never so small that the top device's name reaches the hub.
-        var orbit = Math.Max(Hub / 2 + NodeHeight - Node / 2 + 12, Math.Min(byWidth, Math.Min(byTop, byBottom)));
+        // Never so small that an upper device's status/speed line reaches the hub or its receiving ring.
+        var orbit = Math.Max(Hub / 2 + NodeHeight - Node / 2 + 18, Math.Min(byWidth, Math.Min(byTop, byBottom)));
         // Two guide rings as in the design (154 and 248 px there): the orbit and one inside it.
         return new RadarGeometry(center, orbit, orbit * 0.62, orbit * 1.05);
     }
