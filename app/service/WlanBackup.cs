@@ -129,6 +129,23 @@ public static class WlanBackup
         }
     }
 
+    /// <summary>
+    /// After the vendor driver gets the card back: restore the saved profiles,
+    /// then ask Windows to join its default saved network. Windows often stays
+    /// disconnected after a driver swap even with auto-connect profiles.
+    /// </summary>
+    public static void RestoreAndConnect(Action<string> say, string? preferredSsid = null)
+    {
+        Restore(say, TimeSpan.FromSeconds(60));
+        if (Wlan.Current(out _) is not null) return;
+        if (Wlan.WiredUp())
+        {
+            say("Wi-Fi: a wired connection is up; not reconnecting Windows to Wi-Fi");
+            return;
+        }
+        Wlan.ConnectDefault(say, preferredSsid);
+    }
+
     static int RestoreTo(IntPtr h, Guid guid, Action<string> say)
     {
         var have = ProfileNames(h, guid).Select(p => p.Name).ToHashSet(StringComparer.Ordinal);

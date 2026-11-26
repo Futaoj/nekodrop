@@ -600,8 +600,26 @@ void WifiStation::send_assoc() {
   }
   if (_ap_vht && _cfg.channel > 14) {
     /* VHT capabilities: short GI 80, 1 RX STBC stream, 1 MiB A-MPDU;
-     * MCS 0-9 on two streams. */
-    const uint8_t vht[14] = {191, 12, 0x20, 0x01, 0x80, 0x03, 0xfa, 0xff, 0, 0, 0xfa, 0xff, 0, 0};
+     * MCS 0-9 on two streams. Bits 2-3 of the capabilities info are the
+     * supported channel width: without setting 80 MHz here the AP can keep
+     * the station at 20/40 MHz even though the PHY and TLC are configured
+     * for 80 MHz. */
+    uint32_t vhtcap = 0x03800120u;
+    if (_ap_width >= 80) vhtcap |= 1u << 2;
+    const uint8_t vht[14] = {191,
+                             12,
+                             static_cast<uint8_t>(vhtcap),
+                             static_cast<uint8_t>(vhtcap >> 8),
+                             static_cast<uint8_t>(vhtcap >> 16),
+                             static_cast<uint8_t>(vhtcap >> 24),
+                             0xfa,
+                             0xff,
+                             0,
+                             0,
+                             0xfa,
+                             0xff,
+                             0,
+                             0};
     f.insert(f.end(), vht, vht + sizeof(vht));
   }
   if (_ap_wmm) {

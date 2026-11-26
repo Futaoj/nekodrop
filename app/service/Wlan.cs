@@ -97,7 +97,7 @@ public static class Wlan
     static readonly string[] NotWired = ["TAP-Windows", "Wintun", "WireGuard", "Remote NDIS", "Apple Mobile Device", "Bluetooth"];
 
     public sealed record SavedProfile(string Ssid, string? Passphrase, string? PskHex, bool Open,
-                                      bool AutoConnect = true, bool Hidden = false);
+                                      bool AutoConnect = true, bool Hidden = false, string Name = "");
 
     /// <summary>
     /// Every saved Wi-Fi profile Windows has that nekodrop's station can use
@@ -135,7 +135,7 @@ public static class Wlan
                     string xml;
                     try { xml = Marshal.PtrToStringUni(xmlPtr) ?? ""; }
                     finally { WlanFreeMemory(xmlPtr); }
-                    if (ParseProfile(xml) is { } p && result.All(r => r.Ssid != p.Ssid)) result.Add(p);
+                    if (ParseProfile(xml, name) is { } p && result.All(r => r.Ssid != p.Ssid)) result.Add(p);
                 }
             }
         }
@@ -143,7 +143,7 @@ public static class Wlan
         return result;
     }
 
-    static SavedProfile? ParseProfile(string xml)
+    static SavedProfile? ParseProfile(string xml, string name)
     {
         try
         {
@@ -155,14 +155,14 @@ public static class Wlan
             var autoConnect = doc.Descendants(ns + "connectionMode").FirstOrDefault()?.Value != "manual";
             var hidden = doc.Descendants(ns + "nonBroadcast").FirstOrDefault()?.Value == "true";
             if ((auth == "open" && doc.Descendants(ns + "encryption").FirstOrDefault()?.Value == "none") || auth == "OWE")
-                return new SavedProfile(ssid, null, null, true, autoConnect, hidden);
+                return new SavedProfile(ssid, null, null, true, autoConnect, hidden, name);
             if (auth is not ("WPA2PSK" or "WPAPSK" or "WPA3SAE")) return null; // enterprise: not yet
             var shared = doc.Descendants(ns + "sharedKey").FirstOrDefault();
             var key = shared?.Element(ns + "keyMaterial")?.Value;
             if (key is null || shared?.Element(ns + "protected")?.Value == "true") return null;
             return shared?.Element(ns + "keyType")?.Value == "networkKey" && key.Length == 64
-                ? new SavedProfile(ssid, null, key, false, autoConnect, hidden)
-                : new SavedProfile(ssid, key, null, false, autoConnect, hidden);
+                ? new SavedProfile(ssid, null, key, false, autoConnect, hidden, name)
+                : new SavedProfile(ssid, key, null, false, autoConnect, hidden, name);
         }
         catch (Exception) { return null; }
     }
@@ -254,7 +254,7 @@ public static class Wlan
     }
 
     /// <summary>Writes the radio's --sta-config file, readable by SYSTEM and Administrators only.</summary>
-    public static string WriteStaConfig(Network n)
+    public static string WriteStaConfig(Network n, bool rxBlockAck = true)
     {
         var dir = Path.Combine(ServiceConfig.Folder, "run");
         ServiceConfig.EnsureSecureDirectory();
@@ -264,6 +264,8 @@ public static class Wlan
         var lines = new List<string> { $"ssid={n.Ssid}", $"bssid={n.Bssid}", $"channel={n.Channel}" };
         // nekodrop's own TAP adapter (installer: DHCP on), never another VPN's.
         lines.Add("tap=nekodrop");
+        // The radio's default is on; write it explicitly so the settings switch can turn it off.
+        lines.Add(rxBlockAck ? "ba=1" : "ba=0");
         if (n.Open) lines.Add("open=1");
         else if (n.PskHex is not null) lines.Add($"psk={n.PskHex}");
         else lines.Add($"passphrase={n.Passphrase}");
@@ -281,9 +283,131 @@ public static class Wlan
         return path;
     }
 
+    /// <summary>
+    /// Asks Windows to join the saved network it would normally choose: the
+    /// preferred SSID if it is a saved auto-connect profile, otherwise the
+    /// first non-hidden auto-connect profile. Used after AirDrop gives the card
+    /// back, when Windows often sits disconnected until the user clicks Wi-Fi.
+    /// </summary>
+    public static bool ConnectDefault(Action<string> say, string? preferredSsid = null)
+    {
+        var profiles = SavedProfiles();
+        SavedProfile? pick = null;
+        if (!string.IsNullOrEmpty(preferredSsid))
+            pick = profiles.FirstOrDefault(p => p.AutoConnect && p.Ssid == preferredSsid)
+                ?? profiles.FirstOrDefault(p => p.Ssid == preferredSsid);
+        pick ??= profiles.FirstOrDefault(p => p.AutoConnect && !p.Hidden)
+              ?? profiles.FirstOrDefault(p => p.AutoConnect)
+              ?? profiles.FirstOrDefault(p => !p.Hidden)
+              ?? profiles.FirstOrDefault();
+
+        string? profileName = pick?.Name;
+        if (string.IsNullOrEmpty(profileName))
+        {
+            // A profile whose key Windows keeps protected is not in SavedProfiles;
+            // its name is still enough to ask Windows to connect to it.
+            if (Open(out var listHandle))
+            {
+                try
+                {
+                    if (FirstInterface(listHandle) is { } g)
+                    {
+                        var names = ProfileNames(listHandle, g);
+                        profileName = names.FirstOrDefault(n => string.Equals(n, preferredSsid, StringComparison.Ordinal))
+                            ?? names.FirstOrDefault();
+                    }
+                }
+                finally { WlanCloseHandle(listHandle, IntPtr.Zero); }
+            }
+        }
+        var wanted = pick?.Ssid ?? profileName;
+        if (string.IsNullOrEmpty(wanted) || string.IsNullOrEmpty(profileName))
+        {
+            say("Wi-Fi: no saved network to reconnect Windows to");
+            return false;
+        }
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        var said = false;
+        while (true)
+        {
+            if (Current(out _) is { } current)
+            {
+                say($"Wi-Fi: Windows is connected to \"{current.Ssid}\"" +
+                    (current.Ssid == wanted ? "" : $" (not \"{wanted}\"; leaving it)"));
+                return true;
+            }
+            if (Open(out var h))
+            {
+                try
+                {
+                    if (FirstInterface(h) is { } g)
+                    {
+                        var parameters = new WlanConnectionParameters
+                        {
+                            connectionMode = 0, // wlan_connection_mode_profile
+                            strProfile = profileName,
+                            pDot11Ssid = IntPtr.Zero,
+                            pDesiredBssidList = IntPtr.Zero,
+                            dot11BssType = 1, // infrastructure
+                        };
+                        if (!said)
+                        {
+                            say($"Wi-Fi: asking Windows to reconnect to \"{wanted}\"");
+                            said = true;
+                        }
+                        WlanConnect(h, ref g, ref parameters, IntPtr.Zero);
+                    }
+                }
+                finally { WlanCloseHandle(h, IntPtr.Zero); }
+            }
+            if (DateTime.UtcNow >= deadline) break;
+            Thread.Sleep(1000);
+        }
+        say($"Wi-Fi: Windows did not reconnect to \"{wanted}\" on its own");
+        return false;
+    }
+
+    static List<string> ProfileNames(IntPtr h, Guid guid)
+    {
+        var result = new List<string>();
+        if (WlanGetProfileList(h, ref guid, IntPtr.Zero, out var list) != 0) return result;
+        try
+        {
+            int n = Marshal.ReadInt32(list);
+            for (int i = 0; i < n; i++)
+                result.Add(Marshal.PtrToStringUni(list + 8 + i * 516, 256).TrimEnd('\0'));
+        }
+        finally { WlanFreeMemory(list); }
+        return result;
+    }
+
+    static bool Open(out IntPtr h) => WlanOpenHandle(2, IntPtr.Zero, out _, out h) == 0;
+
+    static Guid? FirstInterface(IntPtr h)
+    {
+        if (WlanEnumInterfaces(h, IntPtr.Zero, out var list) != 0) return null;
+        try { return Marshal.ReadInt32(list) == 0 ? null : Marshal.PtrToStructure<Guid>(list + 8); }
+        finally { WlanFreeMemory(list); }
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct WlanConnectionParameters
+    {
+        public int connectionMode;
+        public string? strProfile;
+        public IntPtr pDot11Ssid;
+        public IntPtr pDesiredBssidList;
+        public int dot11BssType;
+        public int dot11AuthAlgo;
+        public int dot11CipherAlgo;
+    }
+
     [DllImport("wlanapi.dll")] static extern int WlanOpenHandle(uint version, IntPtr reserved, out uint negotiated, out IntPtr handle);
     [DllImport("wlanapi.dll")] static extern int WlanCloseHandle(IntPtr handle, IntPtr reserved);
     [DllImport("wlanapi.dll")] static extern int WlanEnumInterfaces(IntPtr handle, IntPtr reserved, out IntPtr list);
+    [DllImport("wlanapi.dll", CharSet = CharSet.Unicode)] static extern int WlanConnect(IntPtr handle, ref Guid iface,
+        ref WlanConnectionParameters parameters, IntPtr reserved);
     [DllImport("wlanapi.dll")] static extern int WlanQueryInterface(IntPtr handle, ref Guid iface, int opcode, IntPtr reserved,
         out int size, out IntPtr data, out int type);
     [DllImport("wlanapi.dll", CharSet = CharSet.Unicode)] static extern int WlanGetProfile(IntPtr handle, ref Guid iface,

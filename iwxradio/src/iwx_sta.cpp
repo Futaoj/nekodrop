@@ -26,6 +26,11 @@ constexpr unsigned kStaPhy = 1;
 constexpr unsigned kStaBinding = 1;
 constexpr unsigned kStaLink = 1;
 
+/* Firmware without dynamic quota divides air time between bindings. Keep the
+ * station at two thirds so Concurrent download does not sit at one half. */
+constexpr uint32_t kStaQuota = IWX_MAX_QUOTA * 2 / 3;
+constexpr uint32_t kListenerQuota = IWX_MAX_QUOTA - kStaQuota;
+
 /* EDCA defaults for a station (802.11-2016 table 9-137), per firmware AC. */
 struct Edca {
   uint16_t cw_min, cw_max;
@@ -269,16 +274,16 @@ bool IwxDevice::sta_join(const StaParams &p) {
     else _sta_binding_added = true;
   }
   if (!err && !_fw.has_capa(IWX_UCODE_TLV_CAPA_DYNAMIC_QUOTA)) {
-    /* Air time halves between two bindings. */
+    /* Two thirds to the station, one third to the listener. */
     iwx_time_quota_cmd q{};
     for (unsigned i = 0; i < IWX_MAX_BINDINGS; i++) q.quotas[i].id_and_color = htole32(IWX_FW_CTXT_INVALID);
     q.quotas[0].id_and_color = htole32(IWX_FW_CMD_ID_AND_COLOR(0, 0));
     if (_sta_shared_binding) {
       q.quotas[0].quota = htole32(IWX_MAX_QUOTA);
     } else {
-      q.quotas[0].quota = htole32(IWX_MAX_QUOTA / 2);
+      q.quotas[0].quota = htole32(kListenerQuota);
       q.quotas[1].id_and_color = htole32(IWX_FW_CMD_ID_AND_COLOR(kStaBinding, 0));
-      q.quotas[1].quota = htole32(IWX_MAX_QUOTA / 2);
+      q.quotas[1].quota = htole32(kStaQuota);
     }
     err = send_cmd(IWX_TIME_QUOTA_CMD, &q, sizeof(q), false, nullptr);
     if (err) _log("station: time quota refused (" + std::to_string(err) + ")");
