@@ -1293,7 +1293,7 @@ _hook('engine.py', [
         "                     self.settings.port, self.settings.dest)" + NL +
         "        if os.environ.get('NEKODROP_BLE_STANDBY') == '1':" + NL +
         '            try:' + NL +
-        '                self.beacon = sender.Beacon(standby_pulse=60)' + NL +
+        "                self.beacon = sender.Beacon(standby_pulse=60, role='standby')" + NL +
         '                self.beacon.__enter__()' + NL +
         '            except Exception as error:  # noqa: BLE001' + NL +
         "                logging.warning('standby beacon failed: %s', error)" + NL +
@@ -1322,31 +1322,108 @@ _hook('engine.py', [
 _hook('sender.py', [
     (
         'import subprocess' + NL,
-        'import subprocess' + NL + 'import tempfile' + NL,
+        'import subprocess' + NL + 'import tempfile' + NL + 'import threading' + NL,
     ),
     (
+        'class Beacon:' + NL +
+        '    """The Bluetooth advertisement that makes Apple devices nearby turn AWDL' + NL +
+        '    on and announce AirDrop. Windows PowerShell sends it: it reaches the' + NL +
+        '    Bluetooth API with nothing installed."""' + NL +
+        '' + NL +
         '    def __init__(self, script=BEACON_SCRIPT):' + NL +
         '        self.script = script' + NL +
         '        self.process = None' + NL +
         '        self.on = False' + NL +
         "        self.said = ''  # why it is off" + NL,
-        '    def __init__(self, script=BEACON_SCRIPT, standby_pulse=0):' + NL +
+        'class Beacon:' + NL +
+        '    """The Bluetooth advertisement that makes Apple devices nearby turn AWDL' + NL +
+        '    on and announce AirDrop. Windows PowerShell sends it: it reaches the' + NL +
+        '    Bluetooth API with nothing installed."""' + NL +
+        '' + NL +
+        '    _lock = threading.Lock()' + NL +
+        '    _owner = None' + NL +
+        '    _refs = 0' + NL +
+        '    _looking_refs = 0' + NL +
+        '' + NL +
+        "    def __init__(self, script=BEACON_SCRIPT, standby_pulse=0, role='looking'):" + NL +
         '        self.script = script' + NL +
         '        self.process = None' + NL +
         '        self.on = False' + NL +
         "        self.said = ''  # why it is off" + NL +
         '        self._pulse_file = None  # nekodrop: BLE re-pulse trigger' + NL +
-        '        self._standby_pulse = int(standby_pulse or 0)' + NL,
+        '        self._mode_file = None  # nekodrop: looking vs standby mode' + NL +
+        '        self._standby_pulse = int(standby_pulse or 0)' + NL +
+        '        self._role = role' + NL +
+        '        self._proxy = False' + NL,
     ),
     (
+        '    def __enter__(self):' + NL +
+        "        shell = os.path.join(os.environ.get('SYSTEMROOT', r'C:\\Windows'), 'System32'," + NL +
+        "                             'WindowsPowerShell', 'v1.0', 'powershell.exe')" + NL +
+        '        try:' + NL +
+        "            # A PC that never ran a script of its own refuses script files; this" + NL +
+        "            # one is the project's, and the setting holds for this process only." + NL +
         '            self.process = subprocess.Popen(' + NL +
         "                [shell, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass'," + NL +
         "                 '-File', self.script]," + NL +
         '                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,' + NL +
-        '                stderr=subprocess.STDOUT, text=True)' + NL,
+        '                stderr=subprocess.STDOUT, text=True)' + NL +
+        '            said = self.process.stdout.readline().strip()' + NL +
+        '        except OSError as error:' + NL +
+        '            said = str(error)' + NL +
+        '        self.on = said == BEACON_READY' + NL +
+        "        self.said = '' if self.on else said or 'no answer'" + NL,
+        '    def _write_mode(self, mode):' + NL +
+        '        if not self._mode_file:' + NL +
+        '            return' + NL +
+        '        try:' + NL +
+        "            with open(self._mode_file, 'w', encoding='ascii') as handle:" + NL +
+        "                handle.write(mode + '\\n')" + NL +
+        '        except OSError:' + NL +
+        '            pass' + NL +
+        '' + NL +
+        '    def __enter__(self):' + NL +
+        '        # Single coordinated WinRT BLE publisher process-wide so repulse() always' + NL +
+        '        # produces a genuine 2.5 s silent gap over the air instead of being masked' + NL +
+        '        # by a second standby publisher.' + NL +
+        '        with Beacon._lock:' + NL +
+        '            owner = Beacon._owner' + NL +
+        '            alive = (owner is not None and owner.on and' + NL +
+        '                     (owner.process is None or owner.process.poll() is None))' + NL +
+        '            if alive:' + NL +
+        '                Beacon._refs += 1' + NL +
+        "                if self._role == 'looking':" + NL +
+        '                    Beacon._looking_refs += 1' + NL +
+        "                    owner._write_mode('looking')" + NL +
+        '                self._proxy = True' + NL +
+        '                self.on = owner.on' + NL +
+        '                self.said = owner.said' + NL +
+        '                self.process = None' + NL +
+        '                self._pulse_file = owner._pulse_file' + NL +
+        '                self._mode_file = owner._mode_file' + NL +
+        '                need_edge = self._role == \'looking\'' + NL +
+        '            else:' + NL +
+        '                need_edge = False' + NL +
+        '                self._start_unlocked()' + NL +
+        '        if need_edge:' + NL +
+        '            # Looking attached to an already-running standby beacon: force one' + NL +
+        '            # clean 2.5 s OFF->ON rising edge so iOS sharingd wakes immediately.' + NL +
+        '            if owner.repulse():' + NL +
+        "                logging.info('Bluetooth beacon re-pulsed (looking_start)')" + NL +
+        '        return self' + NL +
+        '' + NL +
+        '    def _start_unlocked(self):' + NL +
+        "        shell = os.path.join(os.environ.get('SYSTEMROOT', r'C:\\Windows'), 'System32'," + NL +
+        "                             'WindowsPowerShell', 'v1.0', 'powershell.exe')" + NL +
+        '        try:' + NL +
+        "            # A PC that never ran a script of its own refuses script files; this" + NL +
+        "            # one is the project's, and the setting holds for this process only." + NL +
         "            self._pulse_file = os.path.join(tempfile.gettempdir(), f'nekodrop-beacon-{os.getpid()}-{id(self)}.pulse')" + NL +
+        "            self._mode_file = os.path.join(tempfile.gettempdir(), f'nekodrop-beacon-{os.getpid()}-{id(self)}.mode')" + NL +
+        "            self._write_mode('looking' if self._role == 'looking' else 'standby')" + NL +
         '            env = os.environ.copy()' + NL +
         "            env['NEKODROP_BEACON_PULSE'] = self._pulse_file" + NL +
+        "            env['NEKODROP_BEACON_MODE'] = self._mode_file" + NL +
         '            if self._standby_pulse > 0:' + NL +
         "                env['NEKODROP_BEACON_STANDBY_S'] = str(self._standby_pulse)" + NL +
         '            else:' + NL +
@@ -1355,7 +1432,16 @@ _hook('sender.py', [
         "                [shell, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass'," + NL +
         "                 '-File', self.script]," + NL +
         '                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,' + NL +
-        '                stderr=subprocess.STDOUT, text=True, env=env)' + NL,
+        '                stderr=subprocess.STDOUT, text=True, env=env)' + NL +
+        '            said = self.process.stdout.readline().strip()' + NL +
+        '        except OSError as error:' + NL +
+        '            said = str(error)' + NL +
+        '        self.on = said == BEACON_READY' + NL +
+        "        self.said = '' if self.on else said or 'no answer'" + NL +
+        '        if self.on:' + NL +
+        '            Beacon._owner = self' + NL +
+        '            Beacon._refs = 1' + NL +
+        "            Beacon._looking_refs = 1 if self._role == 'looking' else 0" + NL,
     ),
     (
         '    def __exit__(self, *_):' + NL +
@@ -1364,6 +1450,10 @@ _hook('sender.py', [
         '            self.process.wait()' + NL,
         '    def repulse(self):' + NL +
         '        """Signal airdrop-beacon.ps1 to stop for 2.5 s and restart advertising."""' + NL +
+        '        if self._proxy:' + NL +
+        '            with Beacon._lock:' + NL +
+        '                owner = Beacon._owner' + NL +
+        '            return owner.repulse() if owner and owner is not self else False' + NL +
         '        if not self.on or not self._pulse_file:' + NL +
         '            return False' + NL +
         '        try:' + NL +
@@ -1373,16 +1463,47 @@ _hook('sender.py', [
         '        except OSError:' + NL +
         '            return False' + NL +
         '' + NL +
-        '    def __exit__(self, *_):' + NL +
+        '    def _close_owner(self):' + NL +
         '        if self.process:' + NL +
         '            self.process.terminate()' + NL +
         '            self.process.wait()' + NL +
-        '        if self._pulse_file:' + NL +
-        '            try:' + NL +
-        '                os.unlink(self._pulse_file)' + NL +
-        '            except OSError:' + NL +
-        '                pass' + NL +
-        '            self._pulse_file = None' + NL,
+        '            self.process = None' + NL +
+        '        for path in (self._pulse_file, self._mode_file):' + NL +
+        '            if path:' + NL +
+        '                try:' + NL +
+        '                    os.unlink(path)' + NL +
+        '                except OSError:' + NL +
+        '                    pass' + NL +
+        '        self._pulse_file = None' + NL +
+        '        self._mode_file = None' + NL +
+        '' + NL +
+        '    def __exit__(self, *_):' + NL +
+        '        to_close = None' + NL +
+        '        with Beacon._lock:' + NL +
+        "            if self._role == 'looking' and Beacon._looking_refs > 0:" + NL +
+        '                Beacon._looking_refs -= 1' + NL +
+        '            if self._proxy:' + NL +
+        '                self._proxy = False' + NL +
+        '                if Beacon._refs > 0:' + NL +
+        '                    Beacon._refs -= 1' + NL +
+        '                if Beacon._owner is not None:' + NL +
+        '                    if Beacon._refs == 0:' + NL +
+        '                        to_close = Beacon._owner' + NL +
+        '                        Beacon._owner = None' + NL +
+        '                    elif Beacon._looking_refs == 0:' + NL +
+        "                        Beacon._owner._write_mode('standby')" + NL +
+        '            elif Beacon._owner is self:' + NL +
+        '                if Beacon._refs > 0:' + NL +
+        '                    Beacon._refs -= 1' + NL +
+        '                if Beacon._refs == 0:' + NL +
+        '                    to_close = self' + NL +
+        '                    Beacon._owner = None' + NL +
+        '                elif Beacon._looking_refs == 0:' + NL +
+        "                    self._write_mode('standby')" + NL +
+        '            else:' + NL +
+        '                to_close = self' + NL +
+        '        if to_close is not None:' + NL +
+        '            to_close._close_owner()' + NL,
     ),
 ], 'NEKODROP_BEACON_PULSE')
 
@@ -1520,7 +1641,7 @@ _hook('engine.py', [
         '            with self._lock:' + NL +
         '                del self._watches[watch.key]' + NL,
         '        finally:' + NL +
-        '            self.looking.release_hold(watch.peer_key)' + NL +
+        '            self.looking.keep_alive(watch.peer_key, 10.0)' + NL +
         '            with self._lock:' + NL +
         '                del self._watches[watch.key]' + NL,
     ),

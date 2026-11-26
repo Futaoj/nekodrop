@@ -6,6 +6,20 @@
 
 ---
 
+## v2.2.15 (Preview / 预览版)
+
+### 中文
+
+- **修复发完文件立刻断联**：批量发送结束后不再立即撤销设备保活，改为顺延 10 秒宽限期等待 mDNS 刷新，避免刚传完 0.15 秒就误报 `peer_gone`。
+- **修复待机蓝牙广播下的重连慢 / 重脉冲失效**：统一全进程为**唯一一个** WinRT BLE 广播器（杜绝 `Receiving` 与 `Looking` 同时跑两个广播互相掩盖 2.5 秒静默间隔的问题）；打开发送窗口接入待机广播时立刻执行一次完整的 2.5 秒停播再重启（`OFF → ON` 上升沿），并在发送窗口打开期间暂停 60 秒后台定时重脉冲。
+
+### English
+
+- **Fix immediate disconnect after sending:** keep the peer alive for a 10 s grace window after a transfer completes instead of dropping the hold immediately, preventing false `peer_gone` right after large sends.
+- **Fix slow rediscovery under Standby BLE:** coordinate a single process-wide WinRT BLE publisher so `repulse()` always creates a genuine 2.5 s silent gap over the air; attaching `Looking` to an existing standby beacon immediately triggers a fresh 2.5 s `OFF → ON` rising edge and pauses the 60 s background standby timer while the send window is open.
+
+---
+
 ## v2.2.14 (Preview / 预览版)
 
 ### 中文

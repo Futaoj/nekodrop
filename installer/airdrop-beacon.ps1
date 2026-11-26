@@ -136,11 +136,12 @@ public static class AirDropBeaconWatch {
 
   # Optional re-pulse trigger file from sender.Beacon.repulse(): briefly stop
   # and restart advertising (2.5 s gap) so iOS sharingd sees a fresh BLE wake
-  # edge after a transfer ends instead of deduplicating the old continuous ad.
-  # Optional periodic standby re-pulse (NEKODROP_BEACON_STANDBY_S, e.g. 60 s)
-  # also uses a full 2.5 s stop gap so iOS sharingd treats it as a fresh edge
-  # instead of deduplicating a short gap (#79).
+  # edge instead of deduplicating the old continuous ad.
+  # Optional mode file (NEKODROP_BEACON_MODE): 'looking' suppresses periodic
+  # standby re-pulses while the Send window is active; 'standby' (default)
+  # re-pulses every NEKODROP_BEACON_STANDBY_S seconds with a full 2.5 s gap (#79).
   $pulseFile = $env:NEKODROP_BEACON_PULSE
+  $modeFile = $env:NEKODROP_BEACON_MODE
   $lastPulse = [DateTime]::MinValue
   if ($pulseFile -and (Test-Path -LiteralPath $pulseFile)) {
     try { $lastPulse = (Get-Item -LiteralPath $pulseFile -ErrorAction Stop).LastWriteTimeUtc } catch { }
@@ -164,7 +165,11 @@ public static class AirDropBeaconWatch {
         $doPulse = $true
       }
     }
-    if (-not $doPulse -and $standbyInterval -gt 0 -and (Get-Date) -ge $nextStandbyPulse) {
+    $isLooking = $false
+    if ($modeFile -and (Test-Path -LiteralPath $modeFile)) {
+      try { $isLooking = ((Get-Content -LiteralPath $modeFile -Raw -ErrorAction Stop).Trim() -eq 'looking') } catch { }
+    }
+    if (-not $doPulse -and -not $isLooking -and $standbyInterval -gt 0 -and (Get-Date) -ge $nextStandbyPulse) {
       $doPulse = $true
     }
     if ($doPulse) {
