@@ -7,9 +7,11 @@
 #   Windows region), +86 when unset, and an 11-digit mainland mobile number
 #   (1xxxxxxxxxx) is always +86.
 # - iCloudSetup.exe download: try three sources in turn, streamed with progress.
-# - GSA -27952 retry: keep iCloud/7.21 by default; if Apple refuses sign-in with
-#   -27952, switch X-MMe-Client-Info to iCloud/15.10, retry once, and persist the
-#   choice to client.txt in APPLEID_OUT so --refresh and --contacts reuse it.
+# - GSA -27952 / HTTP 503 client-profile fallback: keep iCloud/7.21 by default;
+#   if Apple refuses sign-in with -27952 (or returns HTTP 503/403 on a fallback
+#   profile), step through real verified client profiles (macOS akd, Windows
+#   iTunes, Windows AuthKitWin + iCloud 15.3) and persist the working choice to
+#   client.txt in APPLEID_OUT so --refresh and --contacts reuse it.
 import pathlib
 import sys
 
@@ -173,10 +175,14 @@ async fn unpack_icloud(home: &Path) -> Result<(), String> {"""
     path.write_text(text, encoding='utf-8')
     print('appleid: iCloud download from three sources, streamed with progress, SHA-256 checked')
 
-# -27952 retry: some accounts refuse iCloud/7.21 with GSA error -27952. Keep
-# 7.21 by default so accounts that never see -27952 send the exact same headers
-# as before; on -27952, switch to iCloud/15.10, retry once, and remember the
-# choice in APPLEID_OUT\client.txt for --refresh and --contacts.
+# -27952 / HTTP 503 fallback: some accounts refuse iCloud/7.21 with GSA error
+# -27952 ("Update iCloud for Windows to the latest version to sign in"), and
+# Apple's GSA backend/edge can reject synthetic iCloud/15.10 headers with
+# immediate HTTP 503 (#42). Keep 7.21 by default so accounts that never see
+# -27952 send the exact same headers as before; on -27952 (and on HTTP 503/403
+# once off 7.21), step through verified real client profiles (macos-akd,
+# itunes, icloud-15) and persist the working profile name in APPLEID_OUT\client.txt
+# for --refresh and --contacts.
 # (aidc.rs uses its own sharingd/2.0 CLIENT_INFO, not gsa::CLIENT_INFO, so it is
 # left untouched.)
 CLIENT_MARK = 'nekodrop: -27952 client info'
@@ -186,31 +192,123 @@ text = path.read_text(encoding='utf-8')
 if CLIENT_MARK not in text:
     old = 'pub const CLIENT_INFO: &str = "<PC> <Windows;10.0.26100;> <com.apple.AuthKit/1 (com.apple.iCloud/7.21)>";'
     new = '''pub const CLIENT_INFO: &str = "<PC> <Windows;10.0.26100;> <com.apple.AuthKit/1 (com.apple.iCloud/7.21)>";
-/// nekodrop: -27952 client info. Newer iCloud for Windows client info used only
-/// after Apple refuses 7.21 with -27952.
-const CLIENT_INFO_NEWER: &str = "<PC> <Windows;10.0.26100;> <com.apple.AuthKit/1 (com.apple.iCloud/15.10)>";
-static USE_NEWER_CLIENT_INFO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// nekodrop: -27952 client info. Ordered X-MMe-Client-Info profiles tried on
+/// -27952 (or HTTP 503/403 on a fallback profile, #42).
+///   0: iCloud 7.21 (WirDrop default, unchanged for accounts that accept it)
+///   1: macOS akd (matches AGENT; bypasses the Windows iCloud -27952 gate)
+///   2: Windows iTunes 12.12 (Windows CoreADI GSA profile)
+///   3: Windows AuthKitWin + iCloud 15.3 (real Windows iCloud 15 header)
+pub const CLIENT_PROFILES: [(&str, &str); 4] = [
+    ("7.21", CLIENT_INFO),
+    ("macos-akd", "<MacPro7,1> <Mac OS X;15.3.1;24D70> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"),
+    ("itunes", "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>"),
+    ("icloud-15", "<PC> <Windows;10.0.26100;> <com.apple.AuthKitWin/1 (com.apple.iCloud/15.3.149)>"),
+];
+static CLIENT_PROFILE_IDX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-pub fn use_newer_client_info() -> bool {
-    USE_NEWER_CLIENT_INFO.load(std::sync::atomic::Ordering::Relaxed)
+pub fn client_profile_idx() -> usize {
+    CLIENT_PROFILE_IDX
+        .load(std::sync::atomic::Ordering::Relaxed)
+        .min(CLIENT_PROFILES.len() - 1)
 }
 
-pub fn set_newer_client_info(newer: bool) {
-    USE_NEWER_CLIENT_INFO.store(newer, std::sync::atomic::Ordering::Relaxed);
+pub fn set_client_profile_idx(idx: usize) {
+    CLIENT_PROFILE_IDX.store(
+        idx.min(CLIENT_PROFILES.len() - 1),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+pub fn set_client_profile_by_name(name: &str) -> bool {
+    // Migrate legacy "15.10" saved by earlier nekodrop versions to macos-akd.
+    let target = if name == "15.10" { "macos-akd" } else { name };
+    if let Some(idx) = CLIENT_PROFILES.iter().position(|(n, _)| *n == target) {
+        set_client_profile_idx(idx);
+        true
+    } else {
+        false
+    }
+}
+
+pub fn client_profile_name() -> &'static str {
+    CLIENT_PROFILES[client_profile_idx()].0
 }
 
 pub fn client_info() -> &'static str {
-    if use_newer_client_info() { CLIENT_INFO_NEWER } else { CLIENT_INFO }
+    CLIENT_PROFILES[client_profile_idx()].1
 }'''
     if text.count(old) != 1:
         sys.exit('gsa.rs: CLIENT_INFO moved; update patch-appleid.py')
     text = text.replace(old, new, 1)
 
-    old = '        .header("X-MMe-Client-Info", CLIENT_INFO)'
-    new = '        .header("X-MMe-Client-Info", client_info())'
-    if text.count(old) != 1:
-        sys.exit('gsa.rs: call CLIENT_INFO header moved; update patch-appleid.py')
-    text = text.replace(old, new, 1)
+    old_call = '''async fn call(request: Dictionary) -> Result<Dictionary, Fault> {
+    let mut header = Dictionary::new();
+    header.insert("Version".into(), "1.0.1".into());
+    let mut envelope = Dictionary::new();
+    envelope.insert("Header".into(), Value::Dictionary(header));
+    envelope.insert("Request".into(), Value::Dictionary(request));
+    let mut body = Vec::new();
+    plist::to_writer_xml(&mut body, &Value::Dictionary(envelope)).map_err(|e| Fault::Other(e.to_string()))?;
+    let res = crate::http::client()
+        .post(SERVICE)
+        .header("Content-Type", "text/x-xml-plist")
+        .header("Accept", "*/*")
+        .header("User-Agent", AGENT)
+        .header("X-MMe-Client-Info", CLIENT_INFO)
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| Fault::Unreachable(e.to_string()))?;
+    let status = res.status();
+    let bytes = res.bytes().await.map_err(|e| Fault::Unreachable(e.to_string()))?;
+    let Ok(Value::Dictionary(mut reply)) = plist::from_bytes::<Value>(&bytes) else {
+        // plist 대신 오류 페이지: GrandSlam이 바쁨(503) 같은 것.
+        return Err(Fault::Busy(status.as_u16()));
+    };'''
+    new_call = '''async fn call(request: Dictionary) -> Result<Dictionary, Fault> {
+    let op = request.get("o").and_then(Value::as_string).unwrap_or("?").to_string();
+    let mut header = Dictionary::new();
+    header.insert("Version".into(), "1.0.1".into());
+    let mut envelope = Dictionary::new();
+    envelope.insert("Header".into(), Value::Dictionary(header));
+    envelope.insert("Request".into(), Value::Dictionary(request));
+    let mut body = Vec::new();
+    plist::to_writer_xml(&mut body, &Value::Dictionary(envelope)).map_err(|e| Fault::Other(e.to_string()))?;
+    let res = crate::http::client()
+        .post(SERVICE)
+        .header("Content-Type", "text/x-xml-plist")
+        .header("Accept", "*/*")
+        .header("User-Agent", AGENT)
+        .header("X-MMe-Client-Info", client_info())
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| Fault::Unreachable(e.to_string()))?;
+    let status = res.status();
+    let ct = res
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-")
+        .to_string();
+    let bytes = res.bytes().await.map_err(|e| Fault::Unreachable(e.to_string()))?;
+    let Ok(Value::Dictionary(mut reply)) = plist::from_bytes::<Value>(&bytes) else {
+        // Non-plist error page (e.g. HTTP 503/403 from GSA edge): log safe diagnostic metadata (#42).
+        let snippet: String = String::from_utf8_lossy(&bytes)
+            .chars()
+            .map(|c| if c.is_ascii_control() { ' ' } else { c })
+            .take(120)
+            .collect();
+        crate::log_line(&format!(
+            "gsa {op} ({}): HTTP {status}, content-type={ct}, body={}",
+            client_profile_name(),
+            snippet.trim()
+        ));
+        return Err(Fault::Busy(status.as_u16()));
+    };'''
+    if text.count(old_call) != 1:
+        sys.exit('gsa.rs: call() moved; update patch-appleid.py')
+    text = text.replace(old_call, new_call, 1)
 
     old = '        ("X-MMe-Client-Info".into(), CLIENT_INFO.into()),'
     new = '        ("X-MMe-Client-Info".into(), client_info().into()),'
@@ -282,16 +380,19 @@ pub fn client_info() -> &'static str {
     text = text.replace(old, new, 1)
 
     old_first = '    let (session, next) = password_round(account, password, anisette).await?;'
-    new_first = '''    // nekodrop: retry transient 503/unreachable on the initial password_round too (#42).
+    new_first = '''    // nekodrop: retry transient 503/unreachable on the initial password_round (#42).
+    // On a fallback profile (idx > 0), fail fast after 1 retry so main.rs can step
+    // to the next client profile instead of burning 45 s on a rejected header.
     let (session, next) = {
+        let max_tries: u32 = if client_profile_idx() == 0 { 2 } else { 1 };
         let mut round_tries = 0u32;
         loop {
             match password_round(account, password, anisette).await {
                 Ok(pair) => break pair,
-                Err(e @ (Fault::Busy(_) | Fault::Unreachable(_))) if round_tries < 3 => {
+                Err(e @ (Fault::Busy(502 | 503 | 504) | Fault::Unreachable(_))) if round_tries < max_tries => {
                     round_tries += 1;
-                    let wait = 10 + (round_tries as u64 - 1) * 5;
-                    say!("Apple's sign-in server is busy ({}); retrying in {wait} s ({round_tries}/3)", e.brief());
+                    let wait = if client_profile_idx() == 0 { 5 + (round_tries as u64 - 1) * 5 } else { 5 };
+                    say!("Apple's sign-in server is busy ({}); retrying in {wait} s ({round_tries}/{max_tries})", e.brief());
                     tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
                 }
                 Err(e) => return Err(e.into()),
@@ -303,7 +404,7 @@ pub fn client_info() -> &'static str {
     text = text.replace(old_first, new_first, 1)
 
     path.write_text(text, encoding='utf-8')
-    print('appleid: gsa.rs runtime-switchable client_info(), 503 retries and 2FA fallback')
+    print('appleid: gsa.rs multi-profile client_info(), 503 diagnostics/retries and 2FA fallback')
 
 path = pathlib.Path(sys.argv[1]) / 'crates' / 'appleid' / 'src' / 'anisette.rs'
 text = path.read_text(encoding='utf-8')
@@ -339,19 +440,17 @@ text = path.read_text(encoding='utf-8')
 if CLIENT_MARK not in text:
     old = 'const APP_TOKEN: &str = "gs-token.txt";'
     new = '''const APP_TOKEN: &str = "gs-token.txt";
-/// nekodrop: -27952 client info. Persists the newer client info choice for --refresh/--contacts.
+/// nekodrop: -27952 client info. Persists the working client profile for --refresh/--contacts.
 const CLIENT_FILE: &str = "client.txt";
 
 fn load_client_info(out: &Path) {
-    if let Ok(text) = std::fs::read_to_string(out.join(CLIENT_FILE))
-        && text.trim() == "15.10"
-    {
-        gsa::set_newer_client_info(true);
+    if let Ok(text) = std::fs::read_to_string(out.join(CLIENT_FILE)) {
+        gsa::set_client_profile_by_name(text.trim());
     }
 }
 
-fn save_client_info(out: &Path) {
-    let _ = std::fs::write(out.join(CLIENT_FILE), "15.10\\n");
+fn save_client_info(out: &Path, profile: &str) {
+    let _ = std::fs::write(out.join(CLIENT_FILE), format!("{profile}\\n"));
 }'''
     if text.count(old) != 1:
         sys.exit('main.rs: APP_TOKEN moved; update patch-appleid.py')
@@ -367,20 +466,38 @@ fn save_client_info(out: &Path) {
     text = text.replace(old, new, 1)
 
     old = '    let session = gsa::sign_in(&account, &password, &mut anisette, &mut ask_code).await?;'
-    new = '''    let session = match gsa::sign_in(&account, &password, &mut anisette, &mut ask_code).await {
-        Ok(session) => session,
-        Err(e) if e.contains("-27952") && !gsa::use_newer_client_info() => {
-            gsa::set_newer_client_info(true);
-            say!("Apple refused iCloud 7.21 (-27952); retrying with iCloud 15.10");
-            let session = gsa::sign_in(&account, &password, &mut anisette, &mut ask_code).await?;
-            save_client_info(out);
-            session
+    new = '''    let session = {
+        let mut idx = gsa::client_profile_idx();
+        loop {
+            match gsa::sign_in(&account, &password, &mut anisette, &mut ask_code).await {
+                Ok(session) => {
+                    if idx > 0 {
+                        save_client_info(out, gsa::client_profile_name());
+                    } else {
+                        let _ = std::fs::remove_file(out.join(CLIENT_FILE));
+                    }
+                    break session;
+                }
+                Err(e) => {
+                    let retryable = e.contains("-27952")
+                        || (idx > 0 && (e.contains("HTTP 503") || e.contains("HTTP 403")));
+                    if retryable && idx + 1 < gsa::CLIENT_PROFILES.len() {
+                        let prev = gsa::client_profile_name();
+                        idx += 1;
+                        gsa::set_client_profile_idx(idx);
+                        let next = gsa::client_profile_name();
+                        say!("Apple refused {prev} ({e}); retrying with {next}");
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
         }
-        Err(e) => return Err(e),
     };'''
     if text.count(old) != 1:
         sys.exit('main.rs: gsa::sign_in call moved; update patch-appleid.py')
     text = text.replace(old, new, 1)
 
     path.write_text(text, encoding='utf-8')
-    print('appleid: main.rs retries -27952 with iCloud 15.10 and persists to client.txt')
+    print('appleid: main.rs steps through fallback GSA profiles on -27952/503/403 and persists to client.txt')
