@@ -42,7 +42,8 @@ public partial class SendWindow : Window
     {
         var files = A.Model.Files;
         CountText.Text = files.Count.ToString();
-        if (files.Count == 0) { SummaryText.Text = L.T("pick.files"); return; }
+        ClearButton.Visibility = files.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        if (files.Count == 0) { SummaryText.Text = L.T("pick.files"); SummaryText.ToolTip = null; return; }
         var first = Path.GetFileName(files[0].TrimEnd('\\'));
         SummaryText.Text = files.Count == 1 ? first : L.F("send.summary", first, files.Count, files.Count - 1);
         long bytes = 0;
@@ -65,5 +66,6 @@ public partial class SendWindow : Window
         b >= 1L << 10 ? $"{b / 1024.0:0} KB" : $"{b} B";
 
     void More_Click(object sender, RoutedEventArgs e) => A.ShowWindow();
+    void Clear_Click(object sender, RoutedEventArgs e) => A.Model.Files.Clear();
     void Close_Click(object sender, RoutedEventArgs e) => Close();
 }

@@ -124,6 +124,7 @@ public static class L
         ["send.sameNameBody"] = ("接收端无法区分同名文件，请重命名其中一个后再发送。", "The receiver can't tell same-named files apart. Rename one of them before sending."),
         ["send.genericFailure"] = ("发送没有完成（{0}）。请重试，或导出诊断日志。", "The send did not finish ({0}). Try again or export a diagnostic report."),
         ["send.hint"] = ("点击设备即可发送", "Click a device to send"),
+        ["send.clear"] = ("清空", "Clear"),
         ["send.more"] = ("打开主窗口", "Open main window"),
         ["pill.ready"] = ("已就绪，可收发", "Ready to share"),
         ["pill.standby"] = ("按需待命中", "On standby"),
