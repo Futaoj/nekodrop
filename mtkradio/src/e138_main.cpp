@@ -927,13 +927,15 @@ bool run_mt7925_awdl_link(mtk::MtkDevice &dev, std::string &error) {
 int wmain(int argc, wchar_t **argv) {
   std::filesystem::path firmware, stop_file;
   std::wstring instance, country;
-  bool fast = false, indoor = false;
+  bool fast = false, indoor = false, passive = false, explicit_channel = false;
   uint8_t channel = 44;
   for (int i = 1; i < argc; ++i) {
     const std::wstring_view key(argv[i]);
     if (key == L"--e138-fast") fast = true;
+    else if (key == L"--check-passive") passive = true;
     else if (key == L"--indoor") indoor = true;
     else if (key == L"--channel" && i + 1 < argc) {
+      explicit_channel = true;
       const std::wstring_view primary(argv[++i]);
       if (primary == L"44") channel = 44;
       else if (primary == L"149") channel = 149;
@@ -951,12 +953,13 @@ int wmain(int argc, wchar_t **argv) {
       return 2;
     }
   }
-  constexpr std::wstring_view prefix = L"PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00\\";
-  if (!fast || !indoor || country != L"CN" || !firmware.is_absolute() || !stop_file.is_absolute() ||
-      instance.size() <= prefix.size() ||
-      _wcsnicmp(instance.c_str(), prefix.data(), prefix.size()) != 0) {
-    log_line("E138 FastBa requires --e138-fast --indoor --country CN [--channel 44|149] --firmware <absolute directory> "
-             "--stop-file <absolute path> --instance <full E138105B REV_00 PCI instance>");
+  const bool valid_mode = passive ? (!fast && !indoor && country.empty() && !explicit_channel)
+                                  : (fast && indoor && country == L"CN");
+  if (!valid_mode || !firmware.is_absolute() || !stop_file.is_absolute() ||
+      !mtk::MtkDevice::is_e138_instance(instance)) {
+    log_line("Specify --check-passive or --e138-fast --indoor --country CN [--channel 44|149], "
+             "plus --firmware <absolute directory> --stop-file <absolute path> "
+             "--instance <full E138105B REV_00 PCI instance>");
     return 2;
   }
   const auto stop_requested = [&] {
@@ -964,7 +967,10 @@ int wmain(int argc, wchar_t **argv) {
     const DWORD error = GetLastError();
     return error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND;
   };
-  if (stop_requested()) return 0;
+  if (stop_requested()) {
+    if (passive) log_line("MT7925 E138 passive check stopped before opening the radio");
+    return passive ? 1 : 0;
+  }
   SetConsoleCtrlHandler(on_console, TRUE);
   std::jthread monitor([&](std::stop_token token) {
     while (!token.stop_requested() && !stopping()) {
@@ -972,15 +978,27 @@ int wmain(int argc, wchar_t **argv) {
       else Sleep(100);
     }
   });
+  const auto utf8 = firmware.u8string();
+  const std::string firmware_dir(utf8.begin(), utf8.end());
+  std::string error;
+  if (passive) {
+    uint32_t beacons = 0;
+    unsigned frames = 0;
+    if (!mtk::MtkDevice::check_e138_passive(instance, firmware_dir, stopping, beacons, frames, error)) {
+      log_line("MT7925 E138 passive check failed: " + error);
+      return 1;
+    }
+    log_line("MT7925 E138 passive check complete: channel=44 dwell_ms=250 firmware_beacons=" +
+             std::to_string(beacons) + " received_frames=" + std::to_string(frames));
+    return 0;
+  }
   mtk::MtkDevice::Options options;
   options.mt7925_active_lab = true;
   options.instance_id = instance;
   options.country = "CN";
-  const auto utf8 = firmware.u8string();
-  options.firmware_dir.assign(utf8.begin(), utf8.end());
+  options.firmware_dir = firmware_dir;
   mtk::MtkDevice dev(log_line);
   dev.set_stop_check(stopping);
-  std::string error;
   if (!dev.open(options, error) || !dev.is_mt7925() ||
       !dev.mt7925_program_awdl_power(channel, options.country, indoor, true, error) || dev.width_mhz() != 80) {
     log_line("MT7925 E138 FastBa bring-up failed: " + error);

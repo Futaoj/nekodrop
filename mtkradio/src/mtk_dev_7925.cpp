@@ -11,6 +11,7 @@
 #include <cstring>
 #include <fstream>
 #include <filesystem>
+#include <memory>
 
 #include "crypto.h"
 #include "mt7925_regs.h"
@@ -194,7 +195,62 @@ bool MtkDevice::mt7925_wfsys_reset(std::string &error) {
   return false;
 }
 
+bool MtkDevice::is_e138_instance(const std::wstring &instance) {
+  constexpr std::wstring_view prefix = L"PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00\\";
+  return instance.size() > prefix.size() &&
+         _wcsnicmp(instance.c_str(), prefix.data(), prefix.size()) == 0 &&
+         instance.find(L'\\', prefix.size()) == std::wstring::npos;
+}
+
+bool MtkDevice::check_e138_passive(const std::wstring &instance, const std::string &firmware,
+                                  StopCheck stop, uint32_t &beacons, unsigned &frames, std::string &error) {
+  beacons = 0;
+  frames = 0;
+  if (!is_e138_instance(instance) || !std::filesystem::u8path(firmware).is_absolute() || !stop || stop()) {
+    error = "passive check stopped or invalid instance/firmware path";
+    return false;
+  }
+
+  // The device never escapes this function. Its inactive default builds only
+  // MCU/download and RX rings. No frame contents or addresses leave the scan.
+  auto dev = std::make_unique<MtkDevice>(Logger{});
+  dev->_stopping = std::move(stop);
+  dev->_country = "00";
+  dev->_channel = 0;
+  dev->_width_mhz = 20;
+  if (!dev->_proxy.open(error, instance)) return false;
+  if (dev->_proxy.vendor() != 0x14c3 || dev->_proxy.device() != 0x7925) {
+    error = "selected PCI instance is not an MT7925";
+    return false;
+  }
+  if (!dev->mt7925_acquire_chip(error) || !dev->mt7925_load_firmware(firmware, error)) return false;
+  if (dev->_tx_data.count || dev->_mt7925_power_ready || dev->_mt7925_active_lab || dev->_stopping()) {
+    error = "passive scan stopped or unexpected active radio state";
+    return false;
+  }
+  const auto count = [&](const RxFrame &) { ++frames; };
+  if (!dev->mt7925_passive_scan(44, count, nullptr, 250, &beacons) || dev->_stopping()) {
+    error = "channel 44 passive scan stopped, refused or incomplete";
+    return false;
+  }
+  return true;
+}
+
 bool MtkDevice::mt7925_probe(std::string &error) {
+  // Check this board's ACPI endpoint before taking ownership, restarting its
+  // firmware or publishing DMA rings. Power programming reads the tables again
+  // just before use so it never relies on a stale preflight.
+  LUOBO_MT7925_BOARD_SAR board_sar{};
+  std::string sar_report;
+  if (!read_mt7925_sar(_proxy, board_sar, sar_report, error)) {
+    if (!sar_report.empty()) log("MT7925 SAR " + sar_report);
+    return false;
+  }
+
+  return mt7925_acquire_chip(error);
+}
+
+bool MtkDevice::mt7925_acquire_chip(std::string &error) {
   _is_mt7925 = true;
   _l1_base = 0xffffffffu;
 
@@ -204,16 +260,6 @@ bool MtkDevice::mt7925_probe(std::string &error) {
   }
   if (_proxy.bar_len() < mt7925::HIF_REMAP_L1 + sizeof(uint32_t)) {
     error = "MT7925 BAR0 too small: " + hex32(_proxy.bar_len());
-    return false;
-  }
-
-  // Check this board's ACPI endpoint before taking ownership, restarting its
-  // firmware or publishing DMA rings. Power programming reads the tables again
-  // just before use so it never relies on a stale preflight.
-  LUOBO_MT7925_BOARD_SAR board_sar{};
-  std::string sar_report;
-  if (!read_mt7925_sar(_proxy, board_sar, sar_report, error)) {
-    if (!sar_report.empty()) log("MT7925 SAR " + sar_report);
     return false;
   }
 
@@ -454,6 +500,7 @@ void MtkDevice::mt7925_defer_frame(const uint8_t *data, size_t bytes) {
 int MtkDevice::mt7925_exchange(uint32_t command, const uint8_t *data, uint32_t bytes,
                               unsigned timeout_ms, const McuDecoder &decode, bool roc_abort) {
   if (_mt7925_mcu_fault) return _mt7925_mcu_fault;
+  if (!_mt7925_active_lab && _stopping && _stopping()) return MT_FW_TIMEOUT;
   if (!_dma_running || (decode && command == MT_FW_SCATTER)) return MT_INVALID;
   std::array<uint8_t, DmaPool32::kPageBytes> request;
   const int encoded = mt_mcu_encode(command, &_mcu_seq, data, bytes,
@@ -469,6 +516,7 @@ int MtkDevice::mt7925_exchange(uint32_t command, const uint8_t *data, uint32_t b
   std::vector<uint8_t> packet;
   unsigned frames = 0, tx_free = 0, events = 0, skipped = 0, other_seq = 0, peeked = 0;
   const auto receive = [&](bool &received) -> int {
+    if (!_mt7925_active_lab && _stopping && _stopping()) return MT_FW_TIMEOUT;
     received = rx_ring_pop(_rx_mcu, packet);
     if (!received) return _proxy.failed() ? MT_FW_PROTOCOL : int(MT_PENDING);
     switch (mt7925::rx_kind(packet.data(), packet.size())) {
@@ -753,7 +801,8 @@ bool MtkDevice::mt7925_mac_init(std::string &error) {
 }
 
 bool MtkDevice::mt7925_passive_scan(uint8_t channel, const RxHandler &on_rx,
-                                    std::array<uint8_t, 2> *firmware_country, uint16_t dwell_ms) {
+                                    std::array<uint8_t, 2> *firmware_country, uint16_t dwell_ms,
+                                    uint32_t *firmware_beacons) {
   const unsigned mask = channel == 36 ? LuoboWorldChannel36 :
                         channel == 44 ? LuoboWorldChannel44 : 0;
   if (!is_mt7925() || !_fw_loaded || !_dma_running ||
@@ -779,6 +828,7 @@ bool MtkDevice::mt7925_passive_scan(uint8_t channel, const RxHandler &on_rx,
     return false;
   }
   for (unsigned i = 0; i < 4 && mt7925_poll(on_rx); ++i) {}
+  if (firmware_beacons) *firmware_beacons = scan.BeaconCount;
   if (firmware_country) *firmware_country = {scan.FirmwareCountry[0], scan.FirmwareCountry[1]};
   if (_verbose) {
     const char country[] = {static_cast<char>(scan.FirmwareCountry[0]),

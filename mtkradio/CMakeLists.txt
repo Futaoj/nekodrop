@@ -82,6 +82,10 @@ target_compile_options(ccmp_test PRIVATE ${MTK_OPTS})
 target_link_libraries(ccmp_test PRIVATE bcrypt)
 
 enable_testing()
+if(NEKODROP_E138_FAST)
+  add_test(NAME e138_passive_cli COMMAND ${CMAKE_COMMAND}
+    -DRADIO=$<TARGET_FILE:${mtk_daemon}> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/e138-passive-cli.cmake)
+endif()
 add_test(NAME ccmp COMMAND ccmp_test)
 
 add_executable(mt7925_transport_test tests/mt7925-transport-test.cpp)

@@ -112,6 +112,11 @@ public:
   explicit MtkDevice(Logger log) : _log(std::move(log)) {}
   ~MtkDevice();
 
+  // Opens a private device for one passive channel-44 scan and closes it before returning.
+  static bool check_e138_passive(const std::wstring &instance, const std::string &firmware,
+                                 StopCheck stop, uint32_t &beacons, unsigned &frames, std::string &error);
+  static bool is_e138_instance(const std::wstring &instance);
+
   void set_tx_status_handler(TxStatusHandler h) { _on_tx_status = std::move(h); }
   void set_stop_check(StopCheck fn) { _stopping = std::move(fn); }
 
@@ -164,7 +169,8 @@ public:
   /* Polls RX data + MCU rings and invokes `on_rx` for each received 802.11 frame. */
   size_t poll(const RxHandler &on_rx);
   bool mt7925_passive_scan(uint8_t channel, const RxHandler &on_rx,
-                           std::array<uint8_t, 2> *firmware_country = nullptr, uint16_t dwell_ms = 0);
+                           std::array<uint8_t, 2> *firmware_country = nullptr, uint16_t dwell_ms = 0,
+                           uint32_t *firmware_beacons = nullptr);
   bool mt7925_check_country(std::string &error);
   bool mt7925_program_awdl_power(uint8_t primary, const std::string &expected_country, bool indoor,
                                 bool activate, std::string &error);
@@ -294,6 +300,7 @@ private:
   bool mt7925_emi_protection(std::string &error);
   bool mt7925_wfsys_reset(std::string &error);
   bool mt7925_probe(std::string &error);
+  bool mt7925_acquire_chip(std::string &error);
   bool mt7925_hard_reset(std::string &error);
   bool mt7925_dma_disable(std::string &error);
   bool mt7925_dma_init(std::string &error);
