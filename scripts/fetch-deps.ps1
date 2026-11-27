@@ -2,7 +2,7 @@
 #   winawdl         radio pipe, RTL8852CE radio, awdld (OWL), Wintun, AirDrop engine (MIT/GPL-2.0/GPL-3.0)
 #   devourer        winawdl's Realtek RTL8852CE user-mode radio library (GPL-2.0)
 #   ForbiddenItlwm  iwlwifi firmware and its licence (GPL-2.0 / Intel redistribution)
-#   linux-firmware  the MediaTek MT7902/MT7921/MT7922 and Intel BE200 firmware and their licences
+#   linux-firmware  the MediaTek MT7902/MT7921/MT7922/MT7925 and Intel BE200 firmware and their licences
 #   WirDrop         its Apple ID sign-in (appleid.exe, appleid-anisette.exe) for Contacts Only (MIT)
 #   winlibs MinGW   GCC for awdld
 #   WDK (NuGet)     UMDF headers and tools, only when no WDK is installed
@@ -67,6 +67,18 @@ foreach ($f in @(@('mediatek/WIFI_MT7922_patch_mcu_1_1_hdr.bin', '5356256C3A361C
            (Join-Path $mtkFw (Split-Path $f[0] -Leaf)) $f[1]
 }
 "linux-firmware (MT7922/MT7921) @ $($lfw.Substring(0, 7))"
+
+# MT7925 (Connac3, Wi-Fi 7) firmware from a pinned linux-firmware commit.
+$lfw7925 = '5a3f625f2e9d9f70134af2340d82af3f19ae6891'
+$mtk7925Fw = Join-Path $tp 'linux-firmware-mt7925'
+New-Item -ItemType Directory -Force $mtk7925Fw | Out-Null
+foreach ($f in @(@('mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin', '67FF85F1A39D1A100A51ABD8E2A26EDD2F198D7052514B6B8981948B231E5016'),
+                 @('mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin', '329C0E27F780550789E4EBA47452731B1723F69F9E67F525D0E50BF3CD2978AC'),
+                 @('LICENSES/LICENCE.mediatek', 'A90D3F66704D85889945FEC5525EA77622549DA83ACED1AAC99828383F8F1805'))) {
+  Get-File "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/$lfw7925/$($f[0])" `
+           (Join-Path $mtk7925Fw (Split-Path $f[0] -Leaf)) $f[1]
+}
+"linux-firmware (MT7925) @ $($lfw7925.Substring(0, 7))"
 
 # Experimental Intel BE200 (GL/FM) API 100 firmware (embeds PNVM in TLV 74).
 $be200Fw = Join-Path $tp 'linux-firmware-iwlwifi-be200'

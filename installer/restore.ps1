@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Continue'
 # in step with iwxradio/src/cards.h, app/service/CardCatalog.cs,
 # driver/regproxy/winawdl_regproxy.inf, installer/report.ps1 and install.ps1.
 $SupportedIntelIds = @('43F0', 'A0F0', '02F0', '06F0', '34F0', '3DF0', '4DF0', '2723', '2725', '7A70', '7AF0', '51F0', '51F1', '54F0', '7F70', '7740')
-$KnownCatalogIds = @($SupportedIntelIds | ForEach-Object { "8086:$_" }) + @('8086:272B', '10EC:C852')
+$KnownCatalogIds = @($SupportedIntelIds | ForEach-Object { "8086:$_" }) + @('8086:272B', '10EC:C852', '14C3:7902', '14C3:0616', '14C3:7922', '14C3:7961', '14C3:0608', '14C3:7925')
 $ProxyInfNames = @('winawdl_regproxy.inf', 'nekodrop-wlan.inf')
 $ProxyServices = @('WUDFRd', 'nekodrop-wlan')
 $ProxyProvider = 'winairdrop project'
@@ -296,6 +296,9 @@ if ($SelfTest) {
   }
 
   # 4. Other known vendor profiles (MediaTek, Qualcomm, Broadcom) and unknown vendor -> $null.
+  $mt7925Devs = @((Dev 'PCI\VEN_14C3&DEV_7925&SUBSYS_792514C3\4&1' 'mtkwl6ex' 'oem30.inf' 'MediaTek, Inc.'))
+  $picked7925 = Resolve-RestoreTargetDevice $mt7925Devs $pubProxy
+  if (-not $picked7925 -or $picked7925.InstanceId -notmatch 'DEV_7925') { $fail += 'MediaTek 14C3:7925 not selected' }
   if ((Select-VendorInfPackage @() $store '14C3' 'C:\Windows' { param($p) $false } { param($p) '' }) -ne 'C:\Windows\INF\oem30.inf') { $fail += 'MediaTek fallback failed' }
   if ((Select-VendorInfPackage @() $store '17CB' 'C:\Windows' { param($p) $false } { param($p) '' }) -ne 'C:\Windows\INF\oem31.inf') { $fail += 'Qualcomm fallback failed' }
   if ((Select-VendorInfPackage @() $store '14E4' 'C:\Windows' { param($p) $false } { param($p) '' }) -ne 'C:\Windows\INF\oem32.inf') { $fail += 'Broadcom fallback failed' }
