@@ -148,6 +148,8 @@ public:
     _sta.mimo = p.mimo;
     _sta.width = p.width;
     _sta.beacon_int = p.beacon_int;
+    _sta.he = p.he && sta_he_capable();
+    _sta.ap_he = p.ap_he;
   }
   bool sta_set_key(bool group, unsigned key_index, const uint8_t key[16]);
   /* 802.11w: management frame protection for the AP station, and the AP's
@@ -183,6 +185,9 @@ public:
   void sta_leave();
   bool sta_active() const { return _sta_mac_added; }
   const StaParams &sta_params() const { return _sta; }
+  /* Experimental Wi-Fi 6 station: an HE radio (not a Wireless-AC "jf" one)
+   * and firmware that takes the HE station context. */
+  bool sta_he_capable() const;
   using TxStatusHandler = RadioTxStatusHandler;
   void set_tx_status_handler(TxStatusHandler handler) { _on_tx = std::move(handler); }
   /* Firmware scan (iwx_scan.cpp): the firmware visits `channels` between the
@@ -289,6 +294,7 @@ private:
   int mld_sta_link_modify(bool active, uint32_t modify_mask);
   int mld_sta_link_remove();
   int mld_sta_cfg_ap(bool assoc);
+  int sta_he_context(); /* STA_HE_CTXT_CMD (pre-Bz firmware), experimental Wi-Fi 6 */
   int mld_sec_key_remove(uint32_t key_id, uint32_t key_flags);
   int disable_queue(uint8_t sta_id, uint8_t tid);
   /* Bz receive Block Ack: one firmware station per AWDL peer (stations

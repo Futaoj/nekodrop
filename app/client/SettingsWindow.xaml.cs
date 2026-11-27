@@ -62,6 +62,7 @@ public partial class SettingsWindow : Window
         CoexPlanBox.IsChecked = (bool?)A.Service.Last?["coexPlan"] ?? false;
         HighThroughputBox.IsChecked = (bool?)A.Service.Last?["highThroughput"] ?? false;
         DataPlaneAccelBox.IsChecked = (bool?)A.Service.Last?["dataPlaneAccel"] ?? false;
+        StationWifi6Box.IsChecked = (bool?)A.Service.Last?["stationWifi6"] ?? false;
         CheckUpdatesBox.IsChecked = s.CheckUpdates;
         PreviewUpdatesBox.IsChecked = s.PreviewUpdates;
         DeleteInstallerBox.IsChecked = s.DeleteInstallerAfterInstall;
@@ -369,6 +370,8 @@ public partial class SettingsWindow : Window
         if (highThroughput != ((bool?)A.Service.Last?["highThroughput"] ?? false)) A.Service.SetHighThroughput(highThroughput);
         var dataPlaneAccel = DataPlaneAccelBox.IsChecked == true;
         if (dataPlaneAccel != ((bool?)A.Service.Last?["dataPlaneAccel"] ?? false)) A.Service.SetDataPlaneAccel(dataPlaneAccel);
+        var stationWifi6 = StationWifi6Box.IsChecked == true;
+        if (stationWifi6 != ((bool?)A.Service.Last?["stationWifi6"] ?? false)) A.Service.SetStationWifi6(stationWifi6);
         A.Window?.FolderChanged();
         var hotkeyTaken = hotkeyChanged && !A.ApplyHotkey();
         if (receiveChanged || mediaChanged) A.RestartEngine();

@@ -69,6 +69,7 @@ public sealed class ServiceLink : IDisposable
     public void SetCoexPlan(bool on) => Send(new JsonObject { ["do"] = "coex-plan", ["on"] = on });
     public void SetHighThroughput(bool on) => Send(new JsonObject { ["do"] = "high-throughput", ["on"] = on });
     public void SetDataPlaneAccel(bool on) => Send(new JsonObject { ["do"] = "data-plane-accel", ["on"] = on });
+    public void SetStationWifi6(bool on) => Send(new JsonObject { ["do"] = "station-wifi6", ["on"] = on });
     /// <summary>Asks for the card list and models (answered with a "cards" event).</summary>
     public void RequestCards() => Send(new JsonObject { ["do"] = "cards" });
     /// <summary>Runs `hardwareId` as `model`; "" and "" go back to automatic.</summary>

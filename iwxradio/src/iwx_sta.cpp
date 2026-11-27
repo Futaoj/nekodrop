@@ -26,6 +26,13 @@ constexpr unsigned kStaPhy = 1;
 constexpr unsigned kStaBinding = 1;
 constexpr unsigned kStaLink = 1;
 
+/* MLD link HE fields (Linux enum iwl_link_ctx_modify_flags / iwl_link_ctx_flags). */
+constexpr uint32_t kLinkModifyHeParams = 1u << 5;
+constexpr uint32_t kLinkFlgBssColorDis = 1u << 0;
+constexpr uint32_t kLinkFlgMuEdcaCw = 1u << 1;
+constexpr uint32_t kLinkFlgRu2MhzBlock = 1u << 2;
+constexpr uint32_t kLinkFlgNdpFeedback = 1u << 3;
+
 /* EDCA defaults for a station (802.11-2016 table 9-137), per firmware AC. */
 struct Edca {
   uint16_t cw_min, cw_max;
@@ -63,7 +70,8 @@ int IwxDevice::sta_mac_cmd(uint32_t action, bool assoc) {
     cmd.ac[ac].edca_txop = htole16(static_cast<uint16_t>(kEdca[ac].txop_32us * 32));
   }
   cmd.qos_flags = htole32(IWX_MAC_QOS_FLG_UPDATE_EDCA | (_sta.ht ? IWX_MAC_QOS_FLG_TGN : 0u));
-  cmd.filter_flags = htole32(IWX_MAC_FILTER_ACCEPT_GRP | (assoc ? 0u : IWX_MAC_FILTER_IN_BEACON));
+  cmd.filter_flags = htole32(IWX_MAC_FILTER_ACCEPT_GRP | (assoc ? 0u : IWX_MAC_FILTER_IN_BEACON) |
+                             (assoc && _sta.he ? static_cast<uint32_t>(IWX_MAC_FILTER_IN_11AX) : 0u));
   if (assoc) {
     const uint32_t bi = _sta.beacon_int ? _sta.beacon_int : 100;
     cmd.sta.is_assoc = htole32(1);
@@ -89,6 +97,11 @@ int IwxDevice::mld_sta_mac_cmd(uint32_t action, bool assoc) {
   if (assoc) {
     cmd.client.is_assoc = 1;
     cmd.client.assoc_id = htole16(_sta_aid);
+  }
+  if (_sta.he) {
+    /* We never advertise HE ACK_EN (Linux iwl_mvm_is_nic_ack_enabled). */
+    cmd.he_support = htole16(1);
+    cmd.nic_not_ack_enabled = htole32(1);
   }
   return send_cmd(IWX_WIDE_ID(IWX_MAC_CONF_GROUP, IWX_MAC_CONFIG_CMD), &cmd, sizeof(cmd), false, nullptr);
 }
@@ -124,6 +137,29 @@ int IwxDevice::mld_sta_link_modify(bool active, uint32_t modify_mask) {
     cmd.ac[ac].edca_txop = htole16(static_cast<uint16_t>(kEdca[ac].txop_32us * 32));
   }
   cmd.qos_flags = htole32(IWX_MAC_QOS_FLG_UPDATE_EDCA | (_sta.ht ? IWX_MAC_QOS_FLG_TGN : 0u));
+  if (modify_mask & kLinkModifyHeParams) {
+    /* Linux iwl_mvm_link_changed (HE part): PE duration, RTS threshold,
+     * BSS color and the AP's MU EDCA for trigger-based uplink. */
+    const sta_he::ApHe &he = _sta.ap_he;
+    uint32_t flags = 0;
+    cmd.htc_trig_based_pkt_ext = static_cast<uint8_t>(he.op_params & sta_he::kOpPeDurationMask);
+    cmd.frame_time_rts_th = htole16(static_cast<uint16_t>((he.op_params & sta_he::kOpRtsThresholdMask) >> 4));
+    cmd.bss_color = he.bss_color();
+    if (he.op_params & sta_he::kOpBssColorDisabled) flags |= kLinkFlgBssColorDis;
+    if (he.mu_edca) {
+      flags |= kLinkFlgMuEdcaCw;
+      for (unsigned r = 0; r < 4; r++) {
+        const uint8_t *rec = he.mu_edca_rec + 3 * r;
+        iwx_he_backoff_conf &t = cmd.trig_based_txf[sta_he::mu_edca_fw_ac(r)];
+        t.cwmin = htole16(static_cast<uint16_t>(rec[1] & 15));
+        t.cwmax = htole16(static_cast<uint16_t>(rec[1] >> 4));
+        t.aifsn = htole16(static_cast<uint16_t>(rec[0] & 15));
+        t.mu_time = htole16(rec[2]);
+      }
+    }
+    cmd.flags = htole32(flags);
+    cmd.flags_mask = htole32(kLinkFlgBssColorDis | kLinkFlgMuEdcaCw | kLinkFlgRu2MhzBlock | kLinkFlgNdpFeedback);
+  }
   const uint32_t bi = _sta.beacon_int ? _sta.beacon_int : 100;
   cmd.bi = htole32(bi);
   cmd.dtim_interval = htole32(bi * (_sta_dtim ? _sta_dtim : 1));
@@ -156,6 +192,13 @@ int IwxDevice::mld_sta_cfg_ap(bool assoc) {
     cmd.mimo = htole32(_sta.mimo ? 1u : 0u);
     cmd.tx_ampdu_max_size = htole32(3u); /* 64 KiB (exponent 3) */
     cmd.tx_ampdu_spacing = htole32(6u);  /* 8 us (density 6) */
+  }
+  if (assoc && _sta.he) {
+    /* Linux iwl_mvm_mld_cfg_sta: packet extension, HT Control, ACK policy. */
+    if (!sta_he::packet_ext(_sta.ap_he, &cmd.pkt_ext.pkt_ext_qam_th[0][0][0], 5))
+      std::memset(&cmd.pkt_ext, 7, sizeof(cmd.pkt_ext));
+    cmd.htc_flags = htole32(sta_he::htc_flags(_sta.ap_he));
+    if (_sta.ap_he.mac[2] & sta_he::kMac2AckEn) cmd.ack_enabled = htole32(1);
   }
   const uint8_t ver = cmd_version(IWX_MAC_CONF_GROUP, IWX_STA_CONFIG_CMD);
   const size_t sz =
@@ -346,7 +389,8 @@ bool IwxDevice::sta_associated(uint16_t aid, uint8_t dtim_period) {
     }
     if (!err)
       err = mld_sta_link_modify(true, IWX_LINK_CONTEXT_MODIFY_RATES_INFO |
-                                          IWX_LINK_CONTEXT_MODIFY_QOS_PARAMS);
+                                          IWX_LINK_CONTEXT_MODIFY_QOS_PARAMS |
+                                          (_sta.he ? kLinkModifyHeParams : 0u));
     if (!err) err = mld_sta_mac_cmd(IWX_FW_CTXT_ACTION_MODIFY, true);
     if (!err) err = mld_sta_cfg_ap(true);
     if (!err) {
@@ -400,6 +444,15 @@ bool IwxDevice::sta_associated(uint16_t aid, uint8_t dtim_period) {
     uint32_t status = IWX_ADD_STA_SUCCESS;
     err = send_cmd_status(IWX_ADD_STA, &cmd, sizeof(cmd), &status);
     if (!err && (status & IWX_ADD_STA_STATUS_MASK) != IWX_ADD_STA_SUCCESS) err = EIO;
+  }
+  if (!err && _sta.he) {
+    const int e = sta_he_context();
+    if (e) {
+      /* The AP still talks HE to us; without the context the firmware cannot
+       * answer its triggers, so fall back to VHT rates and say so. */
+      _log("station: Wi-Fi 6 context refused (" + std::to_string(e) + "), using Wi-Fi 5 rates");
+      _sta.he = false;
+    }
   }
   if (!err) {
     iwx_mac_power_cmd pm{};
@@ -670,6 +723,53 @@ bool IwxDevice::sta_add_rx_ba(unsigned tid, uint16_t ssn, uint16_t window) {
   return true;
 }
 
+bool IwxDevice::sta_he_capable() const {
+  if (_card.firmware.find("-jf-") != std::string::npos) return false; /* Wireless-AC 9560 class radio */
+  if (use_mld()) return true; /* Bz: HE goes in the link and station config */
+  const uint8_t ver = cmd_version(IWX_DATA_PATH_GROUP, IWX_STA_HE_CTXT_CMD);
+  return ver == 1 || ver == 2;
+}
+
+/* ForbiddenItlwm iwx_build_he_sta / iwx_config_he_sta (Linux iwl_mvm_cfg_he_sta). */
+int IwxDevice::sta_he_context() {
+  const uint8_t ver = cmd_version(IWX_DATA_PATH_GROUP, IWX_STA_HE_CTXT_CMD);
+  if (ver != 1 && ver != 2) return EOPNOTSUPP;
+  static_assert(sizeof(iwx_he_sta_context_cmd) == 88, "HE context v2 ABI");
+  const sta_he::ApHe &he = _sta.ap_he;
+  iwx_he_sta_context_cmd cmd{};
+  cmd.sta_id = IWX_STATION_ID;
+  cmd.tid_limit = 1; /* single-TID aggregation */
+  uint32_t flags = IWX_HE_NIC_NOT_ACK_ENABLED;
+  cmd.bss_color = he.bss_color();
+  if (he.op_params & sta_he::kOpBssColorDisabled) flags |= IWX_HE_BSS_COLOR_DIS;
+  if (he.op_params & sta_he::kOpPartialBssColor) flags |= IWX_HE_PARTIAL_BSS_COLOR;
+  cmd.htc_trig_based_pkt_ext = static_cast<uint8_t>(he.op_params & sta_he::kOpPeDurationMask);
+  cmd.frame_time_rts_th = htole16(static_cast<uint16_t>((he.op_params & sta_he::kOpRtsThresholdMask) >> 4));
+  cmd.htc_flags = htole32(sta_he::htc_flags(he));
+  if (he.mac[2] & sta_he::kMac2Ba32) flags |= IWX_HE_32BIT_BA_BITMAP;
+  if (he.mac[2] & sta_he::kMac2AckEn) flags |= IWX_HE_ACK_ENABLED;
+  if (sta_he::packet_ext(he, &cmd.pkt_ext[0][0][0], 4)) flags |= IWX_HE_PACKET_EXT;
+  if (he.mu_edca) {
+    flags |= IWX_HE_MU_EDCA_CW;
+    for (unsigned r = 0; r < 4; r++) {
+      const uint8_t *rec = he.mu_edca_rec + 3 * r;
+      iwx_he_backoff_conf &t = cmd.trig_based_txf[sta_he::mu_edca_fw_ac(r)];
+      t.cwmin = htole16(static_cast<uint16_t>(rec[1] & 15));
+      t.cwmax = htole16(static_cast<uint16_t>(rec[1] >> 4));
+      t.aifsn = htole16(static_cast<uint16_t>(rec[0] & 15));
+      t.mu_time = htole16(rec[2]);
+    }
+  }
+  cmd.flags = htole32(flags);
+  const int err = send_cmd(iwx_cmd_id(IWX_STA_HE_CTXT_CMD, IWX_DATA_PATH_GROUP, 0), &cmd,
+                           ver == 1 ? 80 : sizeof(cmd), false, nullptr);
+  char b[112];
+  plat_snprintf(b, sizeof(b), "station: Wi-Fi 6 context v%u: BSS color %u, flags 0x%04x%s", ver, cmd.bss_color,
+                static_cast<unsigned>(flags), err ? " (refused)" : "");
+  _log(b);
+  return err;
+}
+
 bool IwxDevice::sta_rate_control() {
   if (!_sta_sta_added) return false;
   iwx_tlc_config_cmd_v4 c{};
@@ -680,7 +780,19 @@ bool IwxDevice::sta_rate_control() {
   c.chains = static_cast<uint8_t>(((ant & 1) ? IWX_TLC_MNG_CHAIN_A_MSK : 0) |
                                   ((ant & 2) ? IWX_TLC_MNG_CHAIN_B_MSK : 0));
   const bool mimo = _sta.mimo && (ant & 3) == 3;
-  if (_sta.vht) {
+  if (_sta.he) {
+    /* ForbiddenItlwm iwx_rs_fw_he_set_enabled_rates: the AP's HE receive
+     * map against ours (MCS 0-11, two streams), 80 MHz and below. */
+    const sta_he::ApHe &he = _sta.ap_he;
+    c.mode = IWX_TLC_MNG_MODE_HE;
+    const unsigned nss = mimo && sta_he::ap_streams(he.rx_mcs80) > 1 ? 2u : 1u;
+    for (unsigned ss = 0; ss < nss; ss++)
+      c.ht_rates[ss][IWX_TLC_MCS_PER_BW_80] = htole16(sta_he::tlc_mask(he.rx_mcs80, ss, he.ldpc()));
+    uint16_t flags = 0;
+    if ((ant & 3) == 3 && (he.phy[2] & sta_he::kPhy2StbcRxUnder80)) flags |= IWX_TLC_MNG_CFG_FLAGS_STBC_MSK;
+    if (he.ldpc()) flags |= IWX_TLC_MNG_CFG_FLAGS_LDPC_MSK;
+    c.flags = htole16(flags);
+  } else if (_sta.vht) {
     c.mode = IWX_TLC_MNG_MODE_VHT;
     c.ht_rates[IWX_TLC_NSS_1][IWX_TLC_MCS_PER_BW_80] = htole16(0x03ff); /* MCS 0-9 */
     if (mimo) c.ht_rates[IWX_TLC_NSS_2][IWX_TLC_MCS_PER_BW_80] = htole16(0x03ff);
@@ -694,7 +806,7 @@ bool IwxDevice::sta_rate_control() {
   c.max_ch_width = static_cast<uint8_t>(_sta.width >= 80 ? IWX_TLC_MNG_CH_WIDTH_80MHZ
                                         : _sta.width >= 40 ? IWX_TLC_MNG_CH_WIDTH_40MHZ
                                                            : IWX_TLC_MNG_CH_WIDTH_20MHZ);
-  if (_sta.ht || _sta.vht) {
+  if (!_sta.he && (_sta.ht || _sta.vht)) {
     c.sgi_ch_width_supp = static_cast<uint8_t>((1u << IWX_TLC_MNG_CH_WIDTH_20MHZ) |
                                                (1u << IWX_TLC_MNG_CH_WIDTH_40MHZ) |
                                                (_sta.vht ? (1u << IWX_TLC_MNG_CH_WIDTH_80MHZ) : 0u));
@@ -726,7 +838,7 @@ bool IwxDevice::sta_rate_control() {
   }
   nic_unlock();
   _sta_tlc = err == 0;
-  _log(_sta_tlc ? "station: firmware rate control on (TLC v" + std::to_string(ver) + ")"
+  _log(_sta_tlc ? "station: firmware rate control on (TLC v" + std::to_string(ver) + (_sta.he ? ", Wi-Fi 6" : "") + ")"
                 : "station: rate control refused (" + std::to_string(err) + "), fixed rates");
   return _sta_tlc;
 }

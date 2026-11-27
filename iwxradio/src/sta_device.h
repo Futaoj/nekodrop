@@ -53,6 +53,8 @@ public:
   virtual void sta_kick_tx_agg() {}
   virtual void sta_leave() = 0;
   virtual const StaParams &sta_params() const = 0;
+  /* Experimental Wi-Fi 6 station: the card and firmware can join as HE. */
+  virtual bool sta_he_capable() const { return false; }
 
 protected:
   ~StaDevice() = default;
@@ -95,6 +97,7 @@ public:
   void sta_kick_tx_agg() override { _dev.sta_kick_tx_agg(); }
   void sta_leave() override { _dev.sta_leave(); }
   const StaParams &sta_params() const override { return _dev.sta_params(); }
+  bool sta_he_capable() const override { return _dev.sta_he_capable(); }
 
 private:
   Dev &_dev;

@@ -29,6 +29,8 @@
 #include <type_traits>
 #include <utility>
 
+#include "sta_he.h"
+
 /* ---- Values every backend shares (moved here from iwx.h unchanged) ---- */
 
 struct RxFrame {
@@ -65,6 +67,10 @@ struct StaParams {
   uint8_t ap_ampdu = 0;
   uint32_t ap_vht_cap = 0;
   uint16_t ap_vht_mcs = 0xffff;
+  /* Experimental Wi-Fi 6: association agreed on HE (we asked and the AP
+   * answered with HE Capabilities and Operation), and what the AP said. */
+  bool he = false;
+  sta_he::ApHe ap_he;
 };
 
 struct TxStats {

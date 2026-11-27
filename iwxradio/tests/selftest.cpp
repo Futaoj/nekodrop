@@ -17,6 +17,7 @@
 #include "../src/crypto.h"
 #include "../src/iwx_rx_ba.h"
 #include "../src/wpa3.h"
+#include "../src/sta_he.h"
 #include "radio_backend_test.h"
 #include <cstring>
 #include <vector>
@@ -567,6 +568,76 @@ int main(int argc, char **argv) {
     ba.flush_expired(2000 + iwx::RxBaReorder::kStallTimeoutUs + 1, emit);
     CHECK(out.size() == 4 && out[3] == 14, "STA RX BA flushes stalled seq 14 after 40 ms timeout");
     ba.on_delba(ap, 0, emit);
+  }
+
+  /* Experimental Wi-Fi 6 station: our HE Capabilities, the AP's elements and
+   * what the firmware gets from them. */
+  {
+    uint8_t mine[sta_he::kOurCapElementSize];
+    CHECK(sta_he::our_cap_element(mine, true) == 24 && mine[0] == 255 && mine[1] == 22 && mine[2] == 35 &&
+              mine[3] == 0x01 && (mine[10] & 0x20) && mine[20] == 0xfa && mine[21] == 0xff,
+          "HE: our capabilities element (HTC-HE, LDPC, MCS 0-11 on two streams)");
+    sta_he::our_cap_element(mine, false);
+    CHECK(mine[20] == 0xfe && mine[22] == 0xfe, "HE: one-stream map when the card has one chain");
+
+    /* PPE thresholds: NSS field 1 (two streams), RU 242 and 484; PPET16, PPET8 per pair. */
+    const unsigned vals[4][2] = {{1, 2}, {3, 4}, {5, 6}, {0, 7}};
+    uint8_t ppe[4] = {0x19, 0, 0, 0};
+    unsigned bit = 7;
+    for (const auto &v : vals)
+      for (unsigned k = 0; k < 2; k++, bit += 3)
+        for (unsigned b = 0; b < 3; b++)
+          if ((v[k] >> b) & 1) ppe[(bit + b) / 8] |= static_cast<uint8_t>(1u << ((bit + b) % 8));
+    std::vector<uint8_t> cap = {0x09, 0, 0x28, 0, 0, 0,                    /* MAC: HTC-HE, BSR, 32-bit BA */
+                                0x04, 0x20, 0x08, 0, 0, 0, 0x80, 0, 0, 0, 0, /* PHY: 80 MHz, LDPC, STBC RX, PPE */
+                                0xfa, 0xff, 0xfa, 0xff};
+    cap.insert(cap.end(), ppe, ppe + 4);
+    sta_he::ApHe ap;
+    CHECK(sta_he::ppe_size(0x19, cap.data() + 6) == 4, "HE: PPE threshold size for 2 streams x 2 RUs");
+    CHECK(sta_he::parse_cap(cap.data(), cap.size(), ap) && ap.cap && ap.ppe_len == 4 && ap.rx_mcs80 == 0xfffa &&
+              ap.ldpc(),
+          "HE: AP capabilities parsed");
+    CHECK(!sta_he::parse_cap(cap.data(), cap.size() - 1, ap), "HE: truncated PPE thresholds rejected");
+    sta_he::parse_cap(cap.data(), cap.size(), ap);
+    const uint8_t op[6] = {0x44, 0x00, 0x00, 0x05, 0xfc, 0xff}; /* PE 4, RTS 4 (x32 us), color 5 */
+    CHECK(sta_he::parse_op(op, sizeof(op), ap) && ap.bss_color() == 5 &&
+              (ap.op_params & sta_he::kOpPeDurationMask) == 4 &&
+              ((ap.op_params & sta_he::kOpRtsThresholdMask) >> 4) == 4,
+          "HE: AP operation parsed (PE duration, RTS threshold, BSS color)");
+    const uint8_t op_vht[6] = {0x00, 0x40, 0x00, 0x01, 0xfc, 0xff};
+    sta_he::ApHe ap2;
+    CHECK(!sta_he::parse_op(op_vht, sizeof(op_vht), ap2), "HE: operation missing its VHT info rejected");
+    const uint8_t edca[13] = {0, 0x03, 0xa4, 8, 0x27, 0xa4, 8, 0x42, 0x43, 8, 0x62, 0x32, 8};
+    CHECK(sta_he::parse_mu_edca(edca, sizeof(edca), ap) && ap.mu_edca && ap.mu_edca_rec[1] == 0xa4,
+          "HE: MU EDCA records parsed");
+    CHECK(sta_he::mu_edca_fw_ac(0) == 1 && sta_he::mu_edca_fw_ac(1) == 0 && sta_he::mu_edca_fw_ac(3) == 3,
+          "HE: MU EDCA BE/BK/VI/VO map to firmware ACs");
+
+    uint8_t pe[2][4][2];
+    CHECK(sta_he::packet_ext(ap, &pe[0][0][0], 4) && pe[0][0][1] == 1 && pe[0][0][0] == 2 && pe[0][1][1] == 3 &&
+              pe[0][1][0] == 4 && pe[1][0][1] == 5 && pe[1][0][0] == 6 && pe[1][1][1] == 0 && pe[1][1][0] == 7 &&
+              pe[0][2][0] == 7 && pe[1][3][1] == 7,
+          "HE: packet extension from PPE thresholds");
+    sta_he::ApHe pad = ap;
+    pad.phy[6] = 0;
+    pad.ppe_len = 0;
+    pad.phy[9] = 0x80; /* nominal padding 16 us */
+    CHECK(sta_he::packet_ext(pad, &pe[0][0][0], 4) && pe[0][0][0] == 7 && pe[0][0][1] == 0 && pe[1][3][1] == 0,
+          "HE: packet extension from nominal padding");
+    pad.phy[9] = 0xc0;
+    CHECK(!sta_he::packet_ext(pad, &pe[0][0][0], 4), "HE: reserved padding means no packet extension");
+    uint8_t pe5[2][5][2];
+    CHECK(sta_he::packet_ext(ap, &pe5[0][0][0], 5) && pe5[0][1][0] == 4 && pe5[1][1][1] == 0 && pe5[0][4][0] == 7,
+          "HE: packet extension in the MLD layout (5 RU sizes)");
+
+    CHECK(sta_he::tlc_mask(0xfffa, 0, true) == 0x0fff && sta_he::tlc_mask(0xfffa, 1, true) == 0x0fff,
+          "HE: TLC MCS 0-11 on both streams");
+    CHECK(sta_he::tlc_mask(0xfffa, 0, false) == 0x03ff, "HE: no MCS 10/11 without LDPC");
+    CHECK(sta_he::tlc_mask(0xfff4, 0, true) == 0x00ff && sta_he::tlc_mask(0xfff4, 1, true) == 0x03ff,
+          "HE: TLC follows the AP's per-stream map");
+    CHECK(sta_he::tlc_mask(0xfffe, 1, true) == 0 && sta_he::ap_streams(0xfffe) == 1 && sta_he::ap_streams(0xfffa) == 2,
+          "HE: one-stream AP");
+    CHECK(sta_he::htc_flags(ap) == (1u | 1u << 4), "HE: HT Control flags (HTC-HE, BSR)");
   }
 
   std::printf(failures ? "%d FAILED\n" : "all passed\n", failures);

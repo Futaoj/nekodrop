@@ -138,6 +138,7 @@ bool StaConfig::load(const std::string &path, std::string &error) {
     else if (k == "width") max_width = static_cast<unsigned>(std::atoi(v.c_str()));
     else if (k == "ba") block_ack = v == "1";
     else if (k == "tap_writers") tap_writers = static_cast<unsigned>(std::atoi(v.c_str()));
+    else if (k == "he") he = v == "1";
   }
   if (ssid.empty() || ssid.size() > 32) error = "ssid missing or longer than 32 bytes";
   else if (!have_bssid) error = "bssid missing";
@@ -355,6 +356,7 @@ void WifiStation::learn_beacon(const uint8_t *f, size_t len) {
   _ap_ampdu = 0;
   _ap_vht_cap = 0;
   _ap_vht_mcs = 0xffff;
+  _ap_he = sta_he::ApHe{};
   _ap_pairwise_ccmp = _ap_bip_cmac = true;
   _ap_mfpc = _ap_mfpr = _ap_h2e_only = false;
   _ap_akms = 0;
@@ -409,6 +411,10 @@ void WifiStation::learn_beacon(const uint8_t *f, size_t len) {
       _ap_vht_mcs = le16(v + 4);
     } else if (id == 192 && n >= 1) {
       if (v[0] >= 1) _ap_width = 80;
+    } else if (id == 255 && n >= 1) {
+      if (v[0] == sta_he::kExtHeCap) sta_he::parse_cap(v + 1, n - 1u, _ap_he);
+      else if (v[0] == sta_he::kExtHeOp) sta_he::parse_op(v + 1, n - 1u, _ap_he);
+      else if (v[0] == sta_he::kExtMuEdca) sta_he::parse_mu_edca(v + 1, n - 1u, _ap_he);
     } else if (id == 221 && n >= 6 && v[0] == 0x00 && v[1] == 0x50 && v[2] == 0xf2 && v[3] == 0x02 &&
                (v[4] == 0x00 || v[4] == 0x01)) {
       _ap_wmm = true;
@@ -437,7 +443,7 @@ void WifiStation::learn_beacon(const uint8_t *f, size_t len) {
     std::snprintf(extra, sizeof(extra), " (cap=0x%04x ht=0x%04x ampdu=0x%02x vht=0x%08x wmm=%u)",
                   _ap_capab, _ap_ht_cap, _ap_ampdu, _ap_vht_cap, _ap_wmm ? 1u : 0u);
     _log(std::string("station: beacon heard: ") + sec +
-         (_ap_ht ? ", HT" : "") + (_ap_vht ? ", VHT" : "") + ", " + std::to_string(_ap_width) + " MHz" + extra);
+         (_ap_ht ? ", HT" : "") + (_ap_vht ? ", VHT" : "") + (_ap_he.usable() ? ", HE" : "") + ", " + std::to_string(_ap_width) + " MHz" + extra);
   }
 }
 
@@ -625,6 +631,14 @@ void WifiStation::send_assoc() {
     const uint8_t vht[14] = {191, 12, 0x20, 0x01, 0x80, 0x03, 0xfa, 0xff, 0, 0, 0xfa, 0xff, 0, 0};
     f.insert(f.end(), vht, vht + sizeof(vht));
   }
+  /* Experimental Wi-Fi 6: HE Capabilities only toward an HE AP that also
+   * runs HT and WMM (an HE STA is a QoS HT STA), and only on an HE card. */
+  _he_asked = _cfg.he && _ap_he.usable() && _ap_ht && _ap_wmm && _dev.sta_he_capable();
+  if (_he_asked) {
+    uint8_t he[sta_he::kOurCapElementSize];
+    const size_t n = sta_he::our_cap_element(he, true);
+    f.insert(f.end(), he, he + n);
+  }
   if (_ap_wmm) {
     /* WMM Information Element (OUI 00-50-F2, type 2, subtype 0, version 1, QoS info 0):
      * required by 802.11n/ac when advertising HT/VHT capabilities. */
@@ -683,6 +697,8 @@ void WifiStation::handle_mgmt(const RxFrame &in) {
                     _ap_capab, _ap_rsn_caps, _ap_wmm ? 1u : 0u, static_cast<unsigned>(_akm), _pmf ? 1u : 0u,
                     rsn_hex.empty() ? "none" : rsn_hex.c_str());
       _log(ctx);
+      if (_he_asked)
+        _log("station: this request asked for Wi-Fi 6; if it keeps failing, turn off experimental Wi-Fi 6 in Settings");
       return fail("association refused, status " + std::to_string(status));
     }
     if (status == 0) {
@@ -723,6 +739,31 @@ void WifiStation::handle_mgmt(const RxFrame &in) {
     p.ap_ampdu = _ap_ampdu;
     p.ap_vht_cap = _ap_vht_cap;
     p.ap_vht_mcs = _ap_vht_mcs;
+    p.he = false;
+    p.ap_he = _ap_he;
+    if (_he_asked) {
+      /* HE only if the response carries HE Capabilities and Operation too;
+       * its values win over the beacon's. */
+      sta_he::ApHe resp = _ap_he;
+      bool cap = false, op = false;
+      for (size_t i = 30; i + 2 <= f.len;) {
+        const uint8_t id = f.data[i], n = f.data[i + 1];
+        if (i + 2 + n > f.len) break;
+        const uint8_t *v = f.data + i + 2;
+        if (id == 255 && n >= 1) {
+          if (v[0] == sta_he::kExtHeCap) cap = sta_he::parse_cap(v + 1, n - 1u, resp);
+          else if (v[0] == sta_he::kExtHeOp) op = sta_he::parse_op(v + 1, n - 1u, resp);
+          else if (v[0] == sta_he::kExtMuEdca) sta_he::parse_mu_edca(v + 1, n - 1u, resp);
+        }
+        i += 2 + n;
+      }
+      if (cap && op) {
+        p.he = true;
+        p.ap_he = resp;
+      }
+      _log(p.he ? "station: Wi-Fi 6 (HE) agreed, BSS color " + std::to_string(resp.bss_color())
+                : std::string("station: the access point answered without HE, staying on Wi-Fi 5"));
+    }
     _dev.sta_join_update(p);
     if (!_dev.sta_associated(aid, _dtim)) return fail("the firmware refused the association");
     _dev.sta_rate_control();

@@ -39,8 +39,11 @@ struct StaConfig {
   /* 0: write TAP on the station RX thread. 2: queue and use two writer
    * threads, so the RX thread does not wait for TAP WriteFile. Same switch. */
   unsigned tap_writers = 0;
+  /* Experimental Wi-Fi 6: ask an HE access point for HE (802.11ax) when the
+   * card can; an AP without HE is joined as before. Off by default. */
+  bool he = false;
 
-  /* key=value lines: ssid, bssid, channel, passphrase, psk, open, tap, width, ba, tap_writers. */
+  /* key=value lines: ssid, bssid, channel, passphrase, psk, open, tap, width, ba, tap_writers, he. */
   bool load(const std::string &path, std::string &error);
 };
 
@@ -171,6 +174,8 @@ private:
   uint16_t _ap_ht_cap = 0, _ap_vht_mcs = 0xffff;
   uint8_t _ap_ampdu = 0;
   uint32_t _ap_vht_cap = 0;
+  sta_he::ApHe _ap_he;   /* from the beacon */
+  bool _he_asked = false; /* the last association request carried HE Capabilities */
   std::vector<uint8_t> _ap_rates;
 
   /* WPA2 */

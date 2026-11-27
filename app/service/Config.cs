@@ -55,6 +55,12 @@ public sealed class ServiceConfig
     /// </summary>
     public bool DataPlaneAccel { get; set; }
     /// <summary>
+    /// Experimental Wi-Fi 6 for nekodrop's own Wi-Fi connection (sta.conf he=1):
+    /// the Intel station asks a Wi-Fi 6 access point for 802.11ax (HE) and joins
+    /// any other access point as before. Off by default.
+    /// </summary>
+    public bool StationWifi6 { get; set; }
+    /// <summary>
     /// The user's manual choice when the card is not recognized by its ID
     /// (Settings, "Wi-Fi card"): its PCI hardware ID ("PCI\VEN_xxxx&amp;DEV_yyyy")
     /// and a CardCatalog.ManualModels key; both "" for automatic.

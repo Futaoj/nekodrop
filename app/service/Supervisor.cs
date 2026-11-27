@@ -91,6 +91,7 @@ public sealed class Supervisor : IDisposable
                 ["coexPlan"] = _cfg.CoexPlan,
                 ["highThroughput"] = _cfg.HighThroughput,
                 ["dataPlaneAccel"] = _cfg.DataPlaneAccel,
+                ["stationWifi6"] = _cfg.StationWifi6,
                 ["card"] = _cardLabel,
                 ["manualCard"] = _cfg.ManualCard,
                 ["manualModel"] = _cfg.ManualModel,
@@ -289,6 +290,24 @@ public sealed class Supervisor : IDisposable
     }
 
     /// <summary>
+    /// Experimental Wi-Fi 6 for nekodrop's own Wi-Fi connection (sta.conf he=1).
+    /// A running radio restarts so the station rejoins with or without HE.
+    /// </summary>
+    public void SetStationWifi6(bool on)
+    {
+        lock (_lock)
+        {
+            if (_cfg.StationWifi6 == on) return;
+            _cfg.StationWifi6 = on;
+            _cfg.Save();
+        }
+        Say($"experimental Wi-Fi 6 for the station: {(on ? "on" : "off")}");
+        if (State is RadioState.On or RadioState.Starting)
+            _ = Task.Run(() => Relaunch(_channel == 0 ? _cfg.StartChannel : _channel));
+        Publish();
+    }
+
+    /// <summary>
     /// The user's manual card choice (Settings): a PCI hardware ID and a
     /// CardCatalog.ManualModels key, or "" and "" for automatic. Used only for a
     /// card the catalog does not recognize by its ID. Returns "" or why not.
@@ -440,7 +459,7 @@ public sealed class Supervisor : IDisposable
                 lock (_lock) _staSsid = net?.Ssid ?? "";
                 if (net is not null && (net.Open || net.Passphrase is not null || net.PskHex is not null))
                 {
-                    staConf = Wlan.WriteStaConfig(net, _cfg.DataPlaneAccel);
+                    staConf = Wlan.WriteStaConfig(net, _cfg.DataPlaneAccel, _cfg.StationWifi6);
                     Say($"Wi-Fi: joining \"{net.Ssid}\" ({net.Security}, channel {net.Channel}) beside AirDrop");
                 }
                 else if (net is null && !wired && !_userOff && !_userChose &&
