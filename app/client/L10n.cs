@@ -287,6 +287,8 @@ public static class L
         ["set.card.detectedBadge"] = ("已自动识别", "Detected"),
         ["set.coexPlan.short"] = ("nekodrop 连的 Wi-Fi 和 AirDrop 不在同一信道时，按苹果的方式分时。", "Apple-style time sharing when nekodrop's Wi-Fi is on another channel than AirDrop."),
         ["set.highThroughput"] = ("高吞吐模式（Wi-Fi 6 HE80 + MTU 1500）", "High-throughput mode (Wi-Fi 6 HE80 + MTU 1500)"),
+        ["set.e138Fast"] = ("MT7925 高速模式（中国大陆室内）", "MT7925 high throughput (mainland China, indoors)"),
+        ["set.e138Fast.short"] = ("先在信道 6 发现设备，再按对方广播的信道尝试 44 或 149、80 MHz。仅限中国大陆室内。更改设置会重启无线连接。", "Discover on channel 6, then try the peer’s advertised channel 44 or 149 at 80 MHz. For indoor use in mainland China. Changing this setting restarts the radio."),
         ["set.highThroughput.short"] = ("在 5 GHz 80 MHz 下启用 Wi-Fi 6 (HE80) 收发、RX A-MSDU 聚合，并将 awdl0 MTU 提至 1500（适合 AX200+/MT7922；如出现断流请关闭）。", "Enable Wi-Fi 6 (HE80) TX/RX, RX A-MSDU aggregation on 5 GHz 80 MHz, and raise awdl0 MTU to 1500 (for AX200+/MT7922; turn off if transfers stall)."),
         ["set.dataPlaneAccel"] = ("实验性数据面加速（默认关闭）", "Experimental data-plane acceleration (off by default)"),
         ["set.dataPlaneAccel.short"] = ("多连接：关闭时约 20–45 Mbps，开启后 150–190 Mbps（40 并发约 200 Mbps），单连接吞吐不变。代价是 10–20 ms 抖动与 CPU 占用，个别网卡可能有断流风险；开启后 AirDrop 会重启数秒。适合 AX200，异常请关闭。",

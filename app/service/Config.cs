@@ -53,6 +53,8 @@ public sealed class ServiceConfig
     /// awdl0 MTU from 1450 to 1500. Off by default.
     /// </summary>
     public bool HighThroughput { get; set; }
+    /// <summary>Opt-in E138 wide-channel profile for use indoors in mainland China.</summary>
+    public bool E138IndoorCn { get; set; }
     /// <summary>
     /// Experimental station data-plane acceleration. It turns on both Intel
     /// RX Block Ack reordering (sta.conf ba=1) and the two TAP writer threads

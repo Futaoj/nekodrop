@@ -70,6 +70,7 @@ Intel AX201、Windows 11、`v2.2.9+`，开启高吞吐模式（HE80 + MTU 1500�
 | **MediaTek / AMD** | `mtradio` | MT7902 | 5 GHz 同时连 Wi-Fi / 按需 | ✅ 双向实测可用 |
 | **MediaTek / AMD** | `mtkradio` | MT7922 / AMD RZ616 | 5 GHz 同时连 Wi-Fi（实验性）/ 按需 | ✅ 双向实测可用 |
 | **MediaTek / AMD** | `mtkradio` | MT7921 / AMD RZ608 | 按需接管 | 🧪 实验性 |
+| **MediaTek** | MT7925 E138 | E138105B / REV_00 | 按需接管，可选中国大陆室内 5 GHz | 实验性，需测试签名。iPhone → Windows 整份平均 39.1–41.0 MB/s。[实测与安装](mt7925/README.md) |
 | **Realtek** | `devourer` | RTL8852CE | 按需接管 | ✅ 社区实测可用（约 24.5 MB/s） |
 
 > 未列出的无线网卡暂不支持 AWDL（如高通 Qualcomm、博通 Broadcom、Intel BE201/BE211、老款 Intel 9260 等）。完整 PCI ID、固件版本与每张卡的详细说明见 **[网卡兼容性](docs/COMPATIBILITY.zh-CN.md)** · **[网卡状态与适配新网卡](docs/CARDS.zh-CN.md)**。

@@ -36,6 +36,7 @@ $SupportedIntelIds = @('43F0', 'A0F0', '02F0', '06F0', '34F0', '3DF0', '4DF0', '
 # find a card that has no driver (it is then no network adapter). Never used to
 # call a device wireless by its vendor alone: Intel and Realtek make Ethernet
 # chips too (10EC:8168, 8086:15xx), which must not show up here.
+$Mt7925Pattern = '^PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00(?:\\|$)'
 $WifiChips = @{
   # Intel cards cards.h knows but cannot run: no firmware upstream.
   '8086:2720' = @('intel-fw', 'Intel QnJ')
@@ -96,6 +97,7 @@ $WifiChips = @{
 }
 # kind -> what the report says, and a hint for the reader (may be empty).
 $WifiKinds = @{
+  'supported-mt7925' = @('experimental MT7925 on-demand AirDrop (E138105B board)', 'Requires Windows x64 build 26100 or later and the dedicated test-signed driver. Windows Wi-Fi resumes after AirDrop stops.')
   'supported'     = @('supported by nekodrop', '')
   'supported-mtk' = @('supported by nekodrop (5 GHz Wi-Fi beside AirDrop, or on-demand; built-in MediaTek backend)', 'Joins 5 GHz Wi-Fi beside AirDrop, or runs on demand while Windows keeps Wi-Fi.')
   'supported-rtl' = @('supported by nekodrop (on-demand AirDrop, built-in RTL8852CE backend)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers.')
@@ -104,7 +106,7 @@ $WifiKinds = @{
   'intel-be'      = @('not supported: Intel Wi-Fi 7, no upstream driver', 'ForbiddenItlwm, which nekodrop ports, has no driver for Wi-Fi 7 cards yet.')
   'intel-other'   = @('not supported: an Intel device ID nekodrop does not know', 'Please post this report in an issue: if upstream ships firmware for this card, its ID can be added.')
   'rtl'           = @('not supported: Realtek', 'Among Realtek chips, nekodrop currently has built-in support for RTL8852CE (10EC:C852) only.')
-  'mtk'           = @('not supported: MediaTek', 'Among MediaTek chips, nekodrop currently has built-in support for MT7902, MT7921 (RZ608), and MT7922 (RZ616) only.')
+  'mtk'           = @('not supported: MediaTek', 'Supported MediaTek models include MT7902, MT7921 (RZ608), MT7922 (RZ616), and the experimental MT7925 board SUBSYS_E138105B, REV_00.')
   'qcom'          = @('not supported: Qualcomm', 'No user-mode Windows driver exists for Qualcomm Wi-Fi yet.')
   'bcm'           = @('not supported: Broadcom', 'There is no open Windows driver path for Broadcom Wi-Fi.')
   'usb'           = @('not supported: USB adapter', 'nekodrop drives PCIe cards only.')
@@ -125,6 +127,7 @@ function Classify-WifiCard([string]$InstanceId, [string]$FriendlyName = '') {
   elseif ($bus -eq 'PCI' -and $vendor) {
     $key = $vendor + ':' + $device
     if ($vendor -eq '8086' -and $SupportedIntelIds -contains $device) { $kind = 'supported'; $chip = 'Intel Wi-Fi 6/6E' }
+    elseif ($id -match $Mt7925Pattern) { $kind = 'supported-mt7925'; $chip = 'MediaTek MT7925 (E138105B)' }
     elseif ($WifiChips.ContainsKey($key)) { $kind = $WifiChips[$key][0]; $chip = $WifiChips[$key][1] }
     else {
       # Only reached for a device already known to be wireless (by its medium
@@ -178,7 +181,7 @@ function Get-DiscoverySummary($attemptLines, $engineLines) {
     return "| $name | $after | $text |"
   }
   $first = { param([string]$re) $lines | Where-Object { $_ -match $re } | Select-Object -First 1 }
-  $rows += & $row 'Radio ready' (& $first 'radio: ready on channel')
+  $rows += & $row 'Radio ready' (& $first 'radio: ready on channel|radio: Local radio initialized;')
   $startCh = & $first 'event: channel \d+ (active|passive)'
   $rows += & $row 'AWDL channel at start' $startCh
   $fast = & $first 'experimental fast passive-channel unlock: on'
@@ -435,7 +438,7 @@ $SupportedCardPattern = '^PCI\\(?:VEN_8086&DEV_(' + ($SupportedIntelIds -join '|
 # Every present device once: the supported card and the other wireless cards
 # below both come from it.
 $pnpAll = @(Try-Get { Get-PnpDevice -PresentOnly } | Where-Object { $_ })
-$card = $pnpAll | Where-Object { $_.InstanceId -match $SupportedCardPattern } | Select-Object -First 1
+$card = $pnpAll | Where-Object { $_.InstanceId -match $SupportedCardPattern -or $_.InstanceId -match $Mt7925Pattern } | Select-Object -First 1
 # A device property as text ('' when missing); any device, not only $card, so
 # the report can show an unsupported card's driver too.
 function Dev-Prop([string]$instanceId, [string]$key) {
@@ -491,7 +494,7 @@ function Wireless-Summary($dev) {
   $hw = if ($c.Bus -and $c.HardwareId -and $c.HardwareId -ne $c.Bus) { "$($c.Bus)\$($c.HardwareId)" } else { $c.HardwareId }
   return "$(Dev-Name $dev) (``$(Redact $hw)``): $($c.Chip), $($c.Status)"
 }
-$procs = @('nekodrop-radio', 'nekodrop-radio-rtl', 'nekodrop-radio-mt', 'nekodrop-radio-mtk', 'awdld', 'nekodrop', 'NekoDropService') | ForEach-Object {
+$procs = @('nekodrop-radio', 'nekodrop-radio-rtl', 'nekodrop-radio-mt', 'nekodrop-radio-mtk', 'nekodrop-radio-mt7925', 'awdld', 'awdld-mt7925', 'nekodrop', 'NekoDropService') | ForEach-Object {
   $p = Get-Process $_ -ErrorAction SilentlyContinue
   if ($p) { "$_ (running)" } else { "$_ (not running)" }
 }
@@ -503,13 +506,13 @@ $engineRunning = Try-Get { @(Get-CimInstance Win32_Process -Filter "Name='python
 $attempt = @()
 $lastRadio = -1; $lastTake = -1
 for ($i = 0; $i -lt $serviceLog.Count; $i++) {
-  if ($serviceLog[$i] -match 'radio: card 0x|mtkradio: regproxy opened:') { $lastRadio = $i }
+  if ($serviceLog[$i] -match 'radio: card 0x|mtkradio: regproxy opened:|radio: Local radio initialized;') { $lastRadio = $i }
   elseif ($serviceLog[$i] -match 'taking the card from') { $lastTake = $i }
 }
 $start = $lastRadio
 if ($lastTake -gt $lastRadio) { $start = $lastTake }
 elseif ($lastTake -ge 0 -and $lastRadio -ge 0) {
-  $between = $serviceLog[$lastTake..$lastRadio] | Where-Object { $_ -match 'radio: card 0x|mtkradio: regproxy opened:' }
+  $between = $serviceLog[$lastTake..$lastRadio] | Where-Object { $_ -match 'radio: card 0x|mtkradio: regproxy opened:|radio: Local radio initialized;' }
   if (@($between).Count -eq 1) { $start = $lastTake }
 }
 if ($start -ge 0) { $attempt = $serviceLog[$start..($serviceLog.Count - 1)] }
@@ -563,7 +566,10 @@ if ($start -lt 0) {
   W (Stage 'PNVM (AX210 family)' 'PNVM: \d+ bytes for this SKU' 'PNVM: none|PNVM: no buffer|PNVM: out of DMA|no PNVM_INIT_COMPLETE|did not take its platform NVM' 'AX210 family')
   W (Stage 'Firmware init (INIT_COMPLETE)' 'radio: NVM: tx antennas|mtkradio: WFDMA rings allocated' 'no INIT_COMPLETE|INIT_EXTENDED_CFG failed|NVM_ACCESS_COMPLETE failed|reading the NVM failed')
   W (Stage 'Firmware setup commands' 'radio: ready on channel|mtkradio: tuned to ch' 'firmware init commands failed|PHY context add failed|MAC context|binding failed')
-  W (Stage 'Radio ready' 'radio: ready on channel|mtkradio: listening on ' 'radio exited during bring-up|never became ready')
+  W (Stage 'Radio ready' 'radio: ready on channel|mtkradio: listening on |radio: Local radio initialized;' 'radio exited during bring-up|never became ready|MT7925 did not initialize')
+  if ($card -and $card.InstanceId -match $Mt7925Pattern) {
+    W (Stage 'MT7925 AWDL interface' 'host interface awdl0, index' 'MT7925.*interface.*failed|MT7925.*interface.*timed out')
+  }
   $awdl = $attempt | Where-Object { $_ -match 'rx: \d+ frames, (\d+) AWDL action frames' } | ForEach-Object { [int]$Matches[1] } | Measure-Object -Maximum
   # MIF counts (0.1.9+): awdld takes a peer as valid only after one (#16).
   $mif = $attempt | Where-Object { $_ -match 'AWDL action frames \((\d+) PSF, (\d+) MIF' } | ForEach-Object { [int]$Matches[2] } | Measure-Object -Maximum
@@ -662,7 +668,7 @@ if ($card) {
     $all = @(for ($i = 0; $i -lt $setupLines.Count; $i++) { if ($setupLines[$i] -match '^>>>  \[') { $i } })
     $starts = @(for ($k = 0; $k -lt $all.Count; $k++) {
       $last = if ($k + 1 -lt $all.Count) { $all[$k + 1] - 1 } else { $setupLines.Count - 1 }
-      if (($setupLines[$all[$k]..$last] -join ' ') -match 'winawdl_regproxy|RegProxy|WUDFRd') { $all[$k] }
+      if (($setupLines[$all[$k]..$last] -join ' ') -match 'winawdl_regproxy|RegProxy|WUDFRd|mt7925_bringup') { $all[$k] }
     })
     if ($starts.Count) {
       $from = $starts[-1]

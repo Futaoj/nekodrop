@@ -1,0 +1,182 @@
+diff --git a/daemon/core.c b/daemon/core.c
+index b194555..f00fd3b 100644
+--- a/daemon/core.c
++++ b/daemon/core.c
+@@ -114,19 +114,21 @@ void host_device_ready(struct ev_loop *loop, ev_io *handle, int revents) {
+ }
+ 
+ void awdl_receive_frame(uint8_t *user, const struct pcap_pkthdr *hdr, const uint8_t *buf) {
+-#define MAX_NUM_AMPDU 16 /* TODO lookup this constant from the standard */
+ 	struct daemon_state *state = (void *) user;
+-	int result;
+ 	const struct buf *frame = buf_new_const(buf, hdr->caplen);
+-	struct buf *data_arr[MAX_NUM_AMPDU];
+-	struct buf **data = &data_arr[0];
+-	result = awdl_rx(frame, &data, &state->awdl_state);
+-	if (result == RX_OK) {
+-		for (struct buf **data_start = &data_arr[0]; data_start < data; data_start++) {
+-			host_send(&state->io, buf_data(*data_start), buf_len(*data_start));
+-			buf_free(*data_start);
+-		}
+-	} else if (result < RX_OK) {
++	if (!frame)
++		return;
++	/* Every nonfinal A-MSDU subframe occupies at least 32 bytes (Ethernet
++	 * subheader, LLC, AWDL, alignment). 512 pointers cover a 16 KiB MPDU. */
++	struct buf *packets[512];
++	struct awdl_rx_frames data = {packets, packets + 512};
++	int result = awdl_rx(frame, &data, &state->awdl_state);
++	for (struct buf **packet = packets; packet < data.next; packet++) {
++		if (result == RX_OK)
++			host_send(&state->io, buf_data(*packet), buf_len(*packet));
++		buf_free(*packet);
++	}
++	if (result < RX_OK) {
+ 		log_warn("unhandled frame (%d)", result);
+ 		dump_frame(state->dump, hdr, buf);
+ 		state->awdl_state.stats.rx_unknown++;
+diff --git a/src/rx.c b/src/rx.c
+index 64188da..e872588 100644
+--- a/src/rx.c
++++ b/src/rx.c
+@@ -307,6 +307,8 @@ int awdl_rx_action(const struct buf *frame, signed char rssi, uint64_t tsft,
+ 
+ 	while ((len = read_tlv(frame, 0, &tlv_type, &tlv_len, &tlv_value)) > 0) {
+ 		const struct buf *tlv_buf = buf_new_const(tlv_value, tlv_len);
++		if (!tlv_buf)
++			return RX_UNEXPECTED_VALUE;
+ 		int result = awdl_handle_tlv(peer, tlv_type, tlv_buf, state, tsft);
+ 		if (state->tlv_cb)
+ 			state->tlv_cb(peer, tlv_type, tlv_buf, state, state->tlv_cb_data);
+@@ -363,7 +365,7 @@ int awdl_valid_llc_header(const struct buf *frame) {
+ 	return 1;
+ }
+ 
+-int awdl_rx_data(const struct buf *frame, struct buf ***out, const struct ether_addr *src,
++int awdl_rx_data(const struct buf *frame, struct awdl_rx_frames *out, const struct ether_addr *src,
+                  const struct ether_addr *dst, struct awdl_state *state) {
+ 	uint16_t ether_type;
+ 	int offset = 0;
+@@ -425,21 +427,24 @@ int awdl_rx_data(const struct buf *frame, struct buf ***out, const struct ether_
+ 	read_be16(frame, 6, &ether_type);
+ 	buf_strip(frame, sizeof(struct awdl_data));
+ 
+-	**out = buf_new_owned(ETHER_MAX_LEN);
+-
+-	/* TODO use checked write methods */
+-	offset += write_ether_addr(**out, offset, dst);
+-	offset += write_ether_addr(**out, offset, src);
+-	offset += write_be16(**out, offset, ether_type);
+-	/* TODO avoid copying bytes */
+-	offset += write_bytes(**out, offset, buf_data(frame), buf_len(frame));
+-
+-	(*out)++;
++	if (out->next == out->end)
++		return RX_UNEXPECTED_VALUE;
++	struct buf *ethernet = buf_new_owned(2 * ETHER_ADDR_LEN + 2 + buf_len(frame));
++	if (!ethernet)
++		return RX_UNEXPECTED_VALUE;
++	offset += write_ether_addr(ethernet, offset, dst);
++	offset += write_ether_addr(ethernet, offset, src);
++	offset += write_be16(ethernet, offset, ether_type);
++	if (write_bytes(ethernet, offset, buf_data(frame), buf_len(frame)) < 0) {
++		buf_free(ethernet);
++		return RX_UNEXPECTED_FORMAT;
++	}
++	*out->next++ = ethernet;
+ 
+ 	return RX_OK;
+ }
+ 
+-int awdl_rx_data_amsdu(const struct buf *frame, struct buf ***out, const struct ether_addr *src __attribute__((unused)),
++int awdl_rx_data_amsdu(const struct buf *frame, struct awdl_rx_frames *out, const struct ether_addr *src __attribute__((unused)),
+                        const struct ether_addr *dst __attribute__((unused)), struct awdl_state *state) {
+ 	/* Iterate over all subframes */
+ 	while (buf_len(frame) > 0) {
+@@ -455,6 +460,8 @@ int awdl_rx_data_amsdu(const struct buf *frame, struct buf ***out, const struct
+ 			return RX_TOO_SHORT;
+ 		/* create subview of buf */
+ 		subframe = buf_new_const(buf_data(frame), len_a);
++		if (!subframe)
++			return RX_UNEXPECTED_VALUE;
+ 		err = awdl_rx_data(subframe, out, &src_a, &dst_a, state);
+ 		buf_free(subframe);
+ 		if (err < 0)
+@@ -514,13 +521,13 @@ wire_error:
+ 	return -1;
+ }
+ 
+-int awdl_rx(const struct buf *frame, struct buf ***data_frame, struct awdl_state *state) {
++int awdl_rx(const struct buf *frame, struct awdl_rx_frames *data_frame, struct awdl_state *state) {
+ 	const struct ieee80211_hdr *ieee80211;
+ 	const struct ether_addr *from, *to;
+ 	uint16_t fc, qosc; /* frame and QoS control */
+-	signed char rssi;
++	signed char rssi = 0;
+ 	uint64_t tsft;
+-	uint8_t flags;
++	uint8_t flags = 0;
+ 
+ 	tsft = clock_time_us(); /* TODO Radiotap TSFT is more accurate but then need to access TSF in clock_time_us() */
+ 	if (radiotap_parse(frame, &rssi, &flags, NULL /* &tsft */) < 0)
+diff --git a/src/rx.h b/src/rx.h
+index 618993f..158af8c 100644
+--- a/src/rx.h
++++ b/src/rx.h
+@@ -64,19 +64,25 @@ int awdl_rx_action(const struct buf *frame, signed char rssi, uint64_t tsft,
+ int llc_parse(const struct buf *frame, struct llc_hdr *llc);
+ int awdl_valid_llc_header(const struct buf *frame);
+ 
+-int awdl_rx_data(const struct buf *frame, struct buf ***out,
++struct awdl_rx_frames {
++	struct buf **next;
++	struct buf **end;
++};
++
++int awdl_rx_data(const struct buf *frame, struct awdl_rx_frames *out,
+                  const struct ether_addr *src, const struct ether_addr *dst, struct awdl_state *state);
+ 
+-int awdl_rx_data_amsdu(const struct buf *frame, struct buf ***out,
++int awdl_rx_data_amsdu(const struct buf *frame, struct awdl_rx_frames *out,
+                        const struct ether_addr *src, const struct ether_addr *dst, struct awdl_state *state);
+ 
+ /** @brief Receive and process AWDL action and data frame
+  *
+  * @param frame input frame
+- * @param data if {@code frame} points to a valid AWDL data frame, will point to converted Ethernet frame after function returns
++ * @param data_frames output Ethernet frames in [next, end). The caller frees each
++ *        appended frame, including when a later A-MSDU subframe fails to decode.
+  * @param state
+  * @return RX_OK
+  */
+-int awdl_rx(const struct buf *frame, struct buf ***data_frames, struct awdl_state *state);
++int awdl_rx(const struct buf *frame, struct awdl_rx_frames *data_frames, struct awdl_state *state);
+ 
+ #endif /* AWDL_RX_H_ */
+diff --git a/src/wire.c b/src/wire.c
+index 3f991e4..d4c042f 100644
+--- a/src/wire.c
++++ b/src/wire.c
+@@ -33,7 +33,13 @@ struct buf *buf_new_owned(int len) {
+ 	if (len < 0)
+ 		return NULL;
+ 	struct buf *buf = (struct buf *) malloc(sizeof(struct buf));
++	if (!buf)
++		return NULL;
+ 	buf->data = (uint8_t *) malloc(len);
++	if (!buf->data && len) {
++		free(buf);
++		return NULL;
++	}
+ 	buf->orig = buf->data;
+ 	buf->len = len;
+ 	buf->owned = 1;
+@@ -44,6 +50,8 @@ const struct buf *buf_new_const(const uint8_t *data, int len) {
+ 	if (len < 0)
+ 		return NULL;
+ 	struct buf *buf = (struct buf *) malloc(sizeof(struct buf));
++	if (!buf)
++		return NULL;
+ 	buf->data = (uint8_t *) data;
+ 	buf->orig = data;
+ 	buf->len = len;

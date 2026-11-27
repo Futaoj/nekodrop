@@ -211,6 +211,14 @@ $Log = Join-Path $env:ProgramData 'nekodrop-uninstall.log'
 "nekodrop uninstall $(Get-Date -Format s), target $Target" | Set-Content $Log -ErrorAction SilentlyContinue
 $failures = 0
 
+$mt7925Cards = @(Get-PnpDevice -PresentOnly | Where-Object {
+  $_.InstanceId -match '^PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00\\'
+})
+if ($mt7925Cards.Count -gt 1) {
+  Write-Error 'More than one MT7925 E138105B REV_00 is present. Uninstall cannot safely switch a single board by hardware ID.'
+  exit 1
+}
+
 Try-Step 'Giving the Wi-Fi card back' {
   if (Get-Service $Service -ErrorAction SilentlyContinue) {
     Stop-Service $Service -Force -ErrorAction SilentlyContinue  # the card is given back below either way
@@ -237,7 +245,14 @@ Try-Step 'Service' {
 
 Try-Step 'Driver package and certificate' {
   $store = [xml](pnputil /enum-drivers /format xml | Out-String)
-  $store.PnpUtil.Driver | Where-Object { $_.OriginalName -eq 'winawdl_regproxy.inf' -and $_.ProviderName -eq 'winairdrop project' } |
+  $store.PnpUtil.Driver | Where-Object {
+    $ourSigner = $_.SignerName -in $CertSubject, $CertSubject.Substring(3)
+    $ourSigner -and (
+      ($_.OriginalName -eq 'winawdl_regproxy.inf' -and $_.ProviderName -eq 'winairdrop project') -or
+      ($_.OriginalName -eq 'mt7925_bringup.inf' -and $_.ProviderName -eq 'NekoDrop MT7925') -or
+      ($_.OriginalName -eq 'nekodrop_mt7925_sar.inf' -and $_.ProviderName -eq 'NekoDrop MT7925 Fast')
+    )
+  } |
     ForEach-Object {
       pnputil /delete-driver $_.DriverName /uninstall /force | Out-Null
       if ($LASTEXITCODE -ne 0) { throw "pnputil /delete-driver $($_.DriverName) exited $LASTEXITCODE" }

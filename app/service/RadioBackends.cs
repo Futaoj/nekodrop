@@ -15,7 +15,7 @@ namespace NekoDrop.Service;
 /// 0.1.37: AX200 and AX211 data, nobody worse; Intel only, not on the kernel path)</param>
 public sealed record RadioStart(AdapterProfile Profile, int Channel, bool Kernel, string Country, string? StaConf,
                                 bool Aggregate, bool FastUnlock, bool CoexPlan = false, bool BtCoexBalanced = false,
-                                bool HighThroughput = false)
+                                bool HighThroughput = false, string? InstanceId = null, string? StopFile = null)
 {
     /// <summary>20 MHz on 2.4 GHz, 80 MHz on 5 GHz.</summary>
     public int Width => Channel <= 14 ? 20 : 80;
@@ -46,6 +46,7 @@ public static class RadioBackends
         new DevourerRadioBackend(),
         new Mt76RadioBackend(),
         new MtkRadioBackend(),
+        new Mt7925RadioBackend(),
     }.ToDictionary(b => b.Kind);
 
     public static IRadioBackend Get(RadioBackendKind kind) =>
@@ -118,6 +119,46 @@ public sealed class Mt76RadioBackend : IRadioBackend
         if (s.StaConf is not null) args.AddRange(["--sta-config", s.StaConf]);
         return args;
     }
+}
+
+/// <summary>The dedicated 20 MHz MT7925 radio talks to its KMDF driver over a device interface.</summary>
+public sealed class Mt7925RadioBackend : IRadioBackend
+{
+    public RadioBackendKind Kind => RadioBackendKind.Mt7925;
+    public string ExeName => "nekodrop-radio-mt7925.exe";
+    public static string FirmwareDirectory => Path.Combine(AppContext.BaseDirectory, "radio", "firmware", "mt7925");
+    public const int Channel = 6;
+    public const string FastExe = "nekodrop-radio-mt7925-fast.exe";
+    public const string FastInf = @"mt7925-fast\nekodrop_mt7925_sar.inf";
+
+    public static bool IsFastChannel(int channel) => channel is 44 or 149;
+
+    public static int PreferredChannel(string advertised)
+    {
+        var slots = advertised.Split(',');
+        if (slots.Length != 16) return 0;
+        int low = 0, high = 0;
+        foreach (var slot in slots)
+        {
+            if (!byte.TryParse(slot, out var channel)) return 0;
+            if (channel == 44) low++;
+            if (channel == 149) high++;
+        }
+        return high > low ? 149 : low > 0 ? 44 : 0;
+    }
+
+    public static CardCatalog.RadioLaunch FastLaunch(string instance, string stopFile, int channel)
+    {
+        if (!IsFastChannel(channel)) throw new ArgumentOutOfRangeException(nameof(channel));
+        return new(FastExe, ["--e138-fast", "--indoor", "--country", "CN", "--channel", channel.ToString(),
+                            "--firmware", FirmwareDirectory, "--instance", instance, "--stop-file", stopFile]);
+    }
+
+    public IReadOnlyList<string> BuildArgs(RadioStart s) =>
+        ["--run", "--firmware", FirmwareDirectory, "--country", "00", "--channel", Channel.ToString(),
+         "--power-half-dbm", "12", "--fixed-channel", "--instance",
+         s.InstanceId ?? throw new ArgumentException("MT7925 needs a PCI instance ID"),
+         "--stop-file", s.StopFile ?? throw new ArgumentException("MT7925 needs a session stop file")];
 }
 
 /// <summary>

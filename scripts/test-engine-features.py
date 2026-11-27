@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Unit tests for nekodrop's link extraction and media capabilities patches."""
+import gzip
+import io
 import json
 import os
 import sys
@@ -62,6 +64,19 @@ class LinkExtractionTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(path))
         os.unlink(path)
         self.assertEqual(transfer.save_preview_icon({'FileIcon': b'not an image at all!'}, 't2'), '')
+
+
+class UploadEndTests(unittest.TestCase):
+    def test_short_chunk_header_wait_requires_complete_codec_and_archive(self):
+        archive = b''.join(transfer.cpio.write_archive([]))
+        compressed = gzip.compress(archive)
+        stored = (0x80000000 | len(archive)).to_bytes(4, 'big') + archive
+        for body, complete in ((compressed, True), (compressed[:-4], False),
+                               (stored, True), (stored + b'\x80\0', False)):
+            with self.subTest(length=len(body)):
+                watched = transfer.EndWatchingFile(io.BytesIO(), lambda: None)
+                watched.write(body)
+                self.assertEqual(watched.complete_stream, complete)
 
 
 class MediaCapabilitiesTests(unittest.TestCase):

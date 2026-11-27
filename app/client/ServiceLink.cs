@@ -67,7 +67,8 @@ public sealed class ServiceLink : IDisposable
     public void SetMode(string mode) => Send(new JsonObject { ["do"] = "mode", ["mode"] = mode });
     public void SetFastUnlock(bool on) => Send(new JsonObject { ["do"] = "fast-unlock", ["on"] = on });
     public void SetCoexPlan(bool on) => Send(new JsonObject { ["do"] = "coex-plan", ["on"] = on });
-    public void SetHighThroughput(bool on) => Send(new JsonObject { ["do"] = "high-throughput", ["on"] = on });
+    public void SetHighThroughput(bool on, bool e138IndoorCn) =>
+        Send(new JsonObject { ["do"] = e138IndoorCn ? "e138-indoor-cn" : "high-throughput", ["on"] = on });
     public void SetDataPlaneAccel(bool on) => Send(new JsonObject { ["do"] = "data-plane-accel", ["on"] = on });
     public void SetStationWifi6(bool on) => Send(new JsonObject { ["do"] = "station-wifi6", ["on"] = on });
     public void SetKeepWindowsMac(bool on) => Send(new JsonObject { ["do"] = "keep-windows-mac", ["on"] = on });

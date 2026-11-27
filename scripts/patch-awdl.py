@@ -15,6 +15,7 @@
 #
 # Idempotent; exits with an error when the source no longer matches.
 import pathlib
+import subprocess
 import sys
 
 root = pathlib.Path(sys.argv[1])
@@ -655,3 +656,17 @@ patch_once(
     '\t}\n',
     'owl rx.c unwrap RFC 1042-encapsulated 802.3 AWDL A-MSDU subframes',
 )
+
+# The optional E138 80 MHz host spans winawdl and its pinned OWL submodule.
+# Apply each tracked patch in its own tree. A reverse check makes repeated
+# builds safe and keeps an incompatible upstream change from going unnoticed.
+overlay = pathlib.Path(__file__).resolve().parents[1] / 'mt7925' / 'awdl-fast'
+owl = root / 'upstream' / 'owl'
+for tree, name in [(root, 'winawdl.patch'), (owl, 'owl.patch'), (owl, 'owl-rx.patch')]:
+    git_apply = ['git', '-C', str(tree), 'apply', '--ignore-space-change']
+    patch = str(overlay / name)
+    installed = subprocess.run(git_apply + ['--reverse', '--check', patch], capture_output=True)
+    if installed.returncode:
+        subprocess.run(git_apply + ['--check', patch], check=True)
+        subprocess.run(git_apply + [patch], check=True)
+    print(f'{name}: E138 fast host applied')

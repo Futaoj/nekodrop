@@ -39,9 +39,9 @@ RegProxy::~RegProxy() {
   if (_handle) CloseHandle(_handle);
 }
 
-bool RegProxy::open(std::string &error) {
+bool RegProxy::open(std::string &error, const std::wstring &instance_id) {
   const GUID *iface = &GUID_DEVINTERFACE_WINAWDL_REGPROXY;
-  HDEVINFO set = SetupDiGetClassDevsW(iface, nullptr, nullptr,
+  HDEVINFO set = SetupDiGetClassDevsW(iface, instance_id.empty() ? nullptr : instance_id.c_str(), nullptr,
                                       DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
   if (set == INVALID_HANDLE_VALUE) {
     error = "device enumeration failed";
@@ -60,7 +60,8 @@ bool RegProxy::open(std::string &error) {
     devinfo.cbSize = sizeof(devinfo);
     wchar_t instance[MAX_DEVICE_ID_LEN] = {};
     if (SetupDiGetDeviceInterfaceDetailW(set, &data, detail, size, nullptr, &devinfo) &&
-        SetupDiGetDeviceInstanceIdW(set, &devinfo, instance, MAX_DEVICE_ID_LEN, nullptr)) {
+        SetupDiGetDeviceInstanceIdW(set, &devinfo, instance, MAX_DEVICE_ID_LEN, nullptr) &&
+        (instance_id.empty() || _wcsicmp(instance, instance_id.c_str()) == 0)) {
       _vendor = id_field(instance, L"VEN_");
       _device = id_field(instance, L"DEV_");
       _subsystem = subsystem_device(instance);

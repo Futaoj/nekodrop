@@ -6,6 +6,10 @@
 
 ---
 
+## Unreleased / 未发布
+
+- 新增实验性 MediaTek MT7925 E138 按需适配，支持 iPhone 向 Windows 在中国大陆室内 5 GHz 信道传输。[实测与安装](mt7925/README.md)
+
 ## v2.3.6 (Stable / 稳定版)
 
 ### 中文

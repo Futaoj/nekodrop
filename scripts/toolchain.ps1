@@ -56,6 +56,11 @@ function Initialize-Toolchain {
               Sort-Object Name | Select-Object -Last 1
   @{
     VsRoot   = $vsRoot
+    WdkRoot  = $wdk
+    WdkVersion = $wdkVersion
+    SdkRoot = $kit
+    SdkVersion = $kitVersion
+    MsvcRoot = $msvc.FullName
     Cl       = "$msvcBin\cl.exe"
     ClangCl  = "$llvm\clang-cl.exe"
     CMake    = "$cmakeDir\CMake\bin\cmake.exe"

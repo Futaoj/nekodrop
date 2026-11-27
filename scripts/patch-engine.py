@@ -653,6 +653,62 @@ def question_names(packet):
     mdns.write_text(text, encoding='utf-8')
     print('mdns.py: IPv6-only host answers for macOS address queries')
 
+# Keep a burst of unrelated multicast questions from suppressing direct QU
+# replies. Bound recent unicast replies separately by recipient and packet.
+if 'MAX_RECENT_QU_REPLIES = 64' not in text:
+    pairs = [
+        (
+            'MIN_REPLY_GAP_S = 0.1\n',
+            'MIN_REPLY_GAP_S = 0.1\nMAX_RECENT_QU_REPLIES = 64\n',
+        ),
+        (
+            '        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_HOPS, 255)\n',
+            '        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_HOPS, 255)\n'
+            '        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_UNICAST_HOPS, 255)\n',
+        ),
+        (
+            "        last_announce = last_reply = float('-inf')\n",
+            "        last_announce = last_reply = float('-inf')\n        recent_unicast = {}\n",
+        ),
+        (
+            '            if not asked or self.stopping.is_set() or now - last_reply < MIN_REPLY_GAP_S:\n',
+            '            if not asked or self.stopping.is_set():\n',
+        ),
+        (
+            """            else:
+                reply = announcement
+                last_announce = now
+            qu_target = getattr(self, '_last_qu_sender', None)
+            if qu_target is not None:
+                self._send_to(reply, qu_target)
+            self._send(reply)
+            last_reply = now""",
+            """            else:
+                reply = announcement
+            qu_target = getattr(self, '_last_qu_sender', None)
+            if qu_target is not None:
+                key = qu_target, reply
+                if now - recent_unicast.get(key, float('-inf')) >= MIN_REPLY_GAP_S:
+                    if len(recent_unicast) >= MAX_RECENT_QU_REPLIES:
+                        recent_unicast = {k: sent for k, sent in recent_unicast.items()
+                                          if now - sent < MIN_REPLY_GAP_S}
+                    if len(recent_unicast) < MAX_RECENT_QU_REPLIES:
+                        self._send_to(reply, qu_target)
+                        recent_unicast[key] = now
+            if now - last_reply >= MIN_REPLY_GAP_S:
+                self._send(reply)
+                last_reply = now
+                if reply is announcement:
+                    last_announce = now""",
+        ),
+    ]
+    for old, new in pairs:
+        if text.count(old) != 1:
+            sys.exit(f'mdns.py: {old[:60]!r} moved; update patch-engine.py')
+        text = text.replace(old, new, 1)
+    mdns.write_text(text, encoding='utf-8')
+    print('mdns.py: keep distinct unicast responses during query bursts')
+
 # Link sharing & media format support:
 # - Extract http(s) URLs from AirDrop Ask Items even when an app (e.g. Bilibili,
 #   Xiaohongshu, WeChat) wraps the link with title text or omits TransferType.links
@@ -1716,3 +1772,54 @@ _hook('engine.py', [
         '                del self._watches[watch.key]' + NL,
     ),
 ], 'BEACON_REPULSE_COOLDOWN_S')
+
+# Apple may leave the last HTTP chunk header pending after a complete DVZip
+# upload. Shorten only the wait for its first byte at a verified codec boundary.
+_hook('transfer.py', [
+    ('def _read_chunked(rfile, writer, deadline):',
+     'def _read_chunked(rfile, writer, deadline, read_chunk_header):'),
+    ("        deadline.between_chunks = deadline.chunks > 0\n        line = rfile.readline(",
+     "        deadline.between_chunks = deadline.chunks > 0\n        line = read_chunk_header("),
+    ('                      deadline=None):\n    """Stream one framed request body',
+     '                      deadline=None, read_chunk_header=None):\n    """Stream one framed request body'),
+    ('        _read_chunked(rfile, writer, deadline)\n',
+     '        _read_chunked(rfile, writer, deadline, read_chunk_header or rfile.readline)\n'),
+    ('    def _first_bytes(self, data):',
+     '''    @property
+    def complete_stream(self):
+        return (not self._gave_up and self._scanner.complete and not self._held
+                and self._block_left == 0 and (self._inflater is None or
+                (self._inflater.eof and not self._inflater.unused_data)))
+
+    def _first_bytes(self, data):'''),
+    ('        self._complete = False\n        self._wire = 0',
+     '        self._complete = False\n        self.complete_stream = False\n        self._wire = 0'),
+    ('        if not self._complete and self._watcher.feed(data):\n            self._complete = True',
+     '''        self.complete_stream = False
+        if not self._complete and self._watcher.feed(data):
+            self.complete_stream = self._watcher.complete_stream
+            self._complete = True'''),
+], 'def complete_stream(self):')
+
+_hook('receiver.py', [
+    ('        sink = transfer.AsyncBufferedWriter(raw)\n        try:',
+     '''        sink = transfer.AsyncBufferedWriter(raw)
+        watched = transfer.EndWatchingFile(sink, expect_little_more, on_progress)
+
+        def read_chunk_header(limit):
+            if watched.complete_stream:
+                # Data or a partial header gets the ordinary deadline. Only a
+                # silent sender with a complete archive gets the short wait.
+                self.request.settimeout(0.04)
+                try:
+                    self.rfile.peek(1)
+                finally:
+                    self.request.settimeout(deadline.idle_seconds)
+            return self.rfile.readline(limit)
+
+        try:'''),
+    ('                    transfer.EndWatchingFile(sink, expect_little_more, on_progress),\n'
+     '                    budget.byte_limit, disk=dest, plan=plan, deadline=deadline)',
+     '                    watched, budget.byte_limit, disk=dest, plan=plan, deadline=deadline,\n'
+     '                    read_chunk_header=read_chunk_header)'),
+], 'def read_chunk_header(limit):')

@@ -35,6 +35,7 @@ $SupportedIntelIds = @('43F0', 'A0F0', '02F0', '06F0', '34F0', '3DF0', '4DF0', '
 # find a card that has no driver (it is then no network adapter). Never used to
 # call a device wireless by its vendor alone: Intel and Realtek make Ethernet
 # chips too (10EC:8168, 8086:15xx), which must not show up here.
+$Mt7925Pattern = '^PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00(?:\\|$)'
 $WifiChips = @{
   # Intel cards cards.h knows but cannot run: no firmware upstream.
   '8086:2720' = @('intel-fw', 'Intel QnJ')
@@ -95,6 +96,7 @@ $WifiChips = @{
 }
 # kind -> what the report says, and a hint for the reader (may be empty).
 $WifiKinds = @{
+  'supported-mt7925' = @('experimental MT7925 on-demand AirDrop (E138105B board)', 'Requires Windows x64 build 26100 or later and the dedicated test-signed driver. Windows Wi-Fi resumes after AirDrop stops.')
   'supported'     = @('supported by nekodrop', '')
   'supported-mtk' = @('supported by nekodrop (5 GHz Wi-Fi beside AirDrop, or on-demand; built-in MediaTek backend)', 'Joins 5 GHz Wi-Fi beside AirDrop, or runs on demand while Windows keeps Wi-Fi.')
   'supported-rtl' = @('supported by nekodrop (on-demand AirDrop, built-in RTL8852CE backend)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers.')
@@ -103,7 +105,7 @@ $WifiKinds = @{
   'intel-be'      = @('not supported: Intel Wi-Fi 7, no upstream driver', 'ForbiddenItlwm, which nekodrop ports, has no driver for Wi-Fi 7 cards yet.')
   'intel-other'   = @('not supported: an Intel device ID nekodrop does not know', 'Please post this report in an issue: if upstream ships firmware for this card, its ID can be added.')
   'rtl'           = @('not supported: Realtek', 'Among Realtek chips, nekodrop currently has built-in support for RTL8852CE (10EC:C852) only.')
-  'mtk'           = @('not supported: MediaTek', 'Among MediaTek chips, nekodrop currently has built-in support for MT7902, MT7921 (RZ608), and MT7922 (RZ616) only.')
+  'mtk'           = @('not supported: MediaTek', 'Supported MediaTek models include MT7902, MT7921 (RZ608), MT7922 (RZ616), and the experimental MT7925 board SUBSYS_E138105B, REV_00.')
   'qcom'          = @('not supported: Qualcomm', 'No user-mode Windows driver exists for Qualcomm Wi-Fi yet.')
   'bcm'           = @('not supported: Broadcom', 'There is no open Windows driver path for Broadcom Wi-Fi.')
   'usb'           = @('not supported: USB adapter', 'nekodrop drives PCIe cards only.')
@@ -124,6 +126,7 @@ function Classify-WifiCard([string]$InstanceId, [string]$FriendlyName = '') {
   elseif ($bus -eq 'PCI' -and $vendor) {
     $key = $vendor + ':' + $device
     if ($vendor -eq '8086' -and $SupportedIntelIds -contains $device) { $kind = 'supported'; $chip = 'Intel Wi-Fi 6/6E' }
+    elseif ($id -match $Mt7925Pattern) { $kind = 'supported-mt7925'; $chip = 'MediaTek MT7925 (E138105B)' }
     elseif ($WifiChips.ContainsKey($key)) { $kind = $WifiChips[$key][0]; $chip = $WifiChips[$key][1] }
     else {
       # Only reached for a device already known to be wireless (by its medium
@@ -152,7 +155,7 @@ function Test-KnownWifiId([string]$InstanceId) {
 # (10EC:C852) and MediaTek MT7902/MT7921/MT7922, with a 4-hex boundary so a
 # 5-digit device ID (e.g. DEV_43F01 or DEV_C8520) can never match.
 $SupportedCardPattern = '^PCI\\(?:VEN_8086&DEV_(' + ($SupportedIntelIds -join '|') + ')|VEN_8086&DEV_272B|VEN_10EC&DEV_C852|VEN_14C3&DEV_(7902|7961|0608|7922|0616))(?=&|\\|$)'
-$NoSupportedCard = 'This PC has no Wi-Fi card nekodrop supports (Intel AX201, AX200, AX203, AX210, AX211, AX411, 9560 on Qu, BE200 (experimental), Realtek RTL8852CE 10EC:C852, or MediaTek MT7902/MT7921/MT7922); nekodrop cannot run here.'
+$NoSupportedCard = 'This PC has no Wi-Fi card nekodrop supports (Intel AX201, AX200, AX203, AX210, AX211, AX411, 9560 on Qu, BE200 (experimental), Realtek RTL8852CE 10EC:C852, MediaTek MT7902/MT7921/MT7922, or MT7925 E138105B REV_00); nekodrop cannot run here.'
 $ReportUrl = 'https://github.com/zheznanohana/nekodrop/blob/main/installer/report.ps1'
 $IssuesUrl = 'https://github.com/zheznanohana/nekodrop/issues'
 # Adapter names that say wireless. As report.ps1: not bare "Killer" (its
@@ -452,7 +455,9 @@ function Step($what, [scriptblock]$do) {
 }
 
 $pnpAll = @(Get-PnpDevice -PresentOnly)
-if (-not ($pnpAll | Where-Object { $_.InstanceId -match $SupportedCardPattern })) {
+$mt7925Cards = @($pnpAll | Where-Object { $_.InstanceId -match $Mt7925Pattern })
+$otherSupported = @($pnpAll | Where-Object { $_.InstanceId -match $SupportedCardPattern })
+if (-not $otherSupported.Count -and -not $mt7925Cards.Count) {
   # Naming the cards is a courtesy: if reading the adapters or formatting
   # fails, the refusal is still made, with the earlier one-line message.
   $refusal = $null
@@ -463,6 +468,30 @@ if (-not ($pnpAll | Where-Object { $_.InstanceId -match $SupportedCardPattern })
   } catch { }
   if (-not $refusal) { $refusal = $NoSupportedCard }
   throw $refusal
+}
+if ($mt7925Cards.Count -gt 1) {
+  throw 'More than one MT7925 E138105B REV_00 is present. Its Windows driver switch requires a unique matching board.'
+}
+$stageMt7925 = $mt7925Cards.Count -eq 1
+if ($stageMt7925) {
+  # Read the policy active in this boot. BCD output is localized and can describe a pending reboot.
+  Add-Type -Namespace NekoDrop -Name CodeIntegrity -MemberDefinition @'
+[StructLayout(LayoutKind.Sequential)]
+public struct Options { public uint Length; public uint Flags; }
+[DllImport("ntdll.dll")]
+public static extern int NtQuerySystemInformation(int infoClass, ref Options info, int size, out int returned);
+'@
+  $options = New-Object 'NekoDrop.CodeIntegrity+Options'
+  $options.Length = 8
+  $returned = 0
+  $status = [NekoDrop.CodeIntegrity]::NtQuerySystemInformation(103, [ref]$options, 8, [ref]$returned)
+  $currentBuild = [int](Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').CurrentBuildNumber
+  if ($currentBuild -lt 26100 -or $status -ne 0 -or -not ($options.Flags -band 2)) {
+    $reason = 'The MT7925 experimental kernel driver requires Windows x64 build 26100 or later with test signing active in the current boot.'
+    if (-not $otherSupported.Count) { throw $reason }
+    $stageMt7925 = $false
+    Write-Warning "$reason Installing for the other supported card only."
+  }
 }
 
 'Files'
@@ -568,7 +597,12 @@ Step 'sign the register-proxy driver with a certificate made and trusted on this
     Export-Certificate -Cert $cert -FilePath $public | Out-Null
     foreach ($store in $TrustStores) { Import-Certificate -FilePath $public -CertStoreLocation "Cert:\LocalMachine\$store" | Out-Null }
     $signtool = Join-Path $Target 'shell\signtool.exe'
-    foreach ($file in 'winawdl_regproxy.cat', 'winawdl_regproxy.dll') {
+    $signFiles = @('winawdl_regproxy.cat', 'winawdl_regproxy.dll')
+    if ($stageMt7925) {
+      $signFiles += 'mt7925\mt7925_bringup.sys', 'mt7925\mt7925_bringup.cat',
+                    'mt7925-fast\winawdl_regproxy.dll', 'mt7925-fast\nekodrop_mt7925_sar.sys', 'mt7925-fast\nekodrop_mt7925_sar.cat'
+    }
+    foreach ($file in $signFiles) {
       $full = Join-Path $driver $file
       # Windows 11 25H2 (build 26200.9974+) makes Set-AuthenticodeSignature fail in
       # two ways although signtool.exe signs the same files cleanly (#73): it returns
@@ -630,6 +664,12 @@ Step 'sign the register-proxy driver with a certificate made and trusted on this
 Step 'add it to the driver store (binds nothing)' {
   pnputil /add-driver (Join-Path $driver 'winawdl_regproxy.inf') | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "pnputil could not add the driver ($LASTEXITCODE)" }
+  if ($stageMt7925) {
+    pnputil /add-driver (Join-Path $driver 'mt7925\mt7925_bringup.inf') | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "pnputil could not stage the MT7925 driver ($LASTEXITCODE)" }
+    pnputil /add-driver (Join-Path $driver 'mt7925-fast\nekodrop_mt7925_sar.inf') | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "pnputil could not stage the MT7925 fast driver ($LASTEXITCODE)" }
+  }
 }
 
 'Network'

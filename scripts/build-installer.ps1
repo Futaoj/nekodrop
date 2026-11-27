@@ -49,6 +49,19 @@ Copy-Item "$mtkBuild\firmware\WIFI_MT7922_patch_mcu_1_1_hdr.bin", "$mtkBuild\fir
 New-Item -ItemType Directory -Force "$stage\awdl" | Out-Null
 Copy-Item "$repo\third_party\winawdl\build\awdl\awdld.exe", "$repo\third_party\winawdl\deps\wintun\wintun.dll" "$stage\awdl\"
 
+'MediaTek MT7925 dedicated driver, radio and AWDL'
+& "$PSScriptRoot\build-mt7925.ps1" | Out-Host
+& "$PSScriptRoot\build-mt7925-fast.ps1" | Out-Host
+& "$repo\mt7925\build-awdl.ps1" -MinGW "$repo\third_party\winlibs\mingw64\bin" | Out-Host
+$mt7925Build = Join-Path $repo 'build\mt7925'
+$mt7925Fast = Join-Path $repo 'build\mt7925-fast'
+$mt7925Fw = Join-Path $repo 'third_party\linux-firmware-mt7925'
+Copy-Item "$mt7925Build\nekodrop-radio-mt7925.exe" "$stage\radio\"
+Copy-Item "$mt7925Fast\nekodrop-radio-mt7925-fast.exe" "$stage\radio\"
+Copy-Item "$mt7925Build\awdl\awdld-mt7925.exe" "$stage\awdl\"
+New-Item -ItemType Directory -Force "$stage\radio\firmware\mt7925" | Out-Null
+Copy-Item "$mt7925Fw\WIFI_MT7925_PATCH_MCU_1_1_hdr.bin", "$mt7925Fw\WIFI_RAM_CODE_MT7925_1_1.bin", "$mt7925Fw\LICENCE.mediatek" "$stage\radio\firmware\mt7925\"
+
 'airdrop engine'
 New-Item -ItemType Directory -Force "$stage\airdrop" | Out-Null
 Copy-Item "$repo\third_party\winawdl\airdrop\*.py", "$repo\third_party\winawdl\airdrop\LICENSE" "$stage\airdrop\"
@@ -81,13 +94,18 @@ if ((Get-Command cargo -ErrorAction SilentlyContinue) -and (Test-Path "$wd\Cargo
 } else { '  (no Rust or no third_party\WirDrop: Apple ID sign-in left out)' }
 
 'driver'
-& "$repo\driver\regproxy\build.ps1" | Out-Null
+& "$PSScriptRoot\build-mt7925-sar.ps1" | Out-Host
 New-Item -ItemType Directory -Force "$stage\driver" | Out-Null
 Copy-Item "$repo\driver\regproxy\build\winawdl_regproxy.inf", "$repo\driver\regproxy\build\winawdl_regproxy.dll" "$stage\driver\"
 $now = Get-Date
 & $tools.StampInf -f "$stage\driver\winawdl_regproxy.inf" -d * -v "0.1.$(($now - [datetime]'2026-01-01').Days).$($now.Hour * 60 + $now.Minute)" | Out-Null
 & $tools.Inf2Cat "/driver:$stage\driver" /os:10_X64 /uselocaltime | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Inf2Cat failed ($LASTEXITCODE)" }
+New-Item -ItemType Directory -Force "$stage\driver\mt7925" | Out-Null
+Copy-Item "$mt7925Build\driver\mt7925_bringup.inf", "$mt7925Build\driver\mt7925_bringup.sys", "$mt7925Build\driver\mt7925_bringup.cat" "$stage\driver\mt7925\"
+New-Item -ItemType Directory -Force "$stage\driver\mt7925-fast" | Out-Null
+Copy-Item -LiteralPath "$mt7925Fast\driver\nekodrop_mt7925_sar.inf", "$mt7925Fast\driver\nekodrop_mt7925_sar.sys",
+          "$mt7925Fast\driver\nekodrop_mt7925_sar.cat", "$mt7925Fast\driver\winawdl_regproxy.dll" -Destination "$stage\driver\mt7925-fast"
 
 'Explorer context menu (Windows 11 first level)'
 $shellBuild = "$repo\build\shellext"
@@ -181,6 +199,11 @@ Copy-Item "$repo\third_party\winawdl\LICENSE" "$stage\licenses\winawdl-MIT.txt"
 Copy-Item "$repo\third_party\winawdl\awdl\LICENSE" "$stage\licenses\awdld-GPL-3.0.txt"
 Copy-Item "$repo\third_party\winawdl\airdrop\LICENSE" "$stage\licenses\airdrop-engine-MIT.txt"
 Copy-Item "$repo\LICENSE" "$stage\licenses\nekodrop-GPL-2.0.txt"
+Copy-Item "$repo\mt7925\driver\LICENSE" "$stage\licenses\mt7925-driver.txt"
+Copy-Item "$repo\mt7925\radio\LICENSE" "$stage\licenses\mt7925-radio.txt"
+Copy-Item "$mt7925Fast\mt7925-connac3-BSD-3-Clause-Clear.txt" "$stage\licenses\"
+Copy-Item "$repo\mt7925\awdl\LICENSE" "$stage\awdl\mt7925-awdl-license.txt"
+Copy-Item "$repo\mt7925\upstream\owl\radiotap\COPYING" "$stage\awdl\mt7925-radiotap-license.txt"
 Copy-Item "$mtBuild\firmware\LICENCE.mediatek" "$stage\licenses\mediatek-firmware.txt"
 Copy-Item "$repo\mtradio\LICENSE.mt76" "$stage\licenses\mt76-BSD-3-Clause.txt"
 Copy-Item "$repo\third_party\winawdl\deps\wintun\LICENSE.txt" "$stage\licenses\wintun.txt"

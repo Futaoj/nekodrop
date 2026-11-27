@@ -70,6 +70,7 @@ Uses your laptop or desktop's built-in PCIe / CNVi Wi-Fi card — no external US
 | **MediaTek / AMD** | `mtradio` | MT7902 | 5 GHz Concurrent Wi-Fi / On demand | ✅ Tested both ways |
 | **MediaTek / AMD** | `mtkradio` | MT7922 / AMD RZ616 | 5 GHz Concurrent Wi-Fi (exp.) / On demand | ✅ Tested both ways |
 | **MediaTek / AMD** | `mtkradio` | MT7921 / AMD RZ608 | On demand | 🧪 Experimental |
+| **MediaTek** | MT7925 E138 | E138105B / REV_00 | On demand, optional 5 GHz indoors in mainland China | Experimental, requires test signing. iPhone uploads averaged 39.1–41.0 MB/s. [Measurements](mt7925/README.md) |
 | **Realtek** | `devourer` | RTL8852CE | On demand | ✅ Community-tested (~24.5 MB/s) |
 
 > Unlisted cards are not supported for AWDL (Qualcomm, Broadcom, Intel BE201/BE211, legacy Intel 9260, etc.). Full PCI IDs, firmware, and per-card notes: **[Card compatibility](docs/COMPATIBILITY.md)** · **[Card status & porting a new card](docs/CARDS.md)**.

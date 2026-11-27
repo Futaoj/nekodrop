@@ -1,0 +1,217 @@
+--- a/daemon/core.c
++++ b/daemon/core.c
+@@ -25,6 +25,10 @@
+ #include "rx.h"
+ #include "tx.h"
+ #include "schedule.h"
++
++#ifdef _WIN32
++#include "mt7925_discovery_window.h"
++#endif
+ 
+ #include <signal.h>
+ 
+@@ -243,6 +247,69 @@
+ 	}
+ }
+ 
++#ifdef _WIN32
++static void mt7925_discovery_schedule(struct daemon_state *state, uint64_t now, double in,
++                                       bool *send, uint64_t *retry_us) {
++	void *head;
++	if (circular_buf_get(state->tx_queue_multicast, &head, 1) ||
++	    !mt7925_discovery_is_mdns(buf_data(head), buf_len(head)))
++		return;
++	const bool deferred = state->mt7925_discovery_deferred_head == head;
++	if (deferred && now < state->mt7925_discovery_deferred_until) {
++		/* Host-ready callbacks can revisit the queue before the armed timer. */
++		*send = false;
++		*retry_us = state->mt7925_discovery_deferred_until - now;
++		return;
++	}
++
++	const struct awdl_state *awdl = &state->awdl_state;
++	struct awdl_peer *master;
++	if (awdl_chan_num(awdl->channel.current, awdl->channel.enc) != MT7925_DISCOVERY_CHANNEL ||
++	    !compare_ether_addr(&awdl->self_address, &awdl->election.sync_addr) ||
++	    awdl_peer_get(awdl->peers.peers, &awdl->election.sync_addr, &master) < 0 ||
++	    !master->is_valid || !mt7925_discovery_fresh(now, master->mt7925_sync_rx_us) ||
++	    !mt7925_discovery_fresh(now, master->mt7925_schedule_rx_us) ||
++	    master->mt7925_sync_start_us != awdl->sync.last_update) {
++		return;
++	}
++
++	const uint16_t eaw = awdl_sync_current_eaw(now, &awdl->sync);
++	const unsigned slot = eaw % AWDL_CHANSEQ_LENGTH;
++	const unsigned own_channel = awdl_chan_num(awdl->channel.sequence[slot], awdl->channel.enc);
++	const unsigned peer_channel = awdl_chan_num(master->sequence[slot], AWDL_CHAN_ENC_OPCLASS);
++	const uint64_t remaining = awdl_sync_next_aw_us(now, &awdl->sync);
++	if (*send) {
++		const unsigned next_slot = (slot + 1) % AWDL_CHANSEQ_LENGTH;
++		const unsigned next_own = awdl_chan_num(awdl->channel.sequence[next_slot], awdl->channel.enc);
++		const unsigned next_peer = awdl_chan_num(master->sequence[next_slot], AWDL_CHAN_ENC_OPCLASS);
++		const uint64_t sync = master->mt7925_sync_rx_us;
++		const uint64_t schedule = master->mt7925_schedule_rx_us;
++		const uint64_t wait = remaining + ieee80211_tu_to_usec(AWDL_MULTICAST_GUARD_TU);
++		/* A single table entry also rules out unclassified neighbors. */
++		if (mt7925_discovery_defer_legacy(awdl_peers_length(awdl->peers.peers), deferred, peer_channel,
++		                                 next_own, next_peer, now + wait, sync < schedule ? sync : schedule)) {
++			state->mt7925_discovery_deferred_head = head;
++			state->mt7925_discovery_deferred_until = now + wait;
++			*send = false;
++			*retry_us = wait;
++		}
++		return;
++	}
++	const bool already_used = state->mt7925_discovery_alt_eaw == eaw &&
++	                          mt7925_discovery_fresh(now, state->mt7925_discovery_alt_us);
++	if (!already_used && mt7925_discovery_in_window(own_channel, peer_channel, in)) {
++		state->mt7925_discovery_alt_us = now;
++		state->mt7925_discovery_alt_eaw = eaw;
++		log_trace("mt7925 discovery_window selected=1 slot=%u channel=44 remaining_us=%lu",
++		          slot, (unsigned long) remaining);
++		*send = true;
++	} else if (in <= 0) {
++		/* Retry at the next slot's inner guard, not at the current slot's phase. */
++		*retry_us = remaining + ieee80211_tu_to_usec(AWDL_MULTICAST_GUARD_TU);
++	}
++}
++#endif
++
+ void awdl_send_multicast(struct ev_loop *loop, ev_timer *timer, int revents) {
+ 	(void) revents;
+ 	struct daemon_state *state = timer->data;
+@@ -252,14 +319,26 @@
+ 
+ 	if (!circular_buf_empty(state->tx_queue_multicast)) { /* we have something to send */
+ 		in = awdl_can_send_in(awdl_state, now, AWDL_MULTICAST_GUARD_TU);
+-		if (awdl_is_multicast_eaw(awdl_state, now) && (in == 0)) { /* we can send now */
++		bool send = awdl_is_multicast_eaw(awdl_state, now) && in == 0;
++		uint64_t retry_us = 0;
++#ifdef _WIN32
++		if (awdl_state->mt7925_discovery_window)
++			mt7925_discovery_schedule(state, now, in, &send, &retry_us);
++#endif
++		if (send) {
+ 			void *next;
+ 			circular_buf_get(state->tx_queue_multicast, &next, 0);
++#ifdef _WIN32
++			if (state->mt7925_discovery_deferred_head == next)
++				state->mt7925_discovery_deferred_head = NULL;
++#endif
+ 			awdl_send_data((struct buf *) next, &state->io, &state->awdl_state, &state->ieee80211_state);
+ 			buf_free(next);
+ 			state->awdl_state.stats.tx_data_multicast++;
+ 		} else { /* try later */
+-			if (in == 0) /* try again next EAW */
++			if (retry_us)
++				in = usec_to_sec(retry_us);
++			else if (in == 0) /* try again next EAW */
+ 				in = usec_to_sec(ieee80211_tu_to_usec(64));
+ 			else if (in < 0) /* we are at the end of slot but within guard */
+ 				in = -in + usec_to_sec(ieee80211_tu_to_usec(AWDL_MULTICAST_GUARD_TU));
+@@ -372,6 +451,10 @@
+ 
+ 	state->next = NULL;
+ 	state->tx_queue_multicast = circular_buf_init(16);
++#ifdef _WIN32
++	state->mt7925_discovery_deferred_head = NULL;
++	state->mt7925_discovery_deferred_until = 0;
++#endif
+ 	state->dump = dump;
+ 
+ 	return 0;
+--- a/daemon/core.h
++++ b/daemon/core.h
+@@ -41,6 +41,12 @@
+ 	struct ev_state ev_state;
+ 	struct buf *next;
+ 	cbuf_handle_t tx_queue_multicast;
++#ifdef _WIN32
++	uint64_t mt7925_discovery_alt_us;
++	uint16_t mt7925_discovery_alt_eaw;
++	const struct buf *mt7925_discovery_deferred_head;
++	uint64_t mt7925_discovery_deferred_until;
++#endif
+ 	const char *dump;
+ };
+ 
+--- a/src/peers.c
++++ b/src/peers.c
+@@ -70,6 +70,11 @@
+ 	awdl_election_state_init(&peer->election, addr);
+ 	awdl_chanseq_init_static(peer->sequence, &CHAN_NULL);
+ 	peer->sync_offset = 0;
++#ifdef _WIN32
++	peer->mt7925_sync_rx_us = 0;
++	peer->mt7925_sync_start_us = 0;
++	peer->mt7925_schedule_rx_us = 0;
++#endif
+ 	peer->devclass = 0;
+ 	peer->version = 0;
+ 	peer->supports_v2 = 0;
+--- a/src/peers.h
++++ b/src/peers.h
+@@ -41,6 +41,9 @@
+ 	struct awdl_election_state election;
+ 	struct awdl_chan sequence[AWDL_CHANSEQ_LENGTH];
+ 	uint64_t sync_offset;
++#ifdef _WIN32
++	uint64_t mt7925_sync_rx_us, mt7925_sync_start_us, mt7925_schedule_rx_us;
++#endif
+ 	char name[HOST_NAME_LENGTH_MAX + 1]; /* space for trailing zero */
+ 	char country_code[2 + 1];
+ 	struct ether_addr infra_addr;
+--- a/src/rx.c
++++ b/src/rx.c
+@@ -51,6 +51,15 @@
+ 		log_trace("Sync error %d TU (%.02f %%)", sync_err_tu, state->sync.meas_err * 100.0 / state->sync.meas_total);
+ 	}
+ 	awdl_sync_update_last(now, time_to_next_aw_master, aw_counter_master, &state->sync);
++#ifdef _WIN32
++	if (state->mt7925_discovery_window) {
++		/* A second, plausible sample confirms the current sync master clock. */
++		const unsigned eaw_tu = state->sync.presence_mode * state->sync.aw_period;
++		src->mt7925_sync_rx_us = time_to_next_aw_master && time_to_next_aw_master <= eaw_tu &&
++		                           sync_err_tu >= -8 && sync_err_tu <= 8 ? now : 0;
++		src->mt7925_sync_start_us = state->sync.last_update;
++	}
++#endif
+ 
+ 	return RX_OK;
+ wire_error:
+@@ -102,6 +111,10 @@
+ 		          awdl_chan_num(list[14], encoding), awdl_chan_num(list[15], encoding));
+ 		memcpy(src->sequence, list, sizeof(list));
+ 	}
++#ifdef _WIN32
++	if (state->mt7925_discovery_window)
++		src->mt7925_schedule_rx_us = encoding == AWDL_CHAN_ENC_OPCLASS ? src->last_update : 0;
++#endif
+ 	return RX_OK;
+ 
+ wire_error:
+--- a/src/state.c
++++ b/src/state.c
+@@ -36,6 +36,9 @@
+ 
+ 	state->sequence_number = 0;
+ 	state->psf_interval = PSF_INTERVAL_MASTER_TU;
++#ifdef _WIN32
++	state->mt7925_discovery_window = false;
++#endif
+ 	state->dst = ETHER_BROADCAST;
+ 
+ 	state->tlv_cb = 0;
+--- a/src/state.h
++++ b/src/state.h
+@@ -58,6 +58,9 @@
+ 	uint16_t sequence_number;
+ 	/* PSF interval (in TU) */
+ 	uint16_t psf_interval;
++#ifdef _WIN32
++	bool mt7925_discovery_window;
++#endif
+ 	/* destination address for action frames */
+ 	struct ether_addr dst;
+ 

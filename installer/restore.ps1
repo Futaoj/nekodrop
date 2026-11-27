@@ -28,8 +28,10 @@ $ErrorActionPreference = 'Continue'
 $SupportedIntelIds = @('43F0', 'A0F0', '02F0', '06F0', '34F0', '3DF0', '4DF0', '2723', '2725', '7A70', '7AF0', '51F0', '51F1', '54F0', '7F70', '7740')
 $KnownCatalogIds = @($SupportedIntelIds | ForEach-Object { "8086:$_" }) + @('8086:272B', '10EC:C852')
 $ProxyInfNames = @('winawdl_regproxy.inf', 'nekodrop-wlan.inf')
-$ProxyServices = @('WUDFRd', 'nekodrop-wlan')
+$ProxyServices = @('WUDFRd', 'nekodrop-wlan', 'mt7925_bringup')
+$Mt7925HardwareId = 'PCI\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00'
 $ProxyProvider = 'winairdrop project'
+$InstallerSigner = 'nekodrop driver (signed on this PC)'
 $VendorProfiles = @{
   '8086' = @{ Name = 'Intel';            ProviderPatterns = @('Intel', 'Killer', 'Rivet Networks'); DownloadHint = 'intel.com or Windows Update' }
   '10EC' = @{ Name = 'Realtek';          ProviderPatterns = @('Realtek');                           DownloadHint = 'your PC maker or Windows Update' }
@@ -43,11 +45,12 @@ function Get-PciVendorDevice([string]$InstanceId) {
   $id = "$InstanceId".Trim().ToUpper()
   if ($id -match '^PCI\\VEN_([0-9A-F]{4})&DEV_([0-9A-F]{4})(?:&|\\|$)') {
     $v = $Matches[1]; $d = $Matches[2]
+    $hardwareId = ($id -split '\\')[0..1] -join '\'
     return [pscustomobject]@{
       VendorId   = $v
       DeviceId   = $d
       Key        = ($v + ':' + $d)
-      HardwareId = "PCI\VEN_$v&DEV_$d"
+      HardwareId = $(if ($hardwareId -eq $Mt7925HardwareId) { $hardwareId } else { "PCI\VEN_$v&DEV_$d" })
     }
   }
   return $null
@@ -80,7 +83,13 @@ function Get-NekodropPublishedInfs($StoreDrivers) {
   foreach ($d in @($StoreDrivers | Where-Object { $_ })) {
     $orig = [IO.Path]::GetFileName("$($d.OriginalName)".Trim())
     $pub = [IO.Path]::GetFileName("$($d.DriverName)".Trim())
-    if ($orig -and $pub -and ($ProxyInfNames -contains $orig)) {
+    $provider = "$($d.ProviderName)".Trim()
+    $installerPackage = "$($d.SignerName)".Trim() -in $InstallerSigner, "CN=$InstallerSigner"
+    $proxy = $orig -eq 'winawdl_regproxy.inf' -and $provider -eq $ProxyProvider
+    $dedicated = $orig -eq 'mt7925_bringup.inf' -and $provider -eq 'NekoDrop MT7925'
+    $fast = $orig -eq 'nekodrop_mt7925_sar.inf' -and $provider -eq 'NekoDrop MT7925 Fast'
+    $kernel = $orig -eq 'nekodrop-wlan.inf'
+    if ($pub -and ($kernel -or ($installerPackage -and ($proxy -or $dedicated -or $fast)))) {
       $k = $pub.ToLower()
       if (-not $seen.ContainsKey($k)) {
         $seen[$k] = $true
@@ -93,7 +102,21 @@ function Get-NekodropPublishedInfs($StoreDrivers) {
 
 function Test-NekodropInfContent([string]$Content) {
   if (-not $Content) { return $false }
-  return ($Content -match '(?i)winawdl_regproxy|nekodrop-wlan|winairdrop project')
+  return ($Content -match '(?i)winawdl_regproxy|nekodrop-wlan|winairdrop project|mt7925_bringup')
+}
+
+# Shared MediaTek packages can cover different chips or OEM boards.
+# Match complete model IDs against the IDs Windows enumerated for this card.
+function Test-InfSupportsHardware([string]$Content, [string[]]$HardwareIds) {
+  if (-not $HardwareIds) { return $true }
+  foreach ($line in ($Content -split '\r?\n')) {
+    $entry = ($line -split ';', 2)[0]
+    if ($entry -notmatch '=') { continue }
+    foreach ($id in (($entry -split '=', 2)[1] -split ',' | Select-Object -Skip 1)) {
+      if ($HardwareIds -contains $id.Trim().Trim('"')) { return $true }
+    }
+  }
+  return $false
 }
 
 function Test-DeviceBoundToNekodrop($Device, [string[]]$NekodropPublishedInfs) {
@@ -107,7 +130,7 @@ function Test-DeviceBoundToNekodrop($Device, [string[]]$NekodropPublishedInfs) {
     if ($ProxyInfNames -contains $inf) { $isOurInf = $true }
     elseif ($NekodropPublishedInfs -and ($NekodropPublishedInfs -contains $inf)) { $isOurInf = $true }
   }
-  $isOurProvider = ($prov -and ($prov -eq $ProxyProvider))
+  $isOurProvider = ($prov -eq $ProxyProvider -or $prov -eq 'NekoDrop MT7925')
   return ($isOurInf -or $isOurProvider)
 }
 
@@ -128,7 +151,7 @@ function Resolve-RestoreTargetDevice($Devices, [string[]]$NekodropPublishedInfs 
   }
   foreach ($d in $pciDevs) {
     $pci = Get-PciVendorDevice $d.InstanceId
-    if ($KnownCatalogIds -contains $pci.Key) { return $d }
+    if ($KnownCatalogIds -contains $pci.Key -or $pci.HardwareId -eq $Mt7925HardwareId) { return $d }
   }
   return $null
 }
@@ -175,7 +198,8 @@ function Select-VendorInfPackage(
   [string]$VendorId,
   [string]$Windir = $env:windir,
   [scriptblock]$PathExists = $null,
-  [scriptblock]$ReadInfText = $null
+  [scriptblock]$ReadInfText = $null,
+  [string[]]$HardwareIds = @()
 ) {
   if (-not $PathExists) {
     $PathExists = {
@@ -203,7 +227,7 @@ function Select-VendorInfPackage(
     if (($ProxyInfNames -contains $leaf) -or ($nekodropInfs -contains $leaf)) { continue }
     if (-not (& $PathExists $path)) { continue }
     $txt = & $ReadInfText $path
-    if (Test-NekodropInfContent "$txt") { continue }
+    if ((Test-NekodropInfContent "$txt") -or -not (Test-InfSupportsHardware "$txt" $HardwareIds)) { continue }
     return $path
   }
 
@@ -218,7 +242,12 @@ function Select-VendorInfPackage(
     $prov = "$($_.ProviderName)".Trim()
     if (($ProxyInfNames -contains $orig) -or ($nekodropInfs -contains $pub)) { return $false }
     if ($prov -eq $ProxyProvider) { return $false }
-    return ($prov -match $pattern)
+    if ($prov -notmatch $pattern) { return $false }
+    if ($HardwareIds) {
+      $infText = & $ReadInfText "$winRoot\INF\$pub"
+      return (Test-InfSupportsHardware "$infText" $HardwareIds)
+    }
+    return $true
   }) | Sort-Object { Parse-DriverVersion $_.DriverVersion } -Descending | Select-Object -First 1
   if ($pkg -and $pkg.DriverName -and $winRoot) {
     $pubName = [IO.Path]::GetFileName("$($pkg.DriverName)".Trim())
@@ -232,8 +261,8 @@ if ($SelfTest) {
   function Dev([string]$id, [string]$svc = '', [string]$inf = '', [string]$prov = '', [string]$name = '') {
     [pscustomobject]@{ InstanceId = $id; Service = $svc; DriverInfPath = $inf; DriverProvider = $prov; FriendlyName = $name }
   }
-  function Drv([string]$pub, [string]$orig, [string]$prov, [string]$cls, [string]$ver) {
-    [pscustomobject]@{ DriverName = $pub; OriginalName = $orig; ProviderName = $prov; ClassName = $cls; DriverVersion = $ver }
+  function Drv([string]$pub, [string]$orig, [string]$prov, [string]$cls, [string]$ver, [string]$signer = '') {
+    [pscustomobject]@{ DriverName = $pub; OriginalName = $orig; ProviderName = $prov; ClassName = $cls; DriverVersion = $ver; SignerName = $signer }
   }
 
   # 1. Supported Intel IDs and strict 4-hex boundary check.
@@ -259,7 +288,7 @@ if ($SelfTest) {
     (Drv 'oem31.inf' 'qcwlan64.inf'        'Qualcomm Technologies, Inc.' 'Net'          '06/01/2024 2.0.0.1000'),
     (Drv 'oem32.inf' 'bcmwl63a.inf'        'Broadcom'                    'Net'          '06/01/2024 7.77.119.0'),
     (Drv 'oem40.inf' 'ibtusb.inf'          'Intel Corporation'           'Bluetooth'    '09/01/2025 99.0.0.1'),
-    (Drv 'oem42.inf' 'winawdl_regproxy.inf' 'winairdrop project'         'WinAwdlRadio' '03/01/2026 0.1.0.1'),
+    (Drv 'oem42.inf' 'winawdl_regproxy.inf' 'winairdrop project'         'WinAwdlRadio' '03/01/2026 0.1.0.1' $InstallerSigner),
     (Drv 'oem43.inf' 'nekodrop-wlan.inf'   'winairdrop project'          'Net'          '03/01/2026 99.9.9.9'),
     (Drv 'oem5.inf'  'sensors.inf'         'Microsoft'                   'Sensor'       '01/01/2024 10.0.19041.1')
   )
@@ -267,6 +296,14 @@ if ($SelfTest) {
   if ($pubProxy.Count -ne 2 -or $pubProxy -notcontains 'oem42.inf' -or $pubProxy -notcontains 'oem43.inf') {
     $fail += "nekodrop published INFs wrong: $($pubProxy -join ', ')"
   }
+  $oldSigner = 'winairdrop driver signing (local test)'
+  $e138Infs = @(Get-NekodropPublishedInfs @(
+    (Drv 'oem60.inf' 'nekodrop_mt7925_sar.inf' 'NekoDrop MT7925 Fast' 'WinAwdlRadio' '1.1' $InstallerSigner),
+    (Drv 'oem61.inf' 'nekodrop_mt7925_sar.inf' 'winairdrop project' 'WinAwdlRadio' '0.2' $oldSigner),
+    (Drv 'oem62.inf' 'nekodrop_mt7925_sar.inf' 'NekoDrop MT7925 Fast' 'WinAwdlRadio' '1.1' $oldSigner),
+    (Drv 'oem63.inf' 'winawdl_regproxy.inf' 'winairdrop project' 'WinAwdlRadio' '0.2' $oldSigner)
+  ))
+  if ($e138Infs.Count -ne 1 -or $e138Infs[0] -ne 'oem60.inf') { $fail += 'E138 package ownership mismatch' }
 
   # 2. Intel driver-store selection (newest version, Killer supported, Bluetooth and nekodrop ignored).
   $intelPkg = Select-VendorInfPackage @() $store '8086' 'C:\Windows' { param($p) $false } { param($p) '' }
@@ -391,7 +428,7 @@ $presentPci = @(Get-PnpDevice -PresentOnly | Where-Object { $_ -and (Get-PciVend
 $pciCandidates = foreach ($p in $presentPci) {
   $pciInfo = Get-PciVendorDevice $p.InstanceId
   $svcName = "$($p.Service)".Trim()
-  $needProps = ($ProxyServices -contains $svcName) -or ($KnownCatalogIds -contains $pciInfo.Key) -or
+  $needProps = ($ProxyServices -contains $svcName) -or ($KnownCatalogIds -contains $pciInfo.Key) -or ($pciInfo.HardwareId -eq $Mt7925HardwareId) -or
                ("$($p.Class)" -in 'WinAwdlRadio', 'Net', 'Unknown', '')
   if (-not $needProps) { continue }
   $propSvc = (Get-PnpDeviceProperty -InstanceId $p.InstanceId -KeyName DEVPKEY_Device_Service -ErrorAction SilentlyContinue).Data
@@ -407,6 +444,15 @@ $pciCandidates = foreach ($p in $presentPci) {
   }
 }
 $dev = Resolve-RestoreTargetDevice $pciCandidates $nekodropInfs
+if ($dev -and (Get-PciVendorDevice $dev.InstanceId).HardwareId -eq $Mt7925HardwareId) {
+  # UpdateDriverForPlugAndPlayDevicesW targets every device with this hardware ID.
+  $matching = @($presentPci | Where-Object { (Get-PciVendorDevice $_.InstanceId).HardwareId -eq $Mt7925HardwareId })
+  if ($matching.Count -ne 1) {
+    Write-Error 'More than one MT7925 E138105B REV_00 is present. Restore cannot switch a single board by hardware ID.'
+    Stop-Transcript | Out-Null
+    exit 1
+  }
+}
 if (-not $dev) {
   '   no Wi-Fi card nekodrop knows or holds is present; nothing to give back'
 } else {
@@ -423,7 +469,13 @@ if (-not $dev) {
     if ($f -like '*.json') { try { $text = ($text | ConvertFrom-Json).VendorInf } catch { $text = $null } }
     if ($text) { $recorded += $text.Trim() }
   }
-  $vendor = Select-VendorInfPackage $recorded $storeDrivers $pci.VendorId $env:windir
+  $hwids = @()
+  if ($pci.HardwareId -eq $Mt7925HardwareId) {
+    $hwids = @((Get-PnpDeviceProperty -InstanceId $dev.InstanceId -KeyName DEVPKEY_Device_HardwareIds).Data) +
+             @((Get-PnpDeviceProperty -InstanceId $dev.InstanceId -KeyName DEVPKEY_Device_CompatibleIds).Data)
+    $hwids += $Mt7925HardwareId, 'PCI\VEN_14C3&DEV_7925'
+  }
+  $vendor = Select-VendorInfPackage $recorded $storeDrivers $pci.VendorId $env:windir -HardwareIds $hwids
   $bound = $false
   if ($vendor) {
     "   binding $vendor"
@@ -450,7 +502,7 @@ public static extern bool UpdateDriverForPlugAndPlayDevicesW(System.IntPtr hwnd,
     $store = [xml](pnputil /enum-drivers /format xml | Out-String)
     if ($store -and $store.PnpUtil -and $store.PnpUtil.Driver) {
       $store.PnpUtil.Driver |
-        Where-Object { [IO.Path]::GetFileName("$($_.OriginalName)".Trim()) -in $ProxyInfNames } |
+        Where-Object { $_.DriverName -in $nekodropInfs } |
         ForEach-Object { pnputil /delete-driver $_.DriverName /uninstall /force | Out-Null; "   removed $($_.OriginalName) ($($_.DriverName))" }
     }
   } catch { }
@@ -512,7 +564,7 @@ if ($after) {
   $afterProfile = Get-VendorProfile $(if ($afterPci) { $afterPci.VendorId } else { '' })
   $service = (Get-PnpDeviceProperty -InstanceId $after.InstanceId -KeyName DEVPKEY_Device_Service -ErrorAction SilentlyContinue).Data
   "Wi-Fi card: $($after.FriendlyName), driver service $service, status $($after.Status)"
-  if ($service -in $ProxyServices) {
+  if ($service -in $ProxyServices -or ($afterPci.HardwareId -eq $Mt7925HardwareId -and (-not $service -or $after.Status -ne 'OK'))) {
     if ($afterProfile.VendorId -eq '8086') {
       'The card is still not on Intel''s driver. Restart the PC; if Wi-Fi is still missing, install Intel''s Wi-Fi driver from intel.com or Windows Update.'
     } else {

@@ -1,0 +1,459 @@
+--- a/awdl/CMakeLists.txt
++++ b/awdl/CMakeLists.txt
+@@ -54,7 +54,7 @@
+ target_link_libraries(awdld PRIVATE awdl host_if bcrypt)
+ # Static, so the daemon does not need the MinGW runtime DLLs beside it.
+ # The wrap routes OWL's log calls through main.c, which can redact them.
+-target_link_options(awdld PRIVATE -static -Wl,--wrap=log_log)
++target_link_options(awdld PRIVATE -static -Wl,--no-insert-timestamp -Wl,--wrap=log_log)
+ 
+ add_executable(host_frame_test tests/host_frame_test.c)
+ target_compile_options(host_frame_test PRIVATE -Wall -Wextra -Werror)
+@@ -77,6 +77,11 @@
+ target_compile_options(service_bridge_test PRIVATE -Wall -Wextra -Werror)
+ target_link_options(service_bridge_test PRIVATE -static)
+ 
++add_executable(mt7925_discovery_test tests/mt7925_discovery_test.c)
++target_include_directories(mt7925_discovery_test PRIVATE win)
++target_compile_options(mt7925_discovery_test PRIVATE -Wall -Wextra -Werror)
++target_link_options(mt7925_discovery_test PRIVATE -static)
++
+ add_executable(redact_test tests/redact_test.c win/redact.c)
+ target_include_directories(redact_test PRIVATE win)
+ target_compile_options(redact_test PRIVATE -Wall -Wextra -Werror)
+--- a/awdl/compat/ev.h
++++ b/awdl/compat/ev.h
+@@ -82,4 +82,5 @@
+ 
+ /* Windows side: an ev_io "file descriptor" stands for a waitable handle. */
+ int ev_win_fd_for_handle(void *handle);
++void ev_win_enable_fair_io(void);
+ void ev_win_stop(struct ev_loop *loop);
+--- a/awdl/tests/frame_fixup_test.c
++++ b/awdl/tests/frame_fixup_test.c
+@@ -126,5 +126,30 @@
+ 	       "a frame without HT capabilities gains none for VHT");
+ 	frame_fixup_announce(0, 0, 20);
+ 
++	/* E138's two receive chains do not add a transmit chain or HE support. */
++	static const uint8_t data_path[] = {12, 15, 0, 0, 0x80, [17] = 0};
++	for (int rx_streams = 1; rx_streams <= 2; ++rx_streams) {
++		int pos = start_frame(frame, 0);
++		int ht = pos + 3;
++		pos = add(frame, pos, ht_tlv, sizeof(ht_tlv));
++		int dp = pos + 3;
++		pos = add(frame, pos, data_path, sizeof(data_path));
++		frame_fixup_set_e138(1);
++		frame_fixup_set_he(1);
++		frame_fixup_announce(rx_streams == 2, 1, 80);
++		int length = frame_fixup_sent(frame, pos, sizeof(frame));
++		expect(length == pos + 17 && frame[pos + 9] == (rx_streams == 2 ? 0xfa : 0xfe) &&
++		       frame[pos + 10] == 0xff && frame[pos + 13] == 0xfd && frame[pos + 14] == 0xff,
++		       "E138 VHT RX follows configured NSS, TX stays one stream MCS 0..8");
++		expect((frame[pos + 5] & 3) == 2 && (frame[ht + 3] & 8),
++		       "E138 advertises native VHT and HT receive sizes");
++		expect(frame[ht + 6] == (rx_streams == 2 ? 0xff : 0) && !(frame[ht + 2] & 0x80) &&
++		       frame[dp + 14] == 0,
++		       "E138 HT receive streams and HE flag agree with the radio");
++		frame_fixup_set_e138(0);
++		expect(frame_fixup_sent(frame, pos, sizeof(frame)) == pos + 17 &&
++		       (frame[pos + 5] & 3) == 0 && frame[pos + 13] == frame[pos + 9] && frame[dp + 14] == 1,
++		       "unmarked radios keep their original VHT transmit and HE flags");
++	}
+ 	return failures ? 1 : 0;
+ }
+--- a/awdl/win/ev_win.c
++++ b/awdl/win/ev_win.c
+@@ -33,6 +33,10 @@
+ };
+ 
+ static struct ev_loop default_loop;
++static int fair_io;
++void ev_win_enable_fair_io(void) {
++	fair_io = 1;
++}
+ 
+ static uint64_t now_us(const struct ev_loop *loop) {
+ 	LARGE_INTEGER ticks;
+@@ -83,6 +87,14 @@
+ }
+ 
+ void ev_feed_event(struct ev_loop *loop, void *watcher, int revents) {
++	if (fair_io) {
++		for (int i = 0; i < loop->pending_count; i++) {
++			if (loop->pending[i].watcher == watcher) {
++				loop->pending[i].revents |= revents;
++				return;
++			}
++		}
++	}
+ 	if (loop->pending_count < MAX_PENDING)
+ 		loop->pending[loop->pending_count++] = (struct pending_event) {watcher, revents};
+ }
+@@ -204,6 +216,14 @@
+ void ev_run(struct ev_loop *loop, int flags) {
+ 	(void) flags;
+ 	while (!loop->stop) {
++		/* OWL can continuously feed its own radio or host callback. */
++		if (fair_io && loop->pending_count) {
++			for (int i = 0; i < MAX_IOS; i++) {
++				ev_io *io = loop->ios[i];
++				if (io && WaitForSingleObject(handle_for_fd(loop, io->fd), 0) == WAIT_OBJECT_0)
++					ev_feed_event(loop, io, EV_READ);
++			}
++		}
+ 		run_pending(loop);
+ 		run_due_timers(loop);
+ 		if (loop->pending_count == 0)
+--- a/awdl/win/frame_fixup.c
++++ b/awdl/win/frame_fixup.c
+@@ -45,6 +45,10 @@
+ static int announce_short_gi;
+ static int announce_width_mhz = 20;
+ static int announce_he;
++static int e138_radio;
++void frame_fixup_set_e138(int enable) {
++	e138_radio = enable;
++}
+ #define TLV_DATA_PATH_STATE 12
+ void frame_fixup_set_he(int enable) {
+ 	announce_he = enable ? 1 : 0;
+@@ -128,6 +132,9 @@
+ /* Writes the TLV that says which VHT frames this station receives. */
+ static void write_vht_tlv(uint8_t *tlv) {
+ 	unsigned info = VHT_INFO_MAX_AMPDU | (announce_short_gi ? VHT_INFO_SHORT_GI_80MHZ : 0);
++	/* The E138 native RX path accepts an 11,454-byte VHT MPDU. */
++	if (e138_radio)
++		info |= 2u;
+ 	unsigned rates = announce_two_streams ? VHT_RATES_TWO_STREAMS : VHT_RATES_ONE_STREAM;
+ 	memset(tlv, 0, VHT_TLV_LEN);
+ 	tlv[0] = TLV_IEEE80211_CONTAINER;
+@@ -138,7 +145,8 @@
+ 	write_le16(tlv + 7, info >> 16);
+ 	/* Received rates, then sent ones, each followed by an unused limit. */
+ 	write_le16(tlv + 9, rates);
+-	write_le16(tlv + 13, rates);
++	/* E138 uses one TX stream. The conservative TX map covers MCS 0..8. */
++	write_le16(tlv + 13, e138_radio ? 0xfffdu : rates);
+ }
+ 
+ int frame_fixup_sent(uint8_t *frame, int length, int capacity) {
+@@ -156,6 +164,10 @@
+ 		return length;
+ 	uint8_t *caps = value + HT_CAPABILITIES_OFFSET;
+ 	unsigned announced = read_le16(caps);
++	/* OWL's HT template includes TX STBC. The E138 transmit descriptors
++	 * use one stream without space-time block coding. */
++	if (e138_radio)
++		announced = (announced & ~0x0080u) | 0x0800u; /* HT RX A-MSDU up to 7935 bytes */
+ 	if (announce_width_mhz < 40)
+ 		announced &= ~HT_CAPABILITIES_40MHZ;
+ 	if (announce_short_gi)
+@@ -166,7 +178,7 @@
+ 
+ 	/* Experimental Wi-Fi 6 HE80 flag in Data Path State TLV (12): ext_flags |= 0x0100
+ 	 * (bit 0 of high byte at TLV value offset 14 when flags bit 0x8000 is set, #65). */
+-	if (announce_he && announce_width_mhz >= 80) {
++	if (announce_he && !e138_radio && announce_width_mhz >= 80) {
+ 		int dp = -1;
+ 		walk_tlvs(frame, offset, length - fcs_len, TLV_DATA_PATH_STATE, &dp);
+ 		if (dp >= 0) {
+--- a/awdl/win/frame_fixup.h
++++ b/awdl/win/frame_fixup.h
+@@ -26,4 +26,6 @@
+  * carry VHT capabilities, which OWL does not send. */
+ void frame_fixup_announce(int two_streams, int short_guard_interval, int width_mhz);
+ /* Optional experimental Wi-Fi 6 HE80 flag in AWDL Data Path State TLV (12). */
++/* E138 can send one VHT stream even when it can receive two. */
++void frame_fixup_set_e138(int enable);
+ void frame_fixup_set_he(int enable);
+--- a/awdl/win/io_win.c
++++ b/awdl/win/io_win.c
+@@ -47,6 +47,7 @@
+ 	unsigned long long joined;
+ } joining;
+ static struct tcp_merge merge;
++static int fast_rx;
+ 
+ void winawdl_join_segments(int wait_us) {
+ 	joining.wait_us = wait_us;
+@@ -124,6 +125,7 @@
+ 	wlan.radio = radio_client_open(on_radio_disconnect);
+ 	if (!wlan.radio)
+ 		return -ENODEV;
++	fast_rx = radio_client_mt7925_fast(wlan.radio);
+ 	state->wlan_handle = &wlan;
+ 	state->wlan_fd = ev_win_fd_for_handle(radio_client_rx_event(wlan.radio));
+ 	state->wlan_ifindex = 1;
+@@ -153,6 +155,7 @@
+ 	(void) count;
+ 	static uint8_t frame[RADIO_CLIENT_MAX_FRAME];
+ 	static uint8_t announced[SERVICE_BRIDGE_MAX_PACKET];
++	const uint64_t batch_end = fast_rx ? now_us() + 1000 : 0;
+ 	int handled = 0;
+ 	while (handled < 32) {
+ 		int length = radio_client_pop(handle->radio, frame);
+@@ -166,7 +169,12 @@
+ 		}
+ 		if (length == 0)
+ 			break;
+-		joining.last_frame_us = now_us();
++		uint64_t now = now_us();
++		if (!fast_rx)
++			joining.last_frame_us = now;
++		else if (merge.length && (now - joining.since_us >= JOIN_MAX_HOLD_US ||
++		                          now - joining.last_frame_us >= (uint64_t)joining.wait_us))
++			deliver_joined();
+ 		length = frame_fixup_received(frame, length);
+ 		int announced_len = service_bridge_packet(frame, length, announced);
+ 		if (announced_len && host)
+@@ -174,6 +182,8 @@
+ 		struct pcap_pkthdr header = {.caplen = (uint32_t) length, .len = (uint32_t) length};
+ 		callback(user, &header, frame);
+ 		handled++;
++		if (fast_rx && now_us() >= batch_end)
++			break;
+ 	}
+ 	return handled;
+ }
+@@ -185,6 +195,26 @@
+ 	memcpy(frame, buf, (size_t) len);
+ 	len = frame_fixup_sent(frame, len, sizeof(frame));
+ 	return radio_client_send(state->wlan_handle->radio, RADIO_LINK_TX, frame, (uint32_t) len);
++}
++
++/* Give the sender frequent ACKs while its congestion window is growing.
++ * Once the upload is in flight, longer indications reduce return traffic. */
++static int upload_merge_limit(const uint8_t *packet, int length, uint64_t now) {
++	static uint64_t last_data_us;
++	static unsigned startup_bytes;
++	if (packet[42] != (8771 >> 8) || packet[43] != (8771 & 255))
++		return 40;
++	if (now - last_data_us > 1000000)
++		startup_bytes = 0;
++	last_data_us = now;
++	/* Only called after tcp_merge_offer validated this IPv6/TCP data segment. */
++	if (startup_bytes < 4u * 1024 * 1024)
++		startup_bytes += (unsigned)(length - 40 - 4 * (packet[52] >> 4));
++	if (startup_bytes < 256u * 1024)
++		return 2;
++	if (startup_bytes < 2u * 1024 * 1024)
++		return 8;
++	return startup_bytes < 4u * 1024 * 1024 ? 16 : 40;
+ }
+ 
+ int host_send(const struct io_state *state, const uint8_t *buf, int len) {
+@@ -206,7 +236,10 @@
+ 			joining.joined++;
+ 		else
+ 			joining.since_us = now_us();
+-		if (merge.closed)
++		if (fast_rx)
++			joining.last_frame_us = now_us();
++		int batch_limit = fast_rx ? upload_merge_limit(packet, packet_len, joining.last_frame_us) : 0;
++		if (merge.closed || (fast_rx && merge.segments >= batch_limit))
+ 			deliver_joined();
+ 		return 0;
+ 	}
+--- a/awdl/win/main.c
++++ b/awdl/win/main.c
+@@ -13,6 +13,7 @@
+ 
+ #include "core.h"
+ #include "frame_fixup.h"
++#include "mt7925_discovery_window.h"
+ #include "host_if.h"
+ #include "log.h"
+ #include "radio_client.h"
+@@ -126,6 +127,7 @@
+ 	int log_level = LOG_INFO;
+ 	const char *host_name = HOST_IF_NAME;
+ 	int streams = DEFAULT_STREAMS;
++	int streams_explicit = 0;
+ 	int short_guard_interval = 1;
+ 	int enable_he = 0;
+ 	unsigned long host_mtu = 1450;
+@@ -140,6 +142,7 @@
+ 			redact_log = 1;
+ 		} else if (option == 's') {
+ 			streams = atoi(optarg);
++			streams_explicit = 1;
+ 		} else if (option == 'l') {
+ 			short_guard_interval = 0;
+ 		} else if (option == 'j') {
+@@ -180,6 +183,21 @@
+ 		awdl_free(&state);
+ 		return EXIT_FAILURE;
+ 	}
++	const int e138 = radio_client_is_e138(winawdl_radio());
++	const int fast = radio_client_mt7925_fast(winawdl_radio());
++	if (e138 && !streams_explicit)
++		streams = 1;
++	frame_fixup_set_e138(e138);
++	if (e138) {
++		enable_he = 0;
++		const char *requested = getenv("NEKODROP_MT7925_DISCOVERY_WINDOW");
++		state.awdl_state.mt7925_discovery_window = mt7925_extended_discovery(fast, channel);
++		if (requested && !strcmp(requested, "1") && !fast) {
++			log_error("E138 fast mode requires channel 44 or 149 at 80 MHz and connected shared memory");
++			awdl_free(&state);
++			return EXIT_FAILURE;
++		}
++	}
+ 	frame_fixup_announce(streams == 2, short_guard_interval,
+ 			     radio_client_width_mhz(winawdl_radio()));
+ 	frame_fixup_set_he(enable_he);
+@@ -192,6 +210,17 @@
+ 		log_info("host interface %s, index %d", state.io.host_ifname,
+ 			 state.io.host_ifindex);
+ 
++	if (fast) {
++		if (!state.io.host_ifindex) {
++			log_error("E138 fast mode requires an active awdl0 host interface");
++			awdl_free(&state);
++			return EXIT_FAILURE;
++		}
++		ev_win_enable_fair_io();
++		log_info("MT7925 fast host ready | ch%d/80 SHM | VHT RX %uSS TX 1SS | discovery_window=%d",
++		         channel, streams == 2 ? 2u : 1u, (int)state.awdl_state.mt7925_discovery_window);
++	}
++
+ 	struct ev_loop *loop = EV_DEFAULT;
+ 	awdl_schedule(loop, &state);
+ 
+--- /dev/null
++++ b/awdl/win/mt7925_discovery_window.h
+@@ -0,0 +1,56 @@
++/* SPDX-License-Identifier: GPL-3.0-or-later */
++#pragma once
++
++#include <stdbool.h>
++#include <stddef.h>
++#include <stdint.h>
++#include <string.h>
++
++#define MT7925_DISCOVERY_BACKEND 0x25u
++#define MT7925_DISCOVERY_CHANNEL 44u
++#define MT7925_DISCOVERY_FRESH_US 512000u
++
++static inline bool mt7925_fast_enabled(uint8_t backend, uint8_t channel, uint8_t width, bool shm, const char *mode) {
++	return backend == MT7925_DISCOVERY_BACKEND && (channel == 44 || channel == 149) &&
++	       width == 80 && shm && mode && mode[0] == '1' && mode[1] == '\0';
++}
++
++/* The adjacent-window extension was verified on channel 44.
++ * Channel 149 uses OWL's ordinary social-channel multicast schedule. */
++static inline bool mt7925_extended_discovery(bool fast, uint8_t channel) {
++	return fast && channel == MT7925_DISCOVERY_CHANNEL;
++}
++
++static inline bool mt7925_discovery_is_mdns(const uint8_t *bytes, size_t length) {
++	static const uint8_t mac[] = {0x33, 0x33, 0, 0, 0, 0xfb};
++	static const uint8_t group[16] = {0xff, 0x02, [15] = 0xfb};
++	enum { ethernet_len = 14, ipv6_len = 40, udp_dns_min = 8 + 12 };
++	if (length < ethernet_len + ipv6_len + udp_dns_min ||
++	    memcmp(bytes, mac, sizeof(mac)) || bytes[12] != 0x86 || bytes[13] != 0xdd)
++		return false;
++	const uint8_t *ip = bytes + ethernet_len;
++	const uint8_t *udp = ip + ipv6_len;
++	const size_t payload = ((size_t) ip[4] << 8) | ip[5];
++	return (ip[0] >> 4) == 6 && ip[6] == 17 && !memcmp(ip + 24, group, sizeof(group)) &&
++	       payload >= udp_dns_min && payload == length - ethernet_len - ipv6_len &&
++	       payload == (((size_t) udp[4] << 8) | udp[5]) && udp[2] == 0x14 && udp[3] == 0xe9;
++}
++
++static inline bool mt7925_discovery_fresh(uint64_t now, uint64_t heard) {
++	return heard && now >= heard && now - heard <= MT7925_DISCOVERY_FRESH_US;
++}
++
++static inline bool mt7925_discovery_in_window(unsigned own_channel, unsigned peer_channel, double guard_delay) {
++	return guard_delay == 0 && own_channel == MT7925_DISCOVERY_CHANNEL &&
++	       peer_channel == MT7925_DISCOVERY_CHANNEL;
++}
++
++static inline bool mt7925_discovery_defer_legacy(unsigned peer_count, bool deferred,
++                                                 unsigned peer_channel, unsigned next_own_channel,
++                                                 unsigned next_peer_channel, uint64_t next_guard_us,
++                                                 uint64_t oldest_observation_us) {
++	return peer_count == 1 && !deferred && peer_channel != 0 && peer_channel != 0xff &&
++	       peer_channel != MT7925_DISCOVERY_CHANNEL &&
++	       next_own_channel == MT7925_DISCOVERY_CHANNEL && next_peer_channel == MT7925_DISCOVERY_CHANNEL &&
++	       mt7925_discovery_fresh(next_guard_us, oldest_observation_us);
++}
+--- a/awdl/win/radio_client.c
++++ b/awdl/win/radio_client.c
+@@ -1,5 +1,6 @@
+ /* SPDX-License-Identifier: GPL-3.0-or-later */
+ #include "radio_client.h"
++#include "mt7925_discovery_window.h"
+ 
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
+@@ -79,6 +80,8 @@
+ 	uint32_t version;
+ 	uint8_t channel;
+ 	uint8_t width_mhz;
++	uint8_t discovery_backend;
++	int mt7925_fast;
+ 	volatile LONG closing;
+ 	void (*on_disconnect)(void);
+ 	uint8_t *pipe_buf;
+@@ -205,7 +208,10 @@
+ 			client->version = hello->version;
+ 			client->channel = hello->channel;
+ 			client->width_mhz = hello->width_mhz;
++			client->discovery_backend = hello->reserved[1];
+ 			try_open_shm(client, hello->reserved[0]);
++			client->mt7925_fast = mt7925_fast_enabled(client->discovery_backend, client->channel,
++			    client->width_mhz, client->shm != NULL, getenv("NEKODROP_MT7925_DISCOVERY_WINDOW"));
+ 			SetEvent(client->hello_event);
+ 		}
+ 	}
+@@ -305,6 +311,14 @@
+ 	return client->channel;
+ }
+ 
++int radio_client_is_e138(const struct radio_client *client) {
++	return client->discovery_backend == MT7925_DISCOVERY_BACKEND;
++}
++
++int radio_client_mt7925_fast(const struct radio_client *client) {
++	return client->mt7925_fast;
++}
++
+ uint8_t radio_client_width_mhz(const struct radio_client *client) {
+ 	return client->width_mhz;
+ }
+@@ -371,9 +385,20 @@
+ 	return waiting;
+ }
+ 
++static int mt7925_pipe_control(struct radio_client *client, const uint8_t *payload, uint32_t length) {
++	if (!client->mt7925_fast || length < 8 || payload[0])
++		return 0;
++	uint32_t header = (uint32_t) payload[2] | (uint32_t) payload[3] << 8;
++	if (header < 8 || header > length || length - header < 24)
++		return 0;
++	const uint8_t *frame = payload + header;
++	return (frame[0] & 0x0c) != 8 || (frame[4] & 1);
++}
++
+ int radio_client_send(struct radio_client *client, uint16_t type, const uint8_t *payload,
+ 		      uint32_t length) {
+-	if (type == RADIO_LINK_TX && client->shm && length > 0 && length <= RADIO_LINK_MAX_PAYLOAD) {
++	if (type == RADIO_LINK_TX && client->shm && length > 0 && length <= RADIO_LINK_MAX_PAYLOAD &&
++	    !mt7925_pipe_control(client, payload, length)) {
+ 		struct radio_shm_ring *ring = &client->shm->tx;
+ 		uint32_t total = (4u + length + 3u) & ~3u;
+ 		for (int spins = 0; spins < 2000; spins++) {
+--- a/awdl/win/radio_client.h
++++ b/awdl/win/radio_client.h
+@@ -18,6 +18,8 @@
+  * windows.h out of this header. */
+ void *radio_client_rx_event(const struct radio_client *client);
+ uint8_t radio_client_channel(const struct radio_client *client);
++int radio_client_is_e138(const struct radio_client *client);
++int radio_client_mt7925_fast(const struct radio_client *client);
+ /* How wide a channel the radio receives on, in MHz. */
+ uint8_t radio_client_width_mhz(const struct radio_client *client);
+ 

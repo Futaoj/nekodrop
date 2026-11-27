@@ -1,0 +1,91 @@
+; SPDX-License-Identifier: MIT
+; NekoDrop RegProxy and board SAR filter for the MT7925 E138 REV_00.
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = WinAwdlRadio
+ClassGuid   = {42c93386-3172-4834-9a73-d5dbe38443f8}
+Provider    = %Provider%
+CatalogFile = nekodrop_mt7925_sar.cat
+DriverVer = 01/01/2026,1.1.0.0
+PnpLockdown = 1
+
+[ClassInstall32]
+AddReg = Class_AddReg
+
+[Class_AddReg]
+HKR,,,,%ClassName%
+HKR,,Icon,,"-5"
+
+[Manufacturer]
+%Provider% = Models, NTamd64.10.0...26100
+
+[Models.NTamd64.10.0...26100]
+%DeviceDescMtk7925% = RegProxy, PCI\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+winawdl_regproxy.dll = 1
+nekodrop_mt7925_sar.sys = 1
+
+[DestinationDirs]
+RegProxy_Copy = 13
+
+[RegProxy.NT]
+CopyFiles = RegProxy_Copy
+Include   = WUDFRD.inf
+Needs     = WUDFRD.NT
+
+[RegProxy_Copy]
+winawdl_regproxy.dll
+nekodrop_mt7925_sar.sys
+
+[RegProxy.NT.HW]
+Include = WUDFRD.inf
+Needs   = WUDFRD.NT.HW
+AddReg  = RegProxy_HwAddReg
+
+[RegProxy_HwAddReg]
+; Device object reachable by SYSTEM and Administrators only.
+HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GA;;;BA)"
+
+[RegProxy.NT.Services]
+; Windows build 26100's inbox section registers WUDFRd as the function driver.
+Include = WUDFRD.inf
+Needs = WUDFRD.NT.Services
+AddService = NekoDropMt7925Sar, 0, Mt7925Sar_Service
+
+[RegProxy.NT.Wdf]
+KmdfService = NekoDropMt7925Sar, Mt7925Sar_Wdf
+UmdfService               = winawdl_regproxy, RegProxy_Umdf
+UmdfServiceOrder          = winawdl_regproxy
+UmdfDirectHardwareAccess  = AllowDirectHardwareAccess
+UmdfRegisterAccessMode    = RegisterAccessUsingUserModeMapping
+
+[RegProxy_Umdf]
+UmdfLibraryVersion = 2.31.0
+ServiceBinary      = %13%\winawdl_regproxy.dll
+
+[Strings]
+Provider   = "NekoDrop MT7925 Fast"
+ClassName  = "winawdl user-space radios"
+DeviceDescMtk7925 = "NekoDrop MT7925 E138 register proxy and board SAR"
+DiskName   = "winawdl register proxy"
+
+[RegProxy.NT.Filters]
+AddFilter = NekoDropMt7925Sar,,Mt7925Sar_Lower
+
+[Mt7925Sar_Lower]
+FilterPosition = Lower
+
+[Mt7925Sar_Service]
+DisplayName = "NekoDrop MT7925 board SAR (read only)"
+ServiceType = 1
+StartType = 3
+ErrorControl = 1
+ServiceBinary = %13%\nekodrop_mt7925_sar.sys
+
+[Mt7925Sar_Wdf]
+KmdfLibraryVersion = 1.31

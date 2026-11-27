@@ -22,7 +22,7 @@ public:
   RegProxy &operator=(const RegProxy &) = delete;
 
   /* Opens the one card bound to the proxy. `error` says why not. */
-  bool open(std::string &error);
+  bool open(std::string &error, const std::wstring &instance_id = {});
   bool is_open() const { return _handle != nullptr; }
 
   uint16_t vendor() const { return _vendor; }

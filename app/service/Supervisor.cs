@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 using System.Diagnostics;
+using System.Net.NetworkInformation;
 using System.Text.Json.Nodes;
 
 namespace NekoDrop.Service;
@@ -23,6 +24,10 @@ public sealed class Supervisor : IDisposable
     /// <summary>The card being driven, for the settings ("Intel AX200"), "" when none was found.</summary>
     string _cardLabel = "";
     Process? _radio, _awdld;
+    string? _mt7925StopFile, _mt7925Instance;
+    volatile bool _mt7925Ready, _mt7925HostReady, _mt7925ChannelGranted;
+    volatile int _mt7925RxStreams = 1;
+    int _e138PeerChannel, _e138RejectedChannel;
     int _channel;
     /// <summary>The network last read from Windows; once the card is ours the WLAN service sees nothing.</summary>
     Wlan.Network? _net;
@@ -97,7 +102,8 @@ public sealed class Supervisor : IDisposable
                 // on demand, and the client's Bluetooth wake-up has to know that.
                 ["effectiveMode"] = EffectiveMode().ToString().ToLowerInvariant(),
                 ["channel"] = _channel,
-                ["country"] = _cfg.Country,
+                ["country"] = _profile.Backend == RadioBackendKind.Mt7925 ? (Mt7925RadioBackend.IsFastChannel(_channel) ? "CN" : "00") : _cfg.Country,
+                ["e138IndoorCn"] = _profile.Backend == RadioBackendKind.Mt7925 ? _cfg.E138IndoorCn : (bool?)null,
                 ["fastUnlock"] = _cfg.FastUnlock,
                 ["coexPlan"] = _cfg.CoexPlan,
                 ["highThroughput"] = _cfg.HighThroughput,
@@ -296,7 +302,7 @@ public sealed class Supervisor : IDisposable
             _cfg.Save();
         }
         Say($"experimental fast passive-channel unlock: {(on ? "on" : "off")}");
-        if (State is RadioState.On or RadioState.Starting)
+        if (_profile.Backend != RadioBackendKind.Mt7925 && State is RadioState.On or RadioState.Starting)
             _ = Task.Run(() => Relaunch(_channel == 0 ? _cfg.StartChannel : _channel));
         Publish();
     }
@@ -311,7 +317,7 @@ public sealed class Supervisor : IDisposable
             _cfg.Save();
         }
         Say($"experimental coexistence plan: {(on ? "on" : "off")}");
-        if (State is RadioState.On or RadioState.Starting)
+        if (_profile.Backend != RadioBackendKind.Mt7925 && State is RadioState.On or RadioState.Starting)
             _ = Task.Run(() => Relaunch(_channel == 0 ? _cfg.StartChannel : _channel));
         Publish();
     }
@@ -326,7 +332,7 @@ public sealed class Supervisor : IDisposable
             _cfg.Save();
         }
         Say($"experimental high-throughput mode (HE80 + MTU 1500): {(on ? "on" : "off")}");
-        if (State is RadioState.On or RadioState.Starting)
+        if (_profile.Backend != RadioBackendKind.Mt7925 && State is RadioState.On or RadioState.Starting)
             _ = Task.Run(() => Relaunch(_channel == 0 ? _cfg.StartChannel : _channel));
         Publish();
     }
@@ -379,6 +385,9 @@ public sealed class Supervisor : IDisposable
         hardwareId = hardwareId.Trim();
         if (hardwareId == "") model = "";
         else if (CardCatalog.ManualProfile(hardwareId, model) is null) return "this model does not fit this card";
+        bool switchingMt7925 = _wanted && (_profile.Backend == RadioBackendKind.Mt7925 || model == "mt7925") &&
+            (_cfg.ManualCard != hardwareId || _cfg.ManualModel != model);
+        if (switchingMt7925) Stop("changing the selected card", giveBack: true);
         lock (_lock)
         {
             _cfg.ManualCard = hardwareId;
@@ -389,7 +398,8 @@ public sealed class Supervisor : IDisposable
         Say(hardwareId == "" ? "card: automatic detection" : $"card: {hardwareId} chosen in settings as {model}");
         if (Card.Find() is { } c) { _profile = c.Profile; _caps = c.Profile.Capabilities; _cardLabel = $"{c.Profile.VendorName} {c.Profile.FamilyName}"; }
         else _cardLabel = "";
-        if (_wanted) _ = Task.Run(() => Relaunch(_channel == 0 ? _cfg.StartChannel : _channel));
+        if (switchingMt7925 && _cfg.Mode != NetMode.Off) Start("selected card changed");
+        else if (_wanted) _ = Task.Run(() => Relaunch(_channel == 0 ? _cfg.StartChannel : _channel));
         Publish();
         return "";
     }
@@ -415,12 +425,29 @@ public sealed class Supervisor : IDisposable
         if (_cfg.Mode != NetMode.Off) Start("woken");
     }
 
+    public void SetE138IndoorCn(bool on)
+    {
+        int channel;
+        lock (_lock)
+        {
+            if (_profile.Backend != RadioBackendKind.Mt7925 || _cfg.E138IndoorCn == on) return;
+            _cfg.E138IndoorCn = on;
+            _e138RejectedChannel = 0;
+            channel = on && Mt7925RadioBackend.IsFastChannel(_e138PeerChannel) ? _e138PeerChannel : Mt7925RadioBackend.Channel;
+            _cfg.Save();
+        }
+        if (State is RadioState.On or RadioState.Starting && _channel != channel)
+            _ = Task.Run(() => Relaunch(channel));
+        Publish();
+    }
+
     public void Touch() => _lastUse = DateTime.UtcNow;
 
     public void Start(string why)
     {
         lock (_lock)
         {
+            if (_cts.IsCancellationRequested) return;
             if (_wanted && State is RadioState.On or RadioState.Starting) return;
             _wanted = true;
             _holdFirmwareRetry = false;
@@ -432,7 +459,8 @@ public sealed class Supervisor : IDisposable
         // arrives after the move, so every start sat on channel 6 first). On a
         // passive channel the radio waits for a beacon before transmitting, and
         // the 30 s check below falls back to the start channel.
-        _ = Task.Run(() => Launch(_cfg.PeerChannel != 0 ? _cfg.PeerChannel : _cfg.StartChannel));
+        _ = Task.Run(() => Launch(_profile.Backend == RadioBackendKind.Mt7925 ? Mt7925RadioBackend.Channel :
+            _cfg.PeerChannel != 0 ? _cfg.PeerChannel : _cfg.StartChannel));
     }
 
     public void Stop(string why, bool giveBack)
@@ -466,6 +494,10 @@ public sealed class Supervisor : IDisposable
     void LaunchLocked(int channel)
     {
         if (!_wanted) return;
+        bool indoorCn = _cfg.E138IndoorCn;
+        int e138Channel = indoorCn && Mt7925RadioBackend.IsFastChannel(channel) && channel != _e138RejectedChannel
+            ? channel : Mt7925RadioBackend.Channel;
+        if (_profile.Backend == RadioBackendKind.Mt7925) channel = e138Channel;
         lock (_lock)
         {
             State = RadioState.Starting; _channel = channel; _detail = "";
@@ -572,37 +604,143 @@ public sealed class Supervisor : IDisposable
             // the station, the radio only drives AWDL through the driver.
             // Stop may have run meanwhile: never take the card or start a radio for it (Codex review #10).
             if (!_wanted) { lock (_lock) State = RadioState.Off; Publish(); return; }
-            if (!kernel) TakeCard();
+            if (!kernel) TakeCard(Mt7925RadioBackend.IsFastChannel(e138Channel));
             else if (Card.Find() is { } kc) { _profile = kc.Profile; _caps = kc.Profile.Capabilities; }
             if (!_wanted) { lock (_lock) State = RadioState.Off; Publish(); return; }
             if (!kernel && EffectiveMode() == NetMode.Concurrent) EnsureTapMac();
-            var launch = CardCatalog.BuildRadioLaunch(_profile, channel, kernel, _cfg.Country, staConf, true, _cfg.FastUnlock,
-                                                      _cfg.CoexPlan, btCoexBalanced: true, highThroughput: _cfg.HighThroughput);
+            bool mt7925 = _profile.Backend == RadioBackendKind.Mt7925;
+            bool fastE138 = mt7925 && Mt7925RadioBackend.IsFastChannel(e138Channel);
+            if (mt7925)
+            {
+                channel = e138Channel;
+                lock (_lock)
+                {
+                    _channel = channel;
+                    _e138PeerChannel = 0;
+                    _mt7925Ready = _mt7925HostReady = _mt7925ChannelGranted = false;
+                }
+                _mt7925RxStreams = 1;
+                ServiceConfig.EnsureSecureDirectory();
+                _mt7925StopFile = Path.Combine(ServiceConfig.Folder, $"mt7925-{Guid.NewGuid():N}.stop");
+            }
+            var launch = fastE138 ? Mt7925RadioBackend.FastLaunch(_mt7925Instance!, _mt7925StopFile!, channel) :
+                CardCatalog.BuildRadioLaunch(_profile, channel, kernel, _cfg.Country, staConf, true, _cfg.FastUnlock,
+                _cfg.CoexPlan, btCoexBalanced: true, highThroughput: _cfg.HighThroughput, instanceId: _mt7925Instance,
+                stopFile: _mt7925StopFile);
             _startedAt = DateTime.UtcNow;
-            _radio = Spawn(Path.Combine(_root, "radio", launch.ExeName), launch.Args, OnRadioLine);
+            var radio = _radio = Spawn(Path.Combine(_root, "radio", launch.ExeName), launch.Args, OnRadioLine);
             // awdld connects to the radio's pipe; give the firmware time to boot.
-            for (int i = 0; i < 100 && State == RadioState.Starting && _radio is { HasExited: false }; i++) Thread.Sleep(100);
-            if (_radio is null || _radio.HasExited) throw new InvalidOperationException("the radio exited during bring-up: " + _detail);
-            string[] awdlArgs = _cfg.HighThroughput
+            for (int i = 0; i < (mt7925 ? 650 : 100) && _wanted && State == RadioState.Starting && !radio.HasExited; i++)
+            {
+                if (mt7925 && _mt7925Ready) break;
+                Thread.Sleep(100);
+            }
+            if (!_wanted) return;
+            if (radio.HasExited) throw new InvalidOperationException("the radio exited during bring-up: " + _detail);
+            if (mt7925 && !_mt7925Ready) throw new TimeoutException("MT7925 did not initialize within 65 seconds");
+            string[] awdlArgs = fastE138 ? ["-c", channel.ToString(), "-r", "-s", _mt7925RxStreams.ToString()] : mt7925 ? ["-c", channel.ToString(), "-r", "-s", "1", "-l"] : _cfg.HighThroughput
                 ? ["-c", channel.ToString(), "-H", "-M", "1500"]
                 : ["-c", channel.ToString()];
-            _awdld = Spawn(Path.Combine(_root, "awdl", "awdld.exe"), awdlArgs, OnAwdldLine);
+            int generation = _launchGen;
+            var awdld = _awdld = Spawn(Path.Combine(_root, "awdl", mt7925 && !fastE138 ? "awdld-mt7925.exe" : "awdld.exe"), awdlArgs, line =>
+            {
+                if (generation != Volatile.Read(ref _launchGen)) return;
+                OnAwdldLine(line);
+                if (mt7925 && !fastE138) ObserveE138Peer(line, generation);
+            }, fastE138);
+            if (mt7925)
+            {
+                for (int i = 0; i < 300 && _wanted && (!_mt7925HostReady || (fastE138 && !_mt7925ChannelGranted)) && !awdld.HasExited && !radio.HasExited; ++i)
+                    Thread.Sleep(100);
+                if (!_wanted) return;
+                if (!_mt7925HostReady || awdld.HasExited || radio.HasExited)
+                    throw new InvalidOperationException("MT7925 could not bring up the awdl0 host interface");
+                if (fastE138 && !_mt7925ChannelGranted)
+                    throw new InvalidOperationException($"MT7925 did not confirm channel {channel} residency");
+                lock (_lock) State = RadioState.On;
+                Publish();
+            }
         }
         catch (Exception e)
         {
             try { File.Delete(Path.Combine(ServiceConfig.Folder, "run", "sta.conf")); } catch (Exception) { }
             var bind = e as CardBindException ?? e.InnerException as CardBindException;
+            bool mt7925 = _profile.Backend == RadioBackendKind.Mt7925;
+            if (mt7925)
+            {
+                KillDaemons();
+                EnsureVendorDriver();
+            }
             Say("start failed: " + (bind?.Message ?? e.Message));
+            if (mt7925 && _wanted && Mt7925RadioBackend.IsFastChannel(e138Channel))
+            {
+                _e138RejectedChannel = e138Channel;
+                Say($"E138 channel {e138Channel} unavailable; returning to channel 6");
+                LaunchLocked(Mt7925RadioBackend.Channel);
+                return;
+            }
             lock (_lock)
             {
                 // Windows refusing the driver is not cured by retrying: no restart loop
                 // (it ran five times, each time leaving the card without a driver).
-                if (bind is not null) _wanted = false;
-                State = _wanted || bind is not null ? RadioState.Error : RadioState.Off;
+                if (bind is not null || mt7925) _wanted = false;
+                if (mt7925) _holdFirmwareRetry = true;
+                State = _wanted || bind is not null || mt7925 ? RadioState.Error : RadioState.Off;
                 _detail = bind?.Message ?? e.Message;
             }
             Publish();
         }
+    }
+
+    void ObserveE138Peer(string line, int generation)
+    {
+        const string marker = "AWDL peer channel sequence ";
+        int start = line.IndexOf(marker, StringComparison.Ordinal);
+        if (start < 0) return;
+        int channel = Mt7925RadioBackend.PreferredChannel(line[(start + marker.Length)..]);
+        lock (_lock)
+        {
+            if (generation != _launchGen || _channel != Mt7925RadioBackend.Channel || _e138PeerChannel == channel) return;
+            _e138PeerChannel = channel;
+            if (!_cfg.E138IndoorCn || channel == 0 || channel == _e138RejectedChannel) return;
+        }
+        _ = FollowE138Peer(channel, generation);
+    }
+
+    // A peer can advertise its 5 GHz slots while transferring a file on channel 6.
+    async Task FollowE138Peer(int channel, int generation)
+    {
+        while (!_cts.IsCancellationRequested)
+        {
+            await Task.Delay(1500);
+            if (!_wanted || !_cfg.E138IndoorCn || generation != Volatile.Read(ref _launchGen) || _e138PeerChannel != channel) return;
+            if (State != RadioState.On || E138HasConnection()) continue;
+            await _launchGate.WaitAsync();
+            try
+            {
+                if (!_wanted || !_cfg.E138IndoorCn || _channel != Mt7925RadioBackend.Channel ||
+                    generation != _launchGen || _e138PeerChannel != channel) return;
+                if (E138HasConnection()) continue;
+                Say($"E138 peer advertises channel {channel} on channel 6; checking indoor CN 80 MHz profile");
+                LaunchLocked(channel);
+                return;
+            }
+            finally { _launchGate.Release(); }
+        }
+    }
+
+    static bool E138HasConnection()
+    {
+        try
+        {
+            var nic = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n => n.Name == "awdl0");
+            if (nic is null) return false;
+            var addresses = nic.GetIPProperties().UnicastAddresses.Select(a => Convert.ToHexString(a.Address.GetAddressBytes())).ToHashSet();
+            return IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpConnections().Any(c =>
+                c.State is TcpState.Established or TcpState.SynSent or TcpState.SynReceived &&
+                addresses.Contains(Convert.ToHexString(c.LocalEndPoint.Address.GetAddressBytes())));
+        }
+        catch (NetworkInformationException) { return true; }
     }
 
     /* awdld warns for every frame it does not parse, several a second (issue #1):
@@ -613,6 +751,10 @@ public sealed class Supervisor : IDisposable
 
     void OnAwdldLine(string line)
     {
+        if (_profile.Backend == RadioBackendKind.Mt7925 &&
+            line.Contains(Mt7925RadioBackend.IsFastChannel(_channel) ? $"MT7925 fast host ready | ch{_channel}/80" : "host interface awdl0, index ",
+                          StringComparison.Ordinal))
+            _mt7925HostReady = true;
         if (line.Contains("unhandled frame", StringComparison.Ordinal))
         {
             string? summary = null;
@@ -653,6 +795,18 @@ public sealed class Supervisor : IDisposable
     void OnRadioLine(string line)
     {
         Say("radio: " + line);
+        if (_profile.Backend == RadioBackendKind.Mt7925)
+        {
+            lock (_lock)
+            {
+                if (line.EndsWith("MT7925 VHT80 RX streams=2", StringComparison.Ordinal)) _mt7925RxStreams = 2;
+                else if (line.StartsWith("Local radio initialized;", StringComparison.Ordinal) ||
+                    line.EndsWith($"MT7925 channel {_channel} AWDL pipe ready", StringComparison.Ordinal)) _mt7925Ready = true;
+                else if (line.EndsWith($"MT7925 AWDL channel {_channel} ready for frames", StringComparison.Ordinal)) _mt7925ChannelGranted = true;
+                else if (!_mt7925Ready) _detail = line;
+            }
+            return;
+        }
         var at = line.IndexOf("radio: ", StringComparison.Ordinal);
         var text = at >= 0 ? line[(at + 7)..] : line;
         if (text.StartsWith("ready on channel", StringComparison.Ordinal))
@@ -1129,13 +1283,18 @@ public sealed class Supervisor : IDisposable
         }
     }
 
-    void TakeCard()
+    void TakeCard(bool e138IndoorCn)
     {
         var card = Card.Find() ?? throw new InvalidOperationException(
             "no supported Wi-Fi card found (Settings > Wi-Fi card lets you choose the model by hand)");
         _profile = card.Profile;
         _cardLabel = $"{card.Profile.VendorName} {card.Profile.FamilyName}";
         _caps = card.Profile.Capabilities;
+        if (_profile.Backend == RadioBackendKind.Mt7925)
+        {
+            TakeMt7925(card, e138IndoorCn);
+            return;
+        }
         if (Card.TakenByProxy(card)) return;
         // Only the vendor's INF is the one to give the card back to, never the proxy's (issue #12).
         // Not checked against the vendor's provider names: OEM repackages of
@@ -1182,6 +1341,55 @@ public sealed class Supervisor : IDisposable
         throw new CardBindException($"the register proxy was bound but did not start ({state})", new TimeoutException());
     }
 
+    void TakeMt7925(Card.Info card, bool fast)
+    {
+        Mt7925Driver.RequireSingleBoard(card);
+        string inf = Path.Combine(_root, "driver", fast ? Mt7925RadioBackend.FastInf : card.Profile.ProxyInfName);
+        string driver = Path.GetDirectoryName(inf)!;
+        string driverName = Path.GetFileNameWithoutExtension(inf);
+        if (fast && !File.Exists(Path.Combine(driver, "winawdl_regproxy.dll")))
+            throw new FileNotFoundException("Missing the E138 register-proxy driver");
+        foreach (var file in new[] { inf, Path.Combine(driver, driverName + ".sys"), Path.Combine(driver, driverName + ".cat"),
+            Path.Combine(_root, "radio", fast ? Mt7925RadioBackend.FastExe : RadioBackends.Get(card.Profile.Backend).ExeName),
+            Path.Combine(_root, "awdl", fast ? "awdld.exe" : "awdld-mt7925.exe"), Path.Combine(_root, "awdl", "wintun.dll"),
+            Path.Combine(Mt7925RadioBackend.FirmwareDirectory, "WIFI_MT7925_PATCH_MCU_1_1_hdr.bin"),
+            Path.Combine(Mt7925RadioBackend.FirmwareDirectory, "WIFI_RAM_CODE_MT7925_1_1.bin") })
+            if (!File.Exists(file)) throw new FileNotFoundException($"The installed MT7925 package is missing {file}");
+
+        // The E138 may already have an older experimental RegProxy. Keep a compatible Windows
+        // network driver for rollback even on the first session after migrating from that setup.
+        bool onWindowsWifi = CardCatalog.IsVendorProviderMatch(card.Profile, card.Provider) && File.Exists(card.InfPath);
+        string vendorInf = onWindowsWifi ? card.InfPath : Mt7925Driver.VendorInf(card, _cfg.VendorInf);
+        lock (_lock) { _cfg.VendorInf = vendorInf; _cfg.Save(); }
+        _mt7925Instance = card.InstanceId;
+        byte[] requestedInf = File.ReadAllBytes(inf);
+        bool Matches(Card.Info active) => Mt7925Driver.MatchesPackage(active, fast ? "WUDFRd" : card.Profile.ProxyService, requestedInf);
+        if (Matches(card))
+        {
+            // The kernel permits only one START per prepared device. A new process may
+            // follow a prior session or an interrupted service without an intervening bind.
+            Say("restarting MT7925 device " + card.InstanceId);
+            Mt7925Driver.Restart(card);
+        }
+        else
+        {
+            if (onWindowsWifi)
+            {
+                WlanBackup.Restore(Say, TimeSpan.Zero);
+                WlanBackup.Save(Say);
+            }
+            Say($"binding {Path.GetFileName(inf)} to {card.InstanceId}");
+            Mt7925Driver.Bind(card, inf);
+        }
+        for (int i = 0; i < 300; ++i)
+        {
+            if (Card.Find(card.InstanceId) is { } active && Matches(active)) return;
+            Thread.Sleep(100);
+        }
+        throw new CardBindException("MT7925 driver did not start; see Device Manager for the selected PCI instance",
+            new TimeoutException());
+    }
+
     /* ------------------------------------------------------- Wi-Fi management */
 
     static readonly string[] Joinable = ["open", "owe", "wpa2-psk", "wpa2/3-psk", "wpa3-sae"];
@@ -1202,7 +1410,7 @@ public sealed class Supervisor : IDisposable
     /// <summary>Refreshes the list; `ssid` makes it a directed scan (hidden networks).</summary>
     public void WifiScan(string? ssid = null, bool background = false)
     {
-        if (State != RadioState.On) return;
+        if (State != RadioState.On || _profile.Backend == RadioBackendKind.Mt7925) return;
         var mtkBackground = background && _profile.Backend == RadioBackendKind.MtkRadio;
         lock (_lock)
         {
@@ -1432,7 +1640,27 @@ public sealed class Supervisor : IDisposable
 
     void EnsureVendorDriver(bool reconnect = false)
     {
-        var card = Card.Find();
+        var card = Card.Find(_mt7925Instance);
+        if (card?.Profile.Backend == RadioBackendKind.Mt7925)
+        {
+            if (Card.BoundToProxy(card) || _mt7925Instance is not null ||
+                card.Provider.Equals("NekoDrop MT7925 Fast", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    if (!CardCatalog.IsVendorProviderMatch(card.Profile, card.Provider) || card.Problem != 0)
+                    {
+                        string inf = Mt7925Driver.VendorInf(card, _cfg.VendorInf);
+                        Say($"returning {card.InstanceId} to {Path.GetFileName(inf)}");
+                        Mt7925Driver.Bind(card, inf);
+                        _ = Task.Run(() => WlanBackup.Restore(Say, TimeSpan.FromSeconds(60)));
+                    }
+                    _mt7925Instance = null;
+                }
+                catch (Exception e) { Say("giving the MT7925 back to Windows failed: " + e.Message); }
+            }
+            return;
+        }
         // Ours (running or not), or left with no driver by a failed bind: the vendor's driver goes back on.
         if (card is null || (!Card.BoundToProxy(card) && card.InfPath != ""))
         {
@@ -1494,7 +1722,7 @@ public sealed class Supervisor : IDisposable
         _ = Task.Run(() => WlanBackup.RestoreAndConnect(Say, preferred));
     }
 
-    Process Spawn(string exe, IEnumerable<string> args, Action<string> onLine)
+    Process Spawn(string exe, IEnumerable<string> args, Action<string> onLine, bool e138DiscoveryWindow = false)
     {
         var psi = new ProcessStartInfo(exe)
         {
@@ -1505,6 +1733,7 @@ public sealed class Supervisor : IDisposable
             RedirectStandardInput = true,
             WorkingDirectory = Path.GetDirectoryName(exe)!,
         };
+        if (e138DiscoveryWindow) psi.Environment["NEKODROP_MT7925_DISCOVERY_WINDOW"] = "1";
         foreach (var a in args) psi.ArgumentList.Add(a);
         var p = Process.Start(psi) ?? throw new InvalidOperationException("cannot start " + exe);
         p.ErrorDataReceived += (_, e) => { if (e.Data is not null) onLine(e.Data); };
@@ -1538,6 +1767,17 @@ public sealed class Supervisor : IDisposable
                         if (p.WaitForExit(6000)) continue;
                         Say("WARNING: mtkradio did not exit within 6 s after quit; forcing termination");
                     }
+                    if (ReferenceEquals(p, _radio) && _mt7925StopFile is { } stopFile)
+                    {
+                        try
+                        {
+                            File.WriteAllText(stopFile, "");
+                            if (p.WaitForExit(15000)) continue;
+                            Say("MT7925 did not finish STOP within 15 s; closing the process before driver recovery");
+                        }
+                        catch (IOException e) { Say("requesting MT7925 STOP: " + e.Message); }
+                        catch (UnauthorizedAccessException e) { Say("requesting MT7925 STOP: " + e.Message); }
+                    }
                     p.Kill();
                     p.WaitForExit(5000);
                 }
@@ -1545,12 +1785,16 @@ public sealed class Supervisor : IDisposable
             catch (InvalidOperationException) { }
         }
         _awdld = _radio = null;
+        if (_mt7925StopFile is { } path)
+        {
+            try { File.Delete(path); } catch (IOException e) { Say("removing the MT7925 stop file: " + e.Message); }
+            _mt7925StopFile = null;
+        }
     }
 
     public void Dispose()
     {
         _cts.Cancel();
-        KillDaemons();
-        if (EffectiveMode() != NetMode.Concurrent) EnsureVendorDriver();
+        Stop("service stopped", giveBack: EffectiveMode() != NetMode.Concurrent);
     }
 }
