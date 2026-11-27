@@ -1655,6 +1655,9 @@ int main(int argc, char **argv) {
          * (Codex review #14). */
         if (sta->state() != published_wifi) {
           published_wifi = sta->state();
+          /* Before "failed", so the service knows the cause when it sees the failure (#97). */
+          if (published_wifi == WifiStation::State::Failed && !sta->unsupported().empty())
+            log_line("event: wifi-unsupported " + sta->unsupported());
           log_line(std::string("event: wifi ") + sta->state_name());
         }
         if constexpr (caps.supports_station) {

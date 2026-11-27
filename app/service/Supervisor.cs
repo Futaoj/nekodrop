@@ -71,7 +71,16 @@ public sealed class Supervisor : IDisposable
     /// card whose radio has no station, which runs on demand. For every Intel
     /// card this is _cfg.Mode. The snapshot keeps reporting the user's choice.
     /// </summary>
-    NetMode EffectiveMode() => CardCatalog.EffectiveMode(_cfg.Mode, _caps);
+    NetMode EffectiveMode()
+    {
+        var mode = CardCatalog.EffectiveMode(_cfg.Mode, _caps);
+        /* Concurrent mode cannot join this Wi-Fi (#97): Windows keeps the card, AirDrop runs on demand. */
+        return mode == NetMode.Concurrent && _fallbackReason != "" ? NetMode.OnDemand : mode;
+    }
+
+    /// <summary>Why Concurrent mode runs on demand this session ("" when it does not): an unsupported network's reason.</summary>
+    string _fallbackReason = "";
+    static readonly TimeSpan UnsupportedMemory = TimeSpan.FromDays(7);
 
     public JsonObject Snapshot()
     {
@@ -92,6 +101,7 @@ public sealed class Supervisor : IDisposable
                 ["highThroughput"] = _cfg.HighThroughput,
                 ["dataPlaneAccel"] = _cfg.DataPlaneAccel,
                 ["stationWifi6"] = _cfg.StationWifi6,
+                ["keepWindowsMac"] = _cfg.KeepWindowsMac,
                 ["card"] = _cardLabel,
                 ["manualCard"] = _cfg.ManualCard,
                 ["manualModel"] = _cfg.ManualModel,
@@ -100,6 +110,7 @@ public sealed class Supervisor : IDisposable
                 ["ssid"] = _staSsid,
                 ["scanning"] = _scanBusy,
                 ["wifiError"] = _wifiError,
+                ["concurrentFallback"] = _fallbackReason,
                 ["networks"] = new JsonArray(_scan.Select(n =>
                 {
                     var c = (JsonObject)n.DeepClone();
@@ -216,11 +227,60 @@ public sealed class Supervisor : IDisposable
 
     public void SetMode(NetMode mode)
     {
-        lock (_lock) { _cfg.Mode = mode; _cfg.Save(); }
+        lock (_lock)
+        {
+            _cfg.Mode = mode;
+            /* Choosing a mode tries again: the router may have been changed to WPA2-AES. */
+            _fallbackReason = "";
+            _cfg.UnsupportedNetworks.Clear();
+            _cfg.Save();
+        }
         Say($"mode: {mode}");
         // Saved as chosen; a card without a station runs Concurrent on demand.
         if (EffectiveMode() == NetMode.Concurrent) Start("mode changed");
         else Stop("mode changed", giveBack: true);
+        Publish();
+    }
+
+    /// <summary>The TAP adapter shows Windows' Wi-Fi address, or its own when that is turned off (#96).</summary>
+    void EnsureTapMac()
+    {
+        string? want;
+        bool applied;
+        lock (_lock)
+        {
+            want = _cfg.KeepWindowsMac ? TapMac.Valid(_cfg.WindowsMac) : null;
+            applied = _cfg.TapMacApplied;
+        }
+        var now = TapMac.TapMacNow();
+        if (want is not null && now != want)
+        {
+            var why = TapMac.Apply(want);
+            if (why == "") lock (_lock) { _cfg.TapMacApplied = true; _cfg.Save(); }
+            Say(why == "" ? "Wi-Fi: the nekodrop adapter now uses Windows' Wi-Fi MAC address"
+                          : "Wi-Fi: could not give the nekodrop adapter Windows' MAC address: " + why);
+        }
+        else if (want is null && applied)
+        {
+            var why = TapMac.Apply(null);
+            if (why == "") lock (_lock) { _cfg.TapMacApplied = false; _cfg.Save(); }
+            Say(why == "" ? "Wi-Fi: the nekodrop adapter uses its own MAC address again"
+                          : "Wi-Fi: could not reset the nekodrop adapter's MAC address: " + why);
+        }
+    }
+
+    /// <summary>Concurrent mode shows the router Windows' Wi-Fi MAC address (#96); a running radio restarts.</summary>
+    public void SetKeepWindowsMac(bool on)
+    {
+        lock (_lock)
+        {
+            if (_cfg.KeepWindowsMac == on) return;
+            _cfg.KeepWindowsMac = on;
+            _cfg.Save();
+        }
+        Say($"Wi-Fi: use Windows' MAC address: {(on ? "on" : "off")}");
+        if (State is RadioState.On or RadioState.Starting)
+            _ = Task.Run(() => Relaunch(_channel == 0 ? _cfg.StartChannel : _channel));
         Publish();
     }
 
@@ -424,10 +484,26 @@ public sealed class Supervisor : IDisposable
                     }
                     catch (Exception e) { Say("Wi-Fi: could not read Windows' saved networks: " + e.Message); }
                 }
+                if (cardFree && TapMac.WindowsWifiMac() is { } windowsMac && windowsMac != _cfg.WindowsMac)
+                    lock (_lock) { _cfg.WindowsMac = windowsMac; _cfg.Save(); }
                 // The user's choice wins over what Windows was connected to.
                 var fresh = cardFree && !_userChose && !_userOff ? Wlan.Current(out why) : null;
                 // Not beside a wired connection: that left two default routes (issue #1).
                 var wired = fresh is null && _net is null && !_userChose && Wlan.WiredUp();
+                string? knownBad = null;
+                lock (_lock)
+                    if (fresh is not null && _cfg.UnsupportedNetworks.TryGetValue(fresh.Ssid, out var bad))
+                    {
+                        if (DateTime.UtcNow - bad.SeenUtc < UnsupportedMemory) knownBad = bad.Reason;
+                        else { _cfg.UnsupportedNetworks.Remove(fresh.Ssid); _cfg.Save(); }
+                    }
+                if (knownBad is not null)
+                {
+                    Say($"Wi-Fi: \"{fresh!.Ssid}\" cannot be joined beside AirDrop ({knownBad}); Windows keeps the card and AirDrop runs on demand");
+                    lock (_lock) { _fallbackReason = knownBad; _wanted = false; State = RadioState.Off; }
+                    Publish();
+                    return;
+                }
                 if (wired) Say("Wi-Fi: a wired connection is up; not joining a saved network on its own");
                 // If Windows is already in the middle of connecting at boot, wait briefly
                 // instead of cutting it off; never call WlanConnect across saved profiles
@@ -485,6 +561,7 @@ public sealed class Supervisor : IDisposable
             if (!kernel) TakeCard();
             else if (Card.Find() is { } kc) { _profile = kc.Profile; _caps = kc.Profile.Capabilities; }
             if (!_wanted) { lock (_lock) State = RadioState.Off; Publish(); return; }
+            if (!kernel && EffectiveMode() == NetMode.Concurrent) EnsureTapMac();
             var launch = CardCatalog.BuildRadioLaunch(_profile, channel, kernel, _cfg.Country, staConf, true, _cfg.FastUnlock,
                                                       _cfg.CoexPlan, btCoexBalanced: true, highThroughput: _cfg.HighThroughput);
             _startedAt = DateTime.UtcNow;
@@ -662,6 +739,31 @@ public sealed class Supervisor : IDisposable
                     });
                 }
                 break;
+            case "wifi-unsupported":
+            {
+                /* The network's security cannot be joined (#97). If it is the one
+                 * Windows was on (not one the user picked in nekodrop), give the
+                 * card back so the PC stays online, and remember the network. */
+                string ssid;
+                bool fallback;
+                lock (_lock)
+                {
+                    ssid = _staSsid;
+                    _wifiError = "unsupported-network:" + value;
+                    fallback = !_userChose && ssid != "" && EffectiveMode() == NetMode.Concurrent;
+                    if (fallback)
+                    {
+                        _cfg.UnsupportedNetworks[ssid] = new UnsupportedNetwork { Reason = value, SeenUtc = DateTime.UtcNow };
+                        _cfg.Save();
+                        _fallbackReason = value;
+                    }
+                }
+                Say($"Wi-Fi: \"{ssid}\" cannot be joined beside AirDrop ({value})" +
+                    (fallback ? "; giving the card back to Windows, AirDrop runs on demand" : ""));
+                if (fallback) _ = Task.Run(() => Stop("unsupported Wi-Fi security", giveBack: true));
+                Publish();
+                break;
+            }
             case "wifi-yield":
                 // The radio pauses the station during AirDrop transfers: the
                 // gateway cannot answer then, and the probe must not rejoin.

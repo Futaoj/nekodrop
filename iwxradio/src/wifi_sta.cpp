@@ -356,6 +356,8 @@ void WifiStation::learn_beacon(const uint8_t *f, size_t len) {
   _beacon_int = le16(f + 32);
   _ap_capab = le16(f + 34);
   _ap_rsn = _ap_ht = _ap_vht = _ap_2ss = _ap_wmm = false;
+  _ap_rsn_any = false;
+  _ap_group_cipher = 0;
   _ap_ht_cap = 0;
   _ap_ampdu = 0;
   _ap_vht_cap = 0;
@@ -381,6 +383,8 @@ void WifiStation::learn_beacon(const uint8_t *f, size_t len) {
       _ap_rsn_raw.assign(v, v + std::min<size_t>(n, 64));
       const bool ccmp = std::memcmp(v + 2, kRsnOui, 3) == 0 && v[5] == 4;
       _ap_rsn = ccmp;
+      _ap_rsn_any = true;
+      _ap_group_cipher = std::memcmp(v + 2, kRsnOui, 3) == 0 ? v[5] : 0xff;
       size_t o = 6;
       const unsigned npair = le16(v + o);
       o += 2;
@@ -1464,7 +1468,18 @@ void WifiStation::tick(uint64_t now_us) {
     }
     if (_beacon_seen || now_us - _state_since > 3000000) {
       if (!_cfg.open && _beacon_seen && !_ap_rsn && (_ap_capab & 0x10)) {
-        fail("the network is not WPA2/WPA3 with CCMP (WEP and TKIP are not supported)");
+        /* Say which, for the service and the user (#97): a WPA/WPA2 mixed
+         * router keeps TKIP as its group cipher although clients use CCMP. */
+        if (_ap_rsn_any && _ap_group_cipher == 2 && _ap_pairwise_ccmp) {
+          _unsupported = "tkip-group";
+          fail("the network is WPA/WPA2 mixed (CCMP for us, TKIP for broadcasts); only CCMP is supported");
+        } else if (_ap_rsn_any) {
+          _unsupported = "no-ccmp";
+          fail("the network offers TKIP only; only CCMP is supported");
+        } else {
+          _unsupported = "wep-or-wpa";
+          fail("the network uses WEP or WPA (version 1), which are not supported");
+        }
         return;
       }
       const std::string why = choose_akm();
@@ -1496,7 +1511,8 @@ void WifiStation::tick(uint64_t now_us) {
       fail("no 4-way handshake from the access point");
     break;
   case State::Failed:
-    if (now_us - _state_since > kRejoinDelayUS) {
+    if (now_us - _state_since > (_unsupported.empty() ? kRejoinDelayUS : 60000000ull)) {
+      _unsupported.clear();
       std::string error;
       _beacon_seen = false;
       if (!start(_cfg, error)) {

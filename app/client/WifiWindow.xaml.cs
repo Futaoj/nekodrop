@@ -143,6 +143,9 @@ public partial class WifiWindow : Window
         RefreshButton.IsEnabled = radio == "on" && !scanning;
         ScanText.Text = scanning ? L.T("wifi.scanning") : "";
         var serviceError = (string?)o["wifiError"] ?? "";
+        const string unsupported = "unsupported-network:";
+        if (serviceError.StartsWith(unsupported, StringComparison.Ordinal))
+            serviceError = App.UnsupportedNetworkText(serviceError[unsupported.Length..]) + L.T("wifi.unsupported.fix");
         if (serviceError != "") ShowError(serviceError);
 
         NetworkList.Children.Clear();

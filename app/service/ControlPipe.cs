@@ -74,6 +74,7 @@ public sealed class ControlPipe(Supervisor sup)
                     case "high-throughput": sup.SetHighThroughput((bool?)cmd?["on"] ?? false); break;
                     case "data-plane-accel": sup.SetDataPlaneAccel((bool?)cmd?["on"] ?? false); break;
                     case "station-wifi6": sup.SetStationWifi6((bool?)cmd?["on"] ?? false); break;
+                    case "keep-windows-mac": sup.SetKeepWindowsMac((bool?)cmd?["on"] ?? true); break;
                     case "cards":
                     {
                         // For the manual choice: the PCI network controllers and the models a card can be run as.

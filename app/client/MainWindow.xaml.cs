@@ -86,15 +86,15 @@ public partial class MainWindow : Window
     {
         AllowToggle.IsChecked = A.Model.Allow;
         UpdateAutoAcceptUi();
-        var relayA = A.RelayA;
-        var relayB = A.RelayB;
-        var pairSet = relayA is not null && relayB is not null && !relayA.Same(relayB);
-        MtaRelayRow.Visibility = pairSet ? Visibility.Visible : Visibility.Collapsed;
+        var rules = A.RelayRules;
+        MtaRelayRow.Visibility = rules.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         MtaRelayToggle.IsChecked = A.Settings.RelayOn;
-        if (pairSet)
+        if (rules.Count > 0)
         {
-            var why = Relay.Blocker(relayA, relayB, A.Settings);
-            RelayPairText.Text = why.Length > 0 && A.Settings.RelayOn ? why : $"{relayA!.Name} ⇄ {relayB!.Name}";
+            var working = Relay.Working(rules, A.Settings).Count;
+            RelayPairText.Text = rules.Count == 1 && working == 1 ? $"{rules[0].From.Name} → {rules[0].To.Name}"
+                               : working == rules.Count ? L.F("relay.rulesCount", rules.Count)
+                               : L.F("relay.rulesSome", working, rules.Count);
         }
         ModeList.Children.Clear();
         foreach (var (key, text) in new[] { ("concurrent", L.T("mode.concurrent.short")), ("ondemand", L.T("mode.ondemand.short")), ("off", L.T("mode.off.short")) })

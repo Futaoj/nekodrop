@@ -149,6 +149,14 @@
                            Content="{local:T mode.ondemand}" Tag="{local:T mode.ondemand.hint}"/>
               <RadioButton x:Name="ModeOff" Style="{StaticResource ModeCard}" GroupName="mode"
                            Content="{local:T mode.off}" Tag="{local:T mode.off.hint}"/>
+              <Border Style="{StaticResource Rule}" Margin="0,12"/>
+              <DockPanel>
+                <CheckBox x:Name="KeepMacBox" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Margin="12,0,0,0"/>
+                <StackPanel>
+                  <TextBlock Text="{local:T set.keepMac}" FontSize="13" FontWeight="Medium" TextWrapping="Wrap"/>
+                  <TextBlock Text="{local:T set.keepMac.short}" Style="{StaticResource Sub12}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+              </DockPanel>
             </StackPanel>
           </Border>
           <Border Style="{StaticResource CardPad}">
@@ -302,24 +310,27 @@
                 </StackPanel>
               </DockPanel>
               <StackPanel x:Name="RelayBody" Margin="0,12,0,0">
-                <Grid>
+                <!-- Who goes to whom: sources, this PC, destinations (drawn in RenderRelayFlow). -->
+                <Border BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6" Padding="10">
+                  <Canvas x:Name="RelayFlow" Height="80" SizeChanged="RelayFlow_SizeChanged"/>
+                </Border>
+                <StackPanel x:Name="RelayRuleList" Margin="0,10,0,0"/>
+                <Grid Margin="0,10,0,0">
                   <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                   </Grid.ColumnDefinitions>
-                  <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                  </Grid.RowDefinitions>
-                  <TextBlock Text="{local:T relay.deviceA}" FontSize="13" VerticalAlignment="Center" Margin="0,0,12,0"/>
-                  <ComboBox x:Name="RelayABox" Grid.Column="1" Style="{StaticResource WinCombo}" SelectionChanged="RelayInputs_Changed"/>
-                  <TextBlock Text="{local:T relay.deviceB}" Grid.Row="1" FontSize="13" VerticalAlignment="Center" Margin="0,8,12,0"/>
-                  <ComboBox x:Name="RelayBBox" Grid.Row="1" Grid.Column="1" Style="{StaticResource WinCombo}" Margin="0,8,0,0" SelectionChanged="RelayInputs_Changed"/>
+                  <ComboBox x:Name="RelayFromBox" Style="{StaticResource WinCombo}" ToolTip="{local:T relay.from}"/>
+                  <TextBlock Grid.Column="1" Text="→" FontSize="14" Margin="8,0" VerticalAlignment="Center" Foreground="{DynamicResource Accent}"/>
+                  <ComboBox x:Name="RelayToBox" Grid.Column="2" Style="{StaticResource WinCombo}" ToolTip="{local:T relay.to}"/>
                 </Grid>
-                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                <WrapPanel Margin="0,8,0,0">
+                  <Button Style="{StaticResource WinButton}" Content="{local:T relay.add}" Click="RelayAdd_Click" Padding="12,6" Margin="0,0,8,0"/>
+                  <Button Style="{StaticResource WinButton}" Content="{local:T relay.addBoth}" Click="RelayAddBoth_Click" Padding="12,6" Margin="0,0,8,0"/>
                   <Button x:Name="RelayScanButton" Style="{StaticResource WinButton}" Content="{local:T relay.scan}" Click="RelayScan_Click" Padding="12,6"/>
-                  <TextBlock x:Name="RelayStatus" Style="{StaticResource Sub12}" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap"/>
-                </StackPanel>
+                </WrapPanel>
+                <TextBlock x:Name="RelayStatus" Style="{StaticResource Sub12}" Margin="0,6,0,0" TextWrapping="Wrap"/>
                 <Border Style="{StaticResource Rule}" Margin="0,12"/>
                 <DockPanel x:Name="MtaKeepLocalRow">
                   <CheckBox x:Name="MtaRelayKeepLocalBox" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Margin="12,0,0,0"/>

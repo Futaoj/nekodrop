@@ -534,6 +534,8 @@ private:
     if (_sta->state() != _published_wifi) {
       _published_wifi = _sta->state();
       if (_published_wifi == WifiStation::State::Running) _running_since = Clock::now();
+      if (_published_wifi == WifiStation::State::Failed && !_sta->unsupported().empty())
+        say("event: wifi-unsupported %s", _sta->unsupported().c_str());
       say("event: wifi %s", _sta->state_name());
     }
     std::vector<uint8_t> ans;

@@ -83,10 +83,9 @@ public sealed class App : Application
     /// <summary>Incoming requests from a relay end, and the other end their files go to.</summary>
     readonly Dictionary<string, RelayEnd> _relayTo = [];
 
-    public RelayEnd? RelayA => RelayEnd.Parse(Settings.RelayA);
-    public RelayEnd? RelayB => RelayEnd.Parse(Settings.RelayB);
-    /// <summary>The relay is on and can work: a pair of two devices whose protocols are on.</summary>
-    public bool RelayActive => Settings.RelayOn && Relay.Blocker(RelayA, RelayB, Settings) == "";
+    public List<RelayRule> RelayRules => Relay.Load(Settings.RelayRules);
+    /// <summary>The rules that work now, or none while the relay is off.</summary>
+    public List<RelayRule> WorkingRelayRules => Settings.RelayOn ? Relay.Working(RelayRules, Settings) : [];
 
     /// <summary>Look for devices of one protocol (wakes Apple devices for AirDrop).</summary>
     public void LookOn(string protocol)
@@ -196,8 +195,8 @@ public sealed class App : Application
         Mta.IncomingHandshake += () => Dispatcher.BeginInvoke(() =>
         {
             /* An Android phone starts a transfer: if it may be a relay end, wake the other end's protocol early. */
-            if (RelayActive && RelayA is { } a && RelayB is { } b && (a.Protocol == RelayEnd.Mta || b.Protocol == RelayEnd.Mta))
-                LookOn(a.Protocol == RelayEnd.Mta ? b.Protocol : a.Protocol);
+            foreach (var protocol in WorkingRelayRules.Where(r => r.From.Protocol == RelayEnd.Mta).Select(r => r.To.Protocol).Distinct())
+                LookOn(protocol);
         });
         Mta.Apply(Settings);
         LocalSend.Apply(Settings);
@@ -432,7 +431,17 @@ public sealed class App : Application
             ("settings-general", () => new SettingsWindow("general"), 0),
             ("settings-network", () => new SettingsWindow("network"), 0),
             ("settings-appleid", () => new SettingsWindow("appleid"), 0),
-            ("settings-mta", () => { Settings.MtaOn = true; return new SettingsWindow("mta"); }, 0),
+            ("settings-mta", () =>
+            {
+                Settings.MtaOn = true;
+                Settings.RelayOn = true;
+                // Sample rules: two sources to one Android phone, and the phone back to the iPhone.
+                var iphone = new RelayEnd(RelayEnd.AirDrop, "Zhe’s iPhone", "Zhe’s iPhone");
+                var ipad = new RelayEnd(RelayEnd.AirDrop, "iPad", "iPad");
+                var phone = new RelayEnd(RelayEnd.Mta, "OnePlus 12", "OnePlus 12");
+                Settings.RelayRules = Relay.Save([new RelayRule(iphone, phone), new RelayRule(ipad, phone), new RelayRule(phone, iphone)]);
+                return new SettingsWindow("mta");
+            }, 0),
             ("settings-hardware", () => new SettingsWindow("hardware"), 0),
             ("settings-updates", () => new SettingsWindow("updates"), 0),
             ("history", () => new HistoryWindow(), 0),
@@ -788,7 +797,7 @@ public sealed class App : Application
         Settings.RelayOn = on;
         Settings.Save();
         Model.RelayOn = Settings.RelayOn;
-        if (on && Relay.Blocker(RelayA, RelayB, Settings) is { Length: > 0 } why) EngineLog("relay: on but cannot work yet: " + why);
+        if (on && WorkingRelayRules.Count == 0) EngineLog("relay: on, but no rule can work yet");
     }
 
     public void SetAutoAccept(string mode)
@@ -1173,10 +1182,21 @@ public sealed class App : Application
             "error" => L.T("status.error"),
             _ => mode == "off" ? L.T("status.off") : L.T("status.standby"),
         };
+        var fallback = (string?)o["concurrentFallback"] ?? "";
         Model.Detail = radio == "error" ? (string?)o["detail"] ?? "" :
+            fallback != "" ? L.F("wifi.fallback", UnsupportedNetworkText(fallback)) :
             wifi == "" ? "" : wifi.StartsWith("unsupported") ? "Wi-Fi：" + wifi[13..] : "Wi-Fi：" + WifiText(wifi);
         if (_tray is not null) _tray.Text = "nekodrop — " + NekoDrop.MainWindow.Status(Model.Air).Label;
     }
+
+    /// <summary>Why nekodrop's station cannot join a network (#97), from the radio's reason code.</summary>
+    public static string UnsupportedNetworkText(string code) => code switch
+    {
+        "tkip-group" => L.T("wifi.unsupported.tkipGroup"),
+        "no-ccmp" => L.T("wifi.unsupported.tkip"),
+        "wep-or-wpa" => L.T("wifi.unsupported.wep"),
+        _ => code,
+    };
 
     static string WifiText(string s) => s switch
     {
@@ -1242,11 +1262,11 @@ public sealed class App : Application
                     Settings.Save();
                 }
                 /* Relay: only the two chosen devices; anyone else is a normal receive. */
-                var relayTo = RelayActive ? Relay.PartnerFor(RelayA, RelayB, Relay.ProtocolOf(id), (string?)o["peer"], sender) : null;
+                var relayTo = Relay.TargetFor(WorkingRelayRules, Relay.ProtocolOf(id), (string?)o["peer"], sender);
                 if (relayTo is not null)
                 {
                     _relayTo[id] = relayTo;
-                    EngineLog($"relay: {sender} is a relay end; its files go to {relayTo.Label}");
+                    EngineLog($"relay: a rule sends {sender}'s files on to {relayTo.Label}");
                 }
                 var autoAccept = !waits ||
                                  relayTo is not null ||

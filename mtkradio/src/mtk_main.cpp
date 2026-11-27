@@ -1150,6 +1150,8 @@ int main(int argc, char **argv) {
       if (sta->state() != published_wifi) {
         published_wifi = sta->state();
         if (published_wifi == WifiStation::State::Running) running_since = Clock::now();
+        if (published_wifi == WifiStation::State::Failed && !sta->unsupported().empty())
+          log_fmt("event: wifi-unsupported %s", sta->unsupported().c_str());
         log_fmt("event: wifi %s", sta->state_name());
       }
       std::vector<uint8_t> ans;

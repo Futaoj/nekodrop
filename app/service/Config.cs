@@ -18,6 +18,12 @@ public enum NetMode
 }
 
 /// <summary>Machine-wide settings, in %ProgramData%\nekodrop\service.json.</summary>
+public sealed class UnsupportedNetwork
+{
+    public string Reason { get; set; } = "";
+    public DateTime SeenUtc { get; set; }
+}
+
 public sealed class ServiceConfig
 {
     [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -60,6 +66,23 @@ public sealed class ServiceConfig
     /// any other access point as before. Off by default.
     /// </summary>
     public bool StationWifi6 { get; set; }
+    /// <summary>
+    /// Networks nekodrop's station found it cannot join (#97), by SSID: the
+    /// radio's reason ("tkip-group", "no-ccmp", "wep-or-wpa") and when. While
+    /// Windows is on one of them, Concurrent mode runs on demand instead of
+    /// taking the card; entries expire after a week, and choosing a mode
+    /// clears them, so a router changed to WPA2-AES is tried again.
+    /// </summary>
+    public Dictionary<string, UnsupportedNetwork> UnsupportedNetworks { get; set; } = new();
+    /// <summary>
+    /// Concurrent mode shows the router the MAC address Windows' Wi-Fi adapter
+    /// was using (WindowsMac, remembered before the card is taken) instead of
+    /// the TAP adapter's own (#96). On by default.
+    /// </summary>
+    public bool KeepWindowsMac { get; set; } = true;
+    public string WindowsMac { get; set; } = "";
+    /// <summary>nekodrop set the TAP adapter's address, so it may reset it (a manual one is left alone).</summary>
+    public bool TapMacApplied { get; set; }
     /// <summary>
     /// The user's manual choice when the card is not recognized by its ID
     /// (Settings, "Wi-Fi card"): its PCI hardware ID ("PCI\VEN_xxxx&amp;DEV_yyyy")

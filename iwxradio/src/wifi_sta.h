@@ -71,6 +71,10 @@ public:
 
   State state() const { return _state; }
   const char *state_name() const;
+  /* Why the network's security cannot be joined ("" when it can or is not
+   * known yet): "tkip-group" (WPA/WPA2 mixed: CCMP pairwise, TKIP group),
+   * "no-ccmp" (TKIP only) or "wep-or-wpa" (no RSN element: WEP or WPA1). */
+  const std::string &unsupported() const { return _unsupported; }
   TapAdapter &tap() { return _tap; }
   uint64_t rx_packets() const { return _rx_packets; }
   uint64_t tx_packets() const { return _tx_packets; }
@@ -161,6 +165,9 @@ private:
   /* What the beacon told us. */
   bool _beacon_seen = false, _ap_rsn = false, _ap_ht = false, _ap_vht = false, _ap_2ss = false, _ap_wmm = false;
   bool _ap_pairwise_ccmp = true, _ap_mfpc = false, _ap_mfpr = false, _ap_bip_cmac = true, _ap_h2e_only = false;
+  bool _ap_rsn_any = false;      /* an RSN element at all, whatever its ciphers */
+  uint8_t _ap_group_cipher = 0;  /* RSN group cipher suite type (2 TKIP, 4 CCMP), 0 unknown */
+  std::string _unsupported;
   uint32_t _ap_akms = 0; /* bit n: AKM 00-0F-AC:n offered */
   uint16_t _ap_rsn_caps = 0;
   std::vector<uint8_t> _ap_rsn_raw;

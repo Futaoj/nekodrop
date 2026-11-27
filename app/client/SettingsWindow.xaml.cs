@@ -45,7 +45,9 @@ public partial class SettingsWindow : Window
         LocalSendOnBox.IsChecked = s.LocalSendOn;
         MtaRelayBox.IsChecked = s.RelayOn;
         MtaRelayKeepLocalBox.IsChecked = s.MtaRelayKeepLocal;
-        FillRelayChoices(RelayEnd.Parse(s.RelayA), RelayEnd.Parse(s.RelayB));
+        _relayRules = Relay.Load(s.RelayRules);
+        FillRelayChoices();
+        ShowRelayRules();
         MtaOn_Changed(MtaOnBox, new RoutedEventArgs());
         ShowReceive();
         ShowIdentity();
@@ -65,6 +67,7 @@ public partial class SettingsWindow : Window
         HighThroughputBox.IsChecked = (bool?)A.Service.Last?["highThroughput"] ?? false;
         DataPlaneAccelBox.IsChecked = (bool?)A.Service.Last?["dataPlaneAccel"] ?? false;
         StationWifi6Box.IsChecked = (bool?)A.Service.Last?["stationWifi6"] ?? false;
+        KeepMacBox.IsChecked = (bool?)A.Service.Last?["keepWindowsMac"] ?? true;
         CheckUpdatesBox.IsChecked = s.CheckUpdates;
         PreviewUpdatesBox.IsChecked = s.PreviewUpdates;
         DeleteInstallerBox.IsChecked = s.DeleteInstallerAfterInstall;
@@ -342,8 +345,7 @@ public partial class SettingsWindow : Window
         s.MtaOn = MtaOnBox.IsChecked == true;
         s.LocalSendOn = LocalSendOnBox.IsChecked == true;
         s.RelayOn = MtaRelayBox.IsChecked == true;
-        s.RelayA = (RelayABox.SelectedItem as RelayChoice)?.End?.Serialize() ?? "";
-        s.RelayB = (RelayBBox.SelectedItem as RelayChoice)?.End?.Serialize() ?? "";
+        s.RelayRules = Relay.Save(_relayRules);
         s.MtaRelayKeepLocal = MtaRelayKeepLocalBox.IsChecked == true;
         var hotkeyChanged = (HotkeyBox.IsChecked == true) != s.Hotkey || _hotkeyKeys != s.HotkeyKeys;
         s.Hotkey = HotkeyBox.IsChecked == true;
@@ -375,6 +377,8 @@ public partial class SettingsWindow : Window
         if (highThroughput != ((bool?)A.Service.Last?["highThroughput"] ?? false)) A.Service.SetHighThroughput(highThroughput);
         var dataPlaneAccel = DataPlaneAccelBox.IsChecked == true;
         if (dataPlaneAccel != ((bool?)A.Service.Last?["dataPlaneAccel"] ?? false)) A.Service.SetDataPlaneAccel(dataPlaneAccel);
+        var keepMac = KeepMacBox.IsChecked == true;
+        if (keepMac != ((bool?)A.Service.Last?["keepWindowsMac"] ?? true)) A.Service.SetKeepWindowsMac(keepMac);
         var stationWifi6 = StationWifi6Box.IsChecked == true;
         if (stationWifi6 != ((bool?)A.Service.Last?["stationWifi6"] ?? false)) A.Service.SetStationWifi6(stationWifi6);
         A.Window?.FolderChanged();
@@ -516,51 +520,224 @@ public partial class SettingsWindow : Window
         if (RelayBody is null) return;
         RelayBody.IsEnabled = MtaRelayBox.IsChecked == true;
         RelayBody.Opacity = RelayBody.IsEnabled ? 1 : 0.5;
-        ShowRelayStatus();
+        ShowRelayRules();
     }
 
-    void RelayInputs_Changed(object sender, RoutedEventArgs e) => ShowRelayStatus();
+    /* A protocol switch changed: rules may start or stop working. */
+    void RelayInputs_Changed(object sender, RoutedEventArgs e) => ShowRelayRules();
 
-    /// <summary>A relay end in a picker; End null is "not chosen".</summary>
-    sealed class RelayChoice(RelayEnd? end)
+    List<RelayRule> _relayRules = [];
+
+    /// <summary>A device in the "from" / "to" pickers.</summary>
+    sealed class RelayChoice(RelayEnd end)
     {
-        public RelayEnd? End { get; } = end;
-        public override string ToString() => End?.Label ?? L.T("relay.none");
+        public RelayEnd End { get; } = end;
+        public override string ToString() => End.Label;
     }
 
-    /// <summary>The pickers list the saved ends and every device now on the radar.</summary>
-    void FillRelayChoices(RelayEnd? a, RelayEnd? b)
+    /// <summary>The settings a rule is checked against: the switches as they are on this page now.</summary>
+    Settings PreviewSettings() => new()
+    {
+        MtaOn = MtaOnBox.IsChecked == true,
+        LocalSendOn = LocalSendOnBox.IsChecked == true,
+        Discoverable = A.Settings.Discoverable,
+    };
+
+    /// <summary>The pickers list the devices in the rules and every device now on the radar.</summary>
+    void FillRelayChoices()
     {
         var ends = new List<RelayEnd>();
-        void Add(RelayEnd? e)
+        void Add(RelayEnd e)
         {
-            if (e is not null && !ends.Any(x => x.Same(e))) ends.Add(e);
+            if (!ends.Any(x => x.Same(e))) ends.Add(e);
         }
-        Add(a);
-        Add(b);
+        foreach (var r in _relayRules) { Add(r.From); Add(r.To); }
         foreach (var d in A.Model.Devices.Where(d => !d.ForAsk).ToList()) Add(RelayEnd.FromDevice(d));
-        foreach (var (box, chosen) in new[] { (RelayABox, a), (RelayBBox, b) })
+        foreach (var box in new[] { RelayFromBox, RelayToBox })
         {
-            var items = new List<RelayChoice> { new(null) };
-            items.AddRange(ends.Select(e => new RelayChoice(e)));
+            var keep = (box.SelectedItem as RelayChoice)?.End;
+            var items = ends.Select(e => new RelayChoice(e)).ToList();
             box.ItemsSource = items;
-            box.SelectedItem = items.FirstOrDefault(i => i.End is not null && chosen is not null && i.End.Same(chosen)) ?? items[0];
+            box.SelectedItem = keep is null ? null : items.FirstOrDefault(i => i.End.Same(keep));
         }
     }
 
-    void ShowRelayStatus()
+    void ShowRelayRules()
     {
-        if (RelayStatus is null || RelayABox is null || RelayBBox is null) return;
-        var a = (RelayABox.SelectedItem as RelayChoice)?.End;
-        var b = (RelayBBox.SelectedItem as RelayChoice)?.End;
-        var preview = new Settings
+        if (RelayRuleList is null) return;
+        var settings = PreviewSettings();
+        RelayRuleList.Children.Clear();
+        foreach (var rule in _relayRules.ToList())
         {
-            MtaOn = MtaOnBox.IsChecked == true,
-            LocalSendOn = LocalSendOnBox.IsChecked == true,
-            Discoverable = A.Settings.Discoverable,
+            var row = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+            var remove = new Button { Content = "✕", Style = (Style)FindResource("QuietButton"), ToolTip = L.T("relay.remove"), Padding = new Thickness(8, 2, 8, 2) };
+            remove.Click += (_, _) => { _relayRules.Remove(rule); RelayStatus.Text = ""; ShowRelayRules(); };
+            DockPanel.SetDock(remove, Dock.Right);
+            row.Children.Add(remove);
+            var text = new StackPanel();
+            text.Children.Add(new TextBlock { Text = $"{rule.From.Label}  →  {rule.To.Label}", FontSize = 13, TextTrimming = TextTrimming.CharacterEllipsis });
+            var why = Relay.Blocker(rule, settings);
+            if (why.Length > 0)
+                text.Children.Add(new TextBlock { Text = "⚠ " + why, Style = (Style)FindResource("Sub12"), Foreground = (Brush)FindResource("Warn") });
+            row.Children.Add(text);
+            RelayRuleList.Children.Add(row);
+        }
+        if (_relayRules.Count == 0)
+            RelayRuleList.Children.Add(new TextBlock { Text = L.T("relay.noRules"), Style = (Style)FindResource("Sub12") });
+        RenderRelayFlow();
+    }
+
+    void RelayFlow_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (e.WidthChanged) RenderRelayFlow();
+    }
+
+    /// <summary>
+    /// The rules as a picture: each source on the left, this PC in the middle,
+    /// each destination on the right, with an arrow for every rule; a rule
+    /// that cannot work now is drawn dashed and grey.
+    /// </summary>
+    void RenderRelayFlow()
+    {
+        if (RelayFlow is null) return;
+        var canvas = RelayFlow;
+        canvas.Children.Clear();
+        var width = canvas.ActualWidth;
+        if (width < 200) return;
+        var accent = (Brush)FindResource("Accent");
+        var dim = (Brush)FindResource("TextSecondary");
+        var border = (Brush)FindResource("Border");
+        var card = (Brush)FindResource("Card");
+        var settings = PreviewSettings();
+        /* One colour per destination: its box and every arrow into it, so a rule can be followed through the PC. */
+        /* Theme accent first, then fixed hues that read on light and dark (the theme's other colours are grey unless "colourful"). */
+        Brush[] palette = [accent, Hue(0x2E, 0x9E, 0x5B), Hue(0xD0, 0x80, 0x10), Hue(0x8E, 0x5B, 0xD6)];
+        static Brush Hue(byte r, byte g, byte b) { var x = new SolidColorBrush(Color.FromRgb(r, g, b)); x.Freeze(); return x; }
+
+        var sources = new List<RelayEnd>();
+        var targets = new List<RelayEnd>();
+        foreach (var r in _relayRules)
+        {
+            if (!sources.Any(x => x.Same(r.From))) sources.Add(r.From);
+            if (!targets.Any(x => x.Same(r.To))) targets.Add(r.To);
+        }
+        const double boxH = 36, gap = 10, top = 18, pcW = 92;
+        var rows = Math.Max(1, Math.Max(sources.Count, targets.Count));
+        var height = top + rows * boxH + (rows - 1) * gap + 22;
+        canvas.Height = height;
+        var colW = Math.Min(170, (width - pcW - 2 * 36) / 2);
+        var pcX = (width - pcW) / 2;
+        var midY = top + (rows * boxH + (rows - 1) * gap) / 2;
+
+        void Label(string text, double x, double y, double w, Brush brush, double size = 11, TextAlignment align = TextAlignment.Center)
+        {
+            var t = new TextBlock { Text = text, Width = w, TextAlignment = align, FontSize = size, Foreground = brush, TextTrimming = TextTrimming.CharacterEllipsis };
+            Canvas.SetLeft(t, x);
+            Canvas.SetTop(t, y);
+            canvas.Children.Add(t);
+        }
+        Label(L.T("relay.colFrom"), 0, 0, colW, dim);
+        Label(L.T("relay.colPc"), pcX, 0, pcW, dim);
+        Label(L.T("relay.colTo"), width - colW, 0, colW, dim);
+
+        double RowY(int i, int count)
+        {
+            var block = count * boxH + (count - 1) * gap;
+            return midY - block / 2 + i * (boxH + gap);
+        }
+        void Box(RelayEnd e, double x, double y, Brush? edge = null)
+        {
+            var b = new Border
+            {
+                Width = colW, Height = boxH, CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(edge is null ? 1 : 1.5),
+                BorderBrush = edge ?? border, Background = card, Padding = new Thickness(8, 2, 8, 2),
+            };
+            var sp = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            sp.Children.Add(new TextBlock { Text = e.Name, FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis });
+            sp.Children.Add(new TextBlock { Text = RelayEnd.ProtocolLabel(e.Protocol), FontSize = 10, Foreground = dim });
+            b.Child = sp;
+            Canvas.SetLeft(b, x);
+            Canvas.SetTop(b, y);
+            canvas.Children.Add(b);
+        }
+        void Arrow(Point a, Point b, bool working, Brush color)
+        {
+            var brush = working ? color : dim;
+            var fig = new PathFigure { StartPoint = a };
+            var dx = (b.X - a.X) / 2;
+            fig.Segments.Add(new BezierSegment(new Point(a.X + dx, a.Y), new Point(b.X - dx, b.Y), new Point(b.X - 6, b.Y), true));
+            var path = new System.Windows.Shapes.Path { Data = new PathGeometry([fig]), Stroke = brush, StrokeThickness = working ? 2 : 1.5 };
+            if (!working) path.StrokeDashArray = [3, 3];
+            canvas.Children.Add(path);
+            var head = new System.Windows.Shapes.Polygon
+            {
+                Points = [new Point(b.X, b.Y), new Point(b.X - 7, b.Y - 4), new Point(b.X - 7, b.Y + 4)],
+                Fill = brush,
+            };
+            canvas.Children.Add(head);
+        }
+
+        for (int i = 0; i < sources.Count; i++) Box(sources[i], 0, RowY(i, sources.Count));
+        for (int i = 0; i < targets.Count; i++) Box(targets[i], width - colW, RowY(i, targets.Count), palette[i % palette.Length]);
+        var pc = new Border
+        {
+            Width = pcW, Height = 44, CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1),
+            BorderBrush = (Brush)FindResource("BorderStrong"), Background = card,
+            Child = new TextBlock { Text = "nekodrop", FontSize = 12, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
         };
-        var why = Relay.Blocker(a, b, preview);
-        RelayStatus.Text = why.Length > 0 ? why : L.F("relay.ready", a!.Name, b!.Name);
+        Canvas.SetLeft(pc, pcX);
+        Canvas.SetTop(pc, midY - 22);
+        canvas.Children.Add(pc);
+
+        foreach (var r in _relayRules)
+        {
+            var working = Relay.Blocker(r, settings) == "";
+            var si = sources.FindIndex(x => x.Same(r.From));
+            var ti = targets.FindIndex(x => x.Same(r.To));
+            var sy = RowY(si, sources.Count) + boxH / 2;
+            var ty = RowY(ti, targets.Count) + boxH / 2;
+            var color = palette[ti % palette.Length];
+            Arrow(new Point(colW, sy), new Point(pcX, midY + (sy - midY) * 0.25), working, color);
+            Arrow(new Point(pcX + pcW, midY + (ty - midY) * 0.25), new Point(width - colW, ty), working, color);
+        }
+        if (_relayRules.Count == 0) Label(L.T("relay.noRulesFlow"), 0, midY - 8, width, dim, 12);
+        Label(L.T("relay.others"), 0, height - 16, width, dim);
+    }
+
+    RelayRule? PickedRule()
+    {
+        var from = (RelayFromBox.SelectedItem as RelayChoice)?.End;
+        var to = (RelayToBox.SelectedItem as RelayChoice)?.End;
+        if (from is null || to is null) { RelayStatus.Text = L.T("relay.pickBoth"); return null; }
+        return new RelayRule(from, to);
+    }
+
+    void AddRelayRule(RelayRule rule)
+    {
+        var replaced = Relay.Add(_relayRules, rule);
+        RelayStatus.Text = replaced switch
+        {
+            null => L.T("relay.samePair"),
+            true => L.F("relay.replaced", rule.From.Name, rule.To.Name),
+            false => "",
+        };
+    }
+
+    void RelayAdd_Click(object sender, RoutedEventArgs e)
+    {
+        if (PickedRule() is not { } rule) return;
+        AddRelayRule(rule);
+        ShowRelayRules();
+    }
+
+    void RelayAddBoth_Click(object sender, RoutedEventArgs e)
+    {
+        if (PickedRule() is not { } rule) return;
+        if (rule.From.Same(rule.To)) { RelayStatus.Text = L.T("relay.samePair"); return; }
+        var replacedA = Relay.Add(_relayRules, rule);
+        var replacedB = Relay.Add(_relayRules, new RelayRule(rule.To, rule.From));
+        RelayStatus.Text = replacedA == true || replacedB == true ? L.T("relay.replacedSome") : "";
+        ShowRelayRules();
     }
 
     async void RelayScan_Click(object sender, RoutedEventArgs e)
@@ -572,11 +749,9 @@ public partial class SettingsWindow : Window
         if (LocalSendOnBox.IsChecked == true) A.LookOn(RelayEnd.LocalSend);
         await Task.Delay(8000);
         A.StopLookingLater();
-        var a = (RelayABox.SelectedItem as RelayChoice)?.End;
-        var b = (RelayBBox.SelectedItem as RelayChoice)?.End;
-        FillRelayChoices(a, b);
+        FillRelayChoices();
         RelayScanButton.IsEnabled = true;
-        ShowRelayStatus();
+        RelayStatus.Text = "";
     }
 
     async void MtaDiag_Click(object sender, RoutedEventArgs e)
