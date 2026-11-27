@@ -466,6 +466,13 @@ public:
         if (_stalled_since == Clock::time_point{}) _stalled_since = Clock::now();
         else if (Clock::now() - _stalled_since > std::chrono::seconds(3) && !g_card_dead) {
           say("TX stalled: no frame reported sent for 3 s; restarting the radio");
+          /* Whether the DMA consumed the frames and which reports did come
+           * back tells a stuck ring from missing TX-free reports (#94). */
+          say("TX stalled: %s", _dev.tx_ring_state().c_str());
+          std::string types;
+          for (unsigned t = 0; t < 32; t++)
+            if (_dev.rx_types[t]) types += " type" + std::to_string(t) + "=" + std::to_string(_dev.rx_types[t]);
+          say("TX stalled: RX packets by type:%s", types.c_str());
           g_card_dead = true;
           g_stop = true;
         }
