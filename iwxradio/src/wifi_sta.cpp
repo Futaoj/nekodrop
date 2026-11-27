@@ -15,6 +15,7 @@
 
 #include "awdl_policy.h"
 #include "crypto.h"
+#include "sta_mac_nat.h"
 
 namespace {
 
@@ -31,11 +32,24 @@ constexpr uint16_t kKeyVersionMask = 0x0007, kKeyPairwise = 0x0008, kKeyInstall 
 
 bool parse_mac(const std::string &s, uint8_t out[6]) {
   unsigned v[6];
-  if (std::sscanf(s.c_str(), "%x:%x:%x:%x:%x:%x", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6 &&
-      std::sscanf(s.c_str(), "%x-%x-%x-%x-%x-%x", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6)
-    return false;
-  for (int i = 0; i < 6; i++) out[i] = static_cast<uint8_t>(v[i]);
-  return true;
+  if (std::sscanf(s.c_str(), "%x:%x:%x:%x:%x:%x", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) == 6 ||
+      std::sscanf(s.c_str(), "%x-%x-%x-%x-%x-%x", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) == 6) {
+    for (int i = 0; i < 6; i++) out[i] = static_cast<uint8_t>(v[i]);
+    return true;
+  }
+  if (s.size() == 12) {
+    for (int i = 0; i < 6; i++) {
+      if (std::sscanf(s.c_str() + 2 * i, "%2x", &v[i]) != 1) return false;
+      out[i] = static_cast<uint8_t>(v[i]);
+    }
+    return true;
+  }
+  return false;
+}
+
+bool valid_unicast_mac(const uint8_t m[6]) {
+  if (m[0] & 1) return false; /* multicast */
+  return (m[0] | m[1] | m[2] | m[3] | m[4] | m[5]) != 0;
 }
 
 bool parse_hex(const std::string &s, uint8_t *out, size_t n) {
@@ -139,6 +153,13 @@ bool StaConfig::load(const std::string &path, std::string &error) {
     else if (k == "ba") block_ack = v == "1";
     else if (k == "tap_writers") tap_writers = static_cast<unsigned>(std::atoi(v.c_str()));
     else if (k == "he") he = v == "1";
+    else if (k == "mac") {
+      uint8_t m[6];
+      if (parse_mac(v, m) && valid_unicast_mac(m)) {
+        std::memcpy(mac, m, 6);
+        has_mac = true;
+      }
+    }
   }
   if (ssid.empty() || ssid.size() > 32) error = "ssid missing or longer than 32 bytes";
   else if (!have_bssid) error = "bssid missing";
@@ -180,7 +201,10 @@ bool WifiStation::start(const StaConfig &cfg, std::string &error) {
   }
   _tap.set_write_threads(_cfg.tap_writers);
   if (!_tap.is_open() && !_tap.open(_cfg.tap, error)) return false;
-  _addr = _tap.mac();
+  _tap_mac = _tap.mac();
+  if (_cfg.has_mac) std::memcpy(_addr.data(), _cfg.mac, 6);
+  else _addr = _tap_mac;
+  _mac_nat = (_addr != _tap_mac);
   _tap.set_connected(false);
   _akm = _cfg.open ? Akm::None : Akm::Psk;
   _pmf = false;
@@ -200,9 +224,17 @@ bool WifiStation::start(const StaConfig &cfg, std::string &error) {
   _state = State::Listening;
   _state_since = _now;
   _tries = 0;
-  char b[96];
-  std::snprintf(b, sizeof(b), "station: using TAP adapter \"%s\", address %02x:%02x:%02x:%02x:%02x:%02x",
-                _tap.name().c_str(), _addr[0], _addr[1], _addr[2], _addr[3], _addr[4], _addr[5]);
+  char b[160];
+  if (_mac_nat) {
+    std::snprintf(b, sizeof(b),
+                  "station: using TAP adapter \"%s\", address %02x:%02x:%02x:%02x:%02x:%02x "
+                  "(TAP %02x:%02x:%02x:%02x:%02x:%02x)",
+                  _tap.name().c_str(), _addr[0], _addr[1], _addr[2], _addr[3], _addr[4], _addr[5],
+                  _tap_mac[0], _tap_mac[1], _tap_mac[2], _tap_mac[3], _tap_mac[4], _tap_mac[5]);
+  } else {
+    std::snprintf(b, sizeof(b), "station: using TAP adapter \"%s\", address %02x:%02x:%02x:%02x:%02x:%02x",
+                  _tap.name().c_str(), _addr[0], _addr[1], _addr[2], _addr[3], _addr[4], _addr[5]);
+  }
   _log(b);
   return true;
 }
@@ -1002,7 +1034,23 @@ void WifiStation::deliver(const uint8_t *da, const uint8_t *sa, const uint8_t *b
   }
   if (!plain() && !encrypted) return;
   if (_state != State::Running) return;
-  if (_tap.write_eth(da, sa, ethertype, body, len)) {
+  const uint8_t *tap_da = da;
+  std::vector<uint8_t> translated;
+  if (_mac_nat) {
+    if (std::memcmp(da, _addr.data(), 6) == 0) tap_da = _tap_mac.data();
+    const bool maybe_ctrl =
+        ethertype == 0x0806 ||
+        (ethertype == 0x0800 && sta_mac_nat::payload_is_dhcp(body, len, false)) ||
+        (ethertype == 0x86dd && len >= 48 && body[6] == 58);
+    if (maybe_ctrl) {
+      translated.assign(body, body + len);
+      if (sta_mac_nat::translate_payload(ethertype, translated.data(), translated.size(),
+                                         _addr.data(), _tap_mac.data(), false)) {
+        body = translated.data();
+      }
+    }
+  }
+  if (_tap.write_eth(tap_da, sa, ethertype, body, len)) {
     _rx_packets++;
     _rx_bytes += 14 + len;
   } else if (_rx.tap_failed++ < 5) {
@@ -1146,22 +1194,37 @@ void WifiStation::on_ethernet(const uint8_t *frame, size_t len) {
   }
   /* The adapter's own address is ours; anything else would be bridged
    * traffic, which a station may not send. */
-  if (std::memcmp(frame + 6, _addr.data(), 6) != 0) return;
+  const bool from_tap = std::memcmp(frame + 6, _tap_mac.data(), 6) == 0;
+  const bool from_air = std::memcmp(frame + 6, _addr.data(), 6) == 0;
+  if (!from_tap && !from_air) return;
   const uint16_t ethertype = be16(frame + 12);
   const bool unicast = !(frame[0] & 1);
   if (unicast) _tx_unicast++;
   const bool protect = _keys_installed && !plain();
+  std::vector<uint8_t> translated;
+  const uint8_t *payload = frame + 14;
+  const size_t payload_len = len - 14;
+  if (_mac_nat && (ethertype == 0x0806 ||
+                   (ethertype == 0x0800 && sta_mac_nat::payload_is_dhcp(payload, payload_len, true)) ||
+                   (ethertype == 0x86dd && payload_len >= 48 && payload[6] == 58))) {
+    translated.assign(frame, frame + len);
+    std::memcpy(translated.data() + 6, _addr.data(), 6);
+    sta_mac_nat::translate_payload(ethertype, translated.data() + 14, payload_len,
+                                   _tap_mac.data(), _addr.data(), true);
+    frame = translated.data();
+    payload = translated.data() + 14;
+  }
   if (unicast && ethertype != kEtherEapol && _tx_ba_state == TxBaState::Active && _dev.sta_tx_agg_ready()) {
     const unsigned cap = _dev.sta_tx_agg_cap();
     if (_tx_wait.empty() && _dev.sta_tx_agg_queued() < cap &&
-        transmit_qos_agg(frame, ethertype, frame + 14, len - 14, protect, !_tx_batching)) {
+        transmit_qos_agg(frame, ethertype, payload, payload_len, protect, !_tx_batching)) {
       if (_tx_batching) _tx_batch_dirty = true;
       return;
     }
     if (_tx_wait.size() < 256) _tx_wait.push_back({std::vector<uint8_t>(frame, frame + len), protect});
     return;
   }
-  send_data(frame, ethertype, frame + 14, len - 14, protect);
+  send_data(frame, ethertype, payload, payload_len, protect);
 }
 
 /* ---------------------------------------------------------------- WPA2 */

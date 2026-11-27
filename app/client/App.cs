@@ -206,7 +206,7 @@ public sealed class App : Application
             // effectiveMode (0.1.36+): a card that runs on demand although Concurrent is
             // chosen (RTL8852CE) was never woken by a nearby iPhone (#32).
             var mode = (string?)Service.Last?["effectiveMode"] ?? (string?)Service.Last?["mode"];
-            if (mode == "ondemand") Service.Wake();
+            if (mode == "ondemand") Service.Wake(fromBle: true);
         });
         _wake.Start();
         var watchdog = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
@@ -1434,6 +1434,7 @@ public sealed class App : Application
                                 d.Status = L.T("dev.ready");
                             }));
                     }
+                    if (state is "sent" or "done" && _sendInfo.Count == 0 && _requests.Count == 0) Service.TransferDone();
                     var firstName = info.Files.Count > 0 ? SendRules.Name(info.Files[0]) : L.T("what.some");
                     var summary = info.Files.Count <= 1 ? firstName : L.F("send.summary", firstName, info.Files.Count, info.Files.Count - 1);
                     var failureDetail = state == "failed" ? SendRules.FailureDetail(reason, info.Files) : "";
@@ -1592,6 +1593,7 @@ public sealed class App : Application
                 _ = TryRelayAsync(id, from, relayTo!, folder, relayFiles, allTempPaths);
                 return;
             }
+            if (_sendInfo.Count == 0 && _requests.Count == 0) Service.TransferDone();
             if (built.records.Count == 0)
             {
                 Shell.DoneToast(id, L.F("done.received", from), L.F("done.savedTo", folder), folder);

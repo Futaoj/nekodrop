@@ -6,6 +6,34 @@
 
 ---
 
+## v2.3.7 (Preview / 预览版)
+
+### 中文
+
+- **修复非 MLD Intel 网卡（AX211 / AX210 / AX201 / AX200 / 9560）连接 WPA3 路由器触发固件崩溃、导致 AirDrop 双端不可见（[#30](https://github.com/zheznanohana/nekodrop/issues/30)）**：
+  - 此前 `sta_set_mfp()` 向非 MLD 固件发送了带 `bit 9` 的 `ADD_STA` 命令，在 AX211（`51F1`）等固件上立即引发 `LMAC error 0x00002b00` 致命断言，服务被迫还原驱动并退出 AirDrop。现改为遵循 Linux `iwlwifi` 做法，在 `ADD_STA_KEY` 中通过 `STA_KEY_MFP`（`BIT(15)`）启用 PMF，不再发送无效的 `ADD_STA` 修改命令。只经过编译和自测，待 WPA3 真机验证。
+- **真正修好「同时连 Wi-Fi 时沿用电脑原来的 MAC 地址」并消除 15–20 秒启动卡顿（[#96](https://github.com/zheznanohana/nekodrop/issues/96)）**：
+  - 定位到 `v2.3.5`–`v2.3.6` 写注册表 `NetworkAddress` 的方式会被 OpenVPN `tap-windows6` 驱动拒绝所有不含本地管理位（`0x02`）的真实出厂网卡 MAC，导致每次启动白等 10+ 秒后仍回退为 TAP 虚拟地址。
+  - 现改为在 `sta.conf` 中传入原 Windows 无线网卡 MAC，并在无线电进程（`iwxradio` / `mtradio` / `mtkradio` 共用 `sta_mac_nat.h`）的 TAP 边界做透明二层与控制面 MAC 转换（Ethernet + ARP + DHCPv4 `chaddr` / Option 61 + IPv6 NDP），零重启延迟，路由器 802.11 站点表、ARP 表与 DHCP 固定 IP / 设备名均直接看到电脑原本的 MAC 地址（已通过离线单测，待真机验证）。
+- **新增「按需模式传完文件后立即归还网卡」开关（默认关闭，[#96](https://github.com/zheznanohana/nekodrop/issues/96)）**：
+  - 在 *设置 → 网络与接收* 新增开关：开启后，按需模式收发完成约 5 秒即归还网卡给 Windows（并在 15 秒内忽略旁边亮屏设备的被动蓝牙唤醒），无需干等默认 90 秒空闲超时。
+- **完善 Apple ID 登录 `-22410` 错误提示（[#98](https://github.com/zheznanohana/nekodrop/issues/98)）**：
+  - 明确说明开启 **高级数据保护（ADP）** 或 FIDO 硬件安全密钥均会触发 Apple 传统 GSA 协议拒绝（`-22410`），引导使用「从 Mac 导入」。
+
+### English
+
+- **Fix WPA3 / PMF firmware crash (`LMAC error 0x00002b00`) on non-MLD Intel cards (AX211 / AX210 / AX201 / AX200 / 9560) ([#30](https://github.com/zheznanohana/nekodrop/issues/30)):**
+  - `sta_set_mfp()` previously sent an `ADD_STA` modify command with bit 9 set, immediately triggering a fatal `LMAC 0x00002b00` assert on non-MLD Intel firmware whenever joining a WPA3/PMF-required router, forcing the service to abort and leave AirDrop dead. Now follows Linux `iwlwifi` by enabling MFP via `STA_KEY_MFP` (`BIT(15)`) in `ADD_STA_KEY` instead. Compiled and self-tested; awaiting live WPA3 hardware confirmation.
+- **Fix "Keep this PC's MAC address in Concurrent mode" for factory OUI MACs and remove the 15–20 s startup stall ([#96](https://github.com/zheznanohana/nekodrop/issues/96)):**
+  - `tap-windows6` rejects any `NetworkAddress` registry override without the locally-administered bit (`0x02`), which rejected every real factory Wi-Fi MAC and made startup stall 10+ s before silently falling back to the TAP MAC.
+  - Replaced registry overrides with transparent TAP-boundary MAC translation (`sta_mac_nat.h`, shared by Intel/MediaTek stations) covering 802.11, ARP, DHCPv4 (`chaddr` + Option 61), and IPv6 NDP with full checksum recalculation and zero adapter-restart delay. Unit-tested; awaiting live hardware confirmation.
+- **Add opt-in "Release Wi-Fi card right after transfer (On demand)" toggle (default off, [#96](https://github.com/zheznanohana/nekodrop/issues/96)):**
+  - When enabled in *Settings → Network and receiving*, On-Demand mode returns the Wi-Fi card to Windows ~5 s after a transfer finishes (with a 15 s passive-BLE cooldown so a nearby unlocked iPad does not re-take it immediately) instead of waiting the default 90 s idle timeout.
+- **Clarify Apple ID `-22410` sign-in error hint ([#98](https://github.com/zheznanohana/nekodrop/issues/98)):**
+  - Explicitly notes that both **Advanced Data Protection (ADP)** and FIDO/hardware security keys cause Apple's legacy GSA protocol to reject sign-in (`-22410`), guiding users to "Import from a Mac".
+
+---
+
 ## v2.3.6 (Stable / 稳定版)
 
 ### 中文

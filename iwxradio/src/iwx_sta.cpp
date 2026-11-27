@@ -551,11 +551,13 @@ bool IwxDevice::sta_set_key(bool group, unsigned key_index, const uint8_t key[16
     else if (key_index < 4) _sta_gtk_mask |= static_cast<uint8_t>(1u << key_index);
     return true;
   }
+  constexpr uint16_t kStaKeyMfp = 1u << 15; /* STA_KEY_MFP (iwlwifi fw/api/sta.h) */
   iwx_add_sta_key_cmd cmd{};
   cmd.common.key_flags = htole16(static_cast<uint16_t>(
       IWX_STA_KEY_FLG_CCM | IWX_STA_KEY_FLG_WEP_KEY_MAP |
       ((key_index << IWX_STA_KEY_FLG_KEYID_POS) & IWX_STA_KEY_FLG_KEYID_MSK) |
-      (group ? IWX_STA_KEY_MULTICAST : 0)));
+      (group ? IWX_STA_KEY_MULTICAST : 0) |
+      (!group && _sta_mfp ? kStaKeyMfp : 0)));
   cmd.common.key_offset = group ? 1 : 0;
   std::memcpy(cmd.common.key, key, 16);
   cmd.common.sta_id = IWX_STATION_ID;
@@ -598,23 +600,13 @@ bool IwxDevice::sta_set_mfp(bool on) {
               : "station: MLD management frame protection refused (" + std::to_string(err) + ")");
     return err == 0;
   }
-  constexpr uint32_t kMfpEn = 1u << 9; /* STA_FLG_MFP_EN (iwlwifi) */
-  iwx_add_sta_cmd cmd{};
-  cmd.sta_id = IWX_STATION_ID;
-  cmd.station_type = IWX_STA_LINK;
-  cmd.mac_id_n_color = htole32(IWX_FW_CMD_ID_AND_COLOR(1, 0));
-  cmd.add_modify = IWX_STA_MODE_MODIFY;
-  cmd.station_flags = htole32(on ? kMfpEn : 0u);
-  cmd.station_flags_msk = htole32(kMfpEn);
-  cmd.tid_disable_tx = htole16(0xffff);
-  uint32_t status = IWX_ADD_STA_SUCCESS;
-  if (!nic_lock()) return false;
-  const int err = send_cmd_status(IWX_ADD_STA, &cmd, sizeof(cmd), &status);
-  nic_unlock();
-  const bool ok = !err && (status & IWX_ADD_STA_STATUS_MASK) == IWX_ADD_STA_SUCCESS;
-  _log(ok ? std::string("station: management frame protection ") + (on ? "on" : "off")
-          : "station: management frame protection refused (" + std::to_string(err) + ")");
-  return ok;
+  /* Non-MLD Intel firmware (Gen2/Gen3 uCode 68) has no MFP bit in ADD_STA:
+   * sending bit 9 crashed LMAC with ADVANCED_SYSASSERT 0x2b00 on AX211 WPA3
+   * (#30). Linux iwlwifi (mvm/sta.c) enables MFP on the pairwise key via
+   * STA_KEY_MFP (BIT(15)) in ADD_STA_KEY, applied in sta_set_key() below. */
+  _sta_mfp = on;
+  _log(std::string("station: management frame protection ") + (on ? "on" : "off"));
+  return true;
 }
 
 /* SEC_MGMT_MULTICAST_KEY_CMD_API_S_VER_2 (new TX API firmware: one 32-byte
@@ -1052,7 +1044,7 @@ void IwxDevice::sta_leave() {
     nic_unlock();
   }
   _sta_phy_added = _sta_mac_added = _sta_binding_added = _sta_sta_added = false;
-  _sta_queue_enabled = _sta_agg_queue_enabled = _sta_agg_active = _sta_assoc = _sta_tlc = _sta_session_prot = false;
+  _sta_queue_enabled = _sta_agg_queue_enabled = _sta_agg_active = _sta_assoc = _sta_tlc = _sta_session_prot = _sta_mfp = false;
   _sta_ba_tids = 0;
   _staq.queued = 0;
   _sta_aggq.queued = 0;
