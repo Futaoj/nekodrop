@@ -70,7 +70,7 @@ $WifiChips = @{
   '14C3:0608' = @('supported-mtk', 'MediaTek MT7921 (AMD RZ608)')
   '14C3:7922' = @('supported-mtk', 'MediaTek MT7922')
   '14C3:0616' = @('supported-mtk', 'MediaTek MT7922 (AMD RZ616)')
-  '14C3:7925' = @('mtk', 'MediaTek MT7925')
+  '14C3:7925' = @('supported-mtk', 'MediaTek MT7925')
   '14C3:0717' = @('mtk', 'MediaTek MT7925 (AMD RZ717)')
   '14C3:7927' = @('mtk', 'MediaTek MT7927 (Wi-Fi 7)')
   '14C3:7663' = @('mtk', 'MediaTek MT7663')
@@ -104,7 +104,7 @@ $WifiKinds = @{
   'intel-be'      = @('not supported: Intel Wi-Fi 7, no upstream driver', 'ForbiddenItlwm, which nekodrop ports, has no driver for Wi-Fi 7 cards yet.')
   'intel-other'   = @('not supported: an Intel device ID nekodrop does not know', 'Please post this report in an issue: if upstream ships firmware for this card, its ID can be added.')
   'rtl'           = @('not supported: Realtek', 'Among Realtek chips, nekodrop currently has built-in support for RTL8852CE (10EC:C852) only.')
-  'mtk'           = @('not supported: MediaTek', 'Among MediaTek chips, nekodrop currently has built-in support for MT7902, MT7921 (RZ608), and MT7922 (RZ616) only.')
+  'mtk'           = @('not supported: MediaTek', 'Among MediaTek chips, nekodrop currently has built-in support for MT7902, MT7921 (RZ608), MT7922 (RZ616), and MT7925 (14C3:7925) only.')
   'qcom'          = @('not supported: Qualcomm', 'No user-mode Windows driver exists for Qualcomm Wi-Fi yet.')
   'bcm'           = @('not supported: Broadcom', 'There is no open Windows driver path for Broadcom Wi-Fi.')
   'usb'           = @('not supported: USB adapter', 'nekodrop drives PCIe cards only.')
@@ -238,7 +238,7 @@ if ($SelfTest) {
     @('PCI\VEN_14C3&DEV_0616&SUBSYS_E0CD1A3B\4&1', 'supported-mtk', 'MediaTek MT7922 (AMD RZ616)'),
     @('PCI\VEN_14C3&DEV_7961&SUBSYS_796114C3\4&1', 'supported-mtk', 'MediaTek MT7921'),
     @('PCI\VEN_14C3&DEV_0608&SUBSYS_060814C3\4&1', 'supported-mtk', 'MediaTek MT7921 (AMD RZ608)'),
-    @('PCI\VEN_14C3&DEV_7925&SUBSYS_792514C3\4&1', 'mtk', 'MediaTek MT7925'),
+    @('PCI\VEN_14C3&DEV_7925&SUBSYS_792514C3\4&1', 'supported-mtk', 'MediaTek MT7925'),
     @('PCI\VEN_14C3&DEV_7927&SUBSYS_792714C3\4&1', 'mtk', 'MediaTek MT7927 (Wi-Fi 7)'),
     @('PCI\VEN_14C3&DEV_7902&SUBSYS_790214C3\4&1', 'supported-mtk', 'MediaTek MT7902'),
     @('PCI\VEN_17CB&DEV_1103&SUBSYS_010817CB\4&1', 'qcom', 'Qualcomm WCN6855 (FastConnect 6800/6900)'),
@@ -431,7 +431,7 @@ $svcStart = Try-Get { (Get-CimInstance Win32_Service -Filter "Name='NekoDropServ
 $exe = Join-Path $app 'NekoDropService.exe'
 $version = Try-Get { (Get-Item $exe).VersionInfo.ProductVersion }
 $config = Try-Get { Get-Content (Join-Path $state 'service.json') -Raw | ConvertFrom-Json }
-$SupportedCardPattern = '^PCI\\(?:VEN_8086&DEV_(' + ($SupportedIntelIds -join '|') + ')|VEN_10EC&DEV_C852|VEN_14C3&DEV_(7902|7961|0608|7922|0616))(?=&|\\|$)'
+$SupportedCardPattern = '^PCI\\(?:VEN_8086&DEV_(' + ($SupportedIntelIds -join '|') + ')|VEN_10EC&DEV_C852|VEN_14C3&DEV_(7902|7961|0608|7922|0616|7925))(?=&|\\|$)'
 # Every present device once: the supported card and the other wireless cards
 # below both come from it.
 $pnpAll = @(Try-Get { Get-PnpDevice -PresentOnly } | Where-Object { $_ })

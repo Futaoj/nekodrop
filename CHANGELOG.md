@@ -6,6 +6,20 @@
 
 ---
 
+## Unreleased (Preview / 预览版)
+
+### 中文
+
+- **新增 MediaTek MT7925 / AMD RZ717（`14C3:7925`，Wi-Fi 7，实验性）纯用户态按需支持**：
+  - 接入标准 UMDF 寄存器代理（`winawdl_regproxy.inf`）、服务目录（`CardCatalog` 按需模式）、安装/诊断/一键回退脚本与锁定 SHA-256 的 `linux-firmware` 固件拉取流程，无需内核驱动或开启 Windows 测试模式；尚未完成全流程真机验证，欢迎附[诊断报告](docs/MT7925.md)反馈。
+
+### English
+
+- **Add experimental pure user-mode MediaTek MT7925 / AMD RZ717 (`14C3:7925`, Wi-Fi 7) On-Demand support:**
+  - Wired into the standard UMDF register proxy (`winawdl_regproxy.inf`), `CardCatalog` (On-Demand mode), installer/report/restore scripts, and SHA-256 pinned `linux-firmware` fetch/staging scripts with zero kernel drivers or test signing; awaiting live hardware reports (see [docs/MT7925.md](docs/MT7925.md)).
+
+---
+
 ## v2.3.8 (Preview / 预览版)
 
 ### 中文
