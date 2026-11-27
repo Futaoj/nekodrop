@@ -9,7 +9,7 @@
         UseLayoutRounding="True" SnapsToDevicePixels="True" KeyDown="Window_KeyDown">
   <Grid Margin="22">
     <Border x:Name="Card" Width="505" HorizontalAlignment="Center" VerticalAlignment="Center"
-            Background="{DynamicResource Card}" BorderBrush="{DynamicResource BorderStrong}" BorderThickness="1"
+            Background="{DynamicResource DialogSurface}" BorderBrush="{DynamicResource BorderStrong}" BorderThickness="1"
             CornerRadius="13">
       <Border.Effect>
         <DropShadowEffect BlurRadius="30" ShadowDepth="0" Opacity="0.22" Color="#000000"/>
@@ -48,6 +48,7 @@
                          TextTrimming="CharacterEllipsis"/>
             </StackPanel>
             <Button Grid.Column="1" Style="{StaticResource TitleButton}" Click="Close_Click" IsCancel="True"
+                    Focusable="False" IsTabStop="False"
                     AutomationProperties.Name="{local:T send.close}">
               <TextBlock Style="{StaticResource Icon}" Text="&#xE8BB;" FontSize="10"/>
             </Button>
