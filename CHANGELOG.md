@@ -6,6 +6,20 @@
 
 ---
 
+## v2.3.4 (Preview / 预览版)
+
+### 中文
+
+- **实验性 Wi-Fi 6 上网（默认关闭）**：*设置 → 实验性功能* 新增「实验性 Wi-Fi 6 上网」。打开后，nekodrop 自己连的 Wi-Fi 遇到 Wi-Fi 6 路由器时会用 Wi-Fi 6（802.11ax）连接，不支持的路由器照旧用 Wi-Fi 5。仅限 Intel 网卡（9560 除外）。这一版只在编译和自测里验证过，还没有真机测试；连不上或断流请关掉它，并附上诊断报告反馈。
+- **MT7902**：发送卡住时，日志会多记录发送队列和接收报告的计数，方便排查 iPhone 出现后电脑反复重启网卡的问题（[#94](https://github.com/zheznanohana/nekodrop/issues/94)）。只加日志，行为不变。
+
+### English
+
+- **Experimental Wi-Fi 6 internet (off by default):** A new **Experimental Wi-Fi 6 internet** switch in *Settings → Experimental*. When on, nekodrop's own Wi-Fi connection joins a Wi-Fi 6 router with Wi-Fi 6 (802.11ax); other routers are joined with Wi-Fi 5 as before. Intel cards only (not the 9560). Checked only by the build and self-tests so far, not yet on hardware; if the network won't connect or drops, turn it off and send a diagnostic report.
+- **MT7902:** When sending stalls, the log now records the send-queue and receive-report counters, to track down the radio restarting over and over once an iPhone appears ([#94](https://github.com/zheznanohana/nekodrop/issues/94)). Logging only; no behavior change.
+
+---
+
 ## v2.3.3 (Preview / 预览版)
 
 ### 中文

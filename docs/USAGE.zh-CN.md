@@ -109,6 +109,7 @@ nekodrop 启动一分钟后检查 GitHub 上有没有新版本，之后每 6 小
 - **安卓互传（MTA v2 局域网，`v2.3.3` 起）**：和同一 Wi-Fi 下的互传联盟机型（一加 / OPPO / 小米 / vivo / 荣耀 / 真我等）双向收发文件，用蓝牙发现对方。并发模式下安卓 → 电脑很快；电脑 → 安卓在不回应 `ADDBA` 的路由器上只有约 2 MB/s，要发大文件请切到按需模式，或用有线 / 第二张网卡联网。
 - **跨生态中转**：电脑当桥，在 iPhone / Mac（AirDrop）和安卓手机（互传联盟）之间自动转发文件。
 - **蓝牙诊断扫描**：一键扫描附近的互传广播，MAC 地址等隐私字段自动脱敏，方便反馈某个安卓机型找不到的问题。
+- **实验性 Wi-Fi 6 上网（`v2.3.4` 起，仅 Intel，9560 除外）**：nekodrop 自己连的 Wi-Fi 遇到 Wi-Fi 6 路由器时用 Wi-Fi 6（802.11ax）连接，其余路由器照旧用 Wi-Fi 5。目前是保守配置：单用户传输、最多两条空间流、80 MHz，不支持 6 GHz（Wi-Fi 6E）。速度主要还是受 AirDrop 分时限制，提升有限；连不上或断流请关闭。
 - **高吞吐模式（Wi-Fi 6 HE80 + MTU 1500）**（参考 [`YiHoooong/owly`](https://github.com/YiHoooong/owly/tree/feat/windows-mtkradio)）：在 5 GHz 80 MHz 下广播 Apple AWDL Wi-Fi 6（HE80）能力并将 `awdl0` MTU 提至 `1500`。配合 4+4 MiB 无锁共享内存数据面、8 KiB 接收 DMA、8 MiB Wintun 环、`ev_win.c` 公平轮询与流式接收，AX201 实测双向均可达到 **50+ MiB/s（约 53 MB/s）**。
 - **Wi-Fi 和 AirDrop 不在同一信道时按苹果的方式分时**：告诉 iPhone 电脑什么时候在路由器那边。nekodrop 连的 Wi-Fi 在另一个 5 GHz 信道时，一台 AX211 不开它一个 AirDrop 帧都收不到（[#35](../../../issues/35)）；一台 AX200 上速度时快时慢（[#4](../../../issues/4)）。
 - **更快解锁被动 5 GHz 信道**：更早扫描，让拒绝国家码的网卡更快可以发射（[#11](../../../issues/11)）。
