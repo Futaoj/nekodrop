@@ -6,6 +6,24 @@
 
 ---
 
+## v2.3.8 (Preview / 预览版)
+
+### 中文
+
+- **合并 PR #104（[@Futaoj](https://github.com/Futaoj)）：AWDL 接收帧软件 CRC-32 提速 4.3–4.6×**：
+  - 将 `strip_valid_fcs` 中的逐字节 IEEE CRC-32 查表升级为 slicing-by-8（`iwxradio/src/awdl_fcs.h`，由 `iwxradio` 与 `mtradio` 共用），不对齐输入安全，微基准吞吐由 ~660–820 MB/s 提升至 ~2.8–3.8 GB/s，降低高吞吐接收时的 CPU 占用，并补充非对齐与全部尾部长度回归单测。
+- **合并 PR #105（[@Futaoj](https://github.com/Futaoj)）：大幅缩短 iPhone 省略 HTTP 结束块时的收尾等待（500 ms → 40 ms）**：
+  - 部分 iPhone 发送视频或 Live Photo 时在完整传输 CPIO + DVZip / gzip 数据后保持连接不发零长度结束块；现仅在确认流完整后对下一 chunk 头首字节使用 40 ms 超时（收到首字节即恢复正常超时），小文件接收收尾由 ~508 ms 降至 ~45 ms，并新增完整边界回归测试。
+
+### English
+
+- **Merged PR #104 ([@Futaoj](https://github.com/Futaoj)): 4.3–4.6× faster software CRC-32 for AWDL RX FCS checks:**
+  - Replaced byte-at-a-time IEEE CRC-32 in `strip_valid_fcs` with unaligned-safe slicing-by-8 (`iwxradio/src/awdl_fcs.h`, shared by `iwxradio` and `mtradio`), lifting microbenchmark throughput from ~660–820 MB/s to ~2.8–3.8 GB/s with full regression coverage.
+- **Merged PR #105 ([@Futaoj](https://github.com/Futaoj)): Cut final wait for complete iPhone uploads missing the HTTP zero chunk (500 ms → 40 ms):**
+  - After a complete CPIO + DVZip/gzip archive finishes at a chunk boundary, applies a 40 ms wait strictly to the first byte of the next chunk header (restoring normal timeout on partial headers or incomplete streams), cutting tail completion from ~508 ms to ~45 ms with full regression tests.
+
+---
+
 ## v2.3.7 (Preview / 预览版)
 
 ### 中文
