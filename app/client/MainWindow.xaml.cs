@@ -86,8 +86,16 @@ public partial class MainWindow : Window
     {
         AllowToggle.IsChecked = A.Model.Allow;
         UpdateAutoAcceptUi();
-        MtaRelayRow.Visibility = A.Settings.MtaOn ? Visibility.Visible : Visibility.Collapsed;
-        MtaRelayToggle.IsChecked = A.Settings.MtaRelay;
+        var relayA = A.RelayA;
+        var relayB = A.RelayB;
+        var pairSet = relayA is not null && relayB is not null && !relayA.Same(relayB);
+        MtaRelayRow.Visibility = pairSet ? Visibility.Visible : Visibility.Collapsed;
+        MtaRelayToggle.IsChecked = A.Settings.RelayOn;
+        if (pairSet)
+        {
+            var why = Relay.Blocker(relayA, relayB, A.Settings);
+            RelayPairText.Text = why.Length > 0 && A.Settings.RelayOn ? why : $"{relayA!.Name} ⇄ {relayB!.Name}";
+        }
         ModeList.Children.Clear();
         foreach (var (key, text) in new[] { ("concurrent", L.T("mode.concurrent.short")), ("ondemand", L.T("mode.ondemand.short")), ("off", L.T("mode.off.short")) })
             ModeList.Children.Add(ModeChoice(key, text, A.Model.Mode == key));
@@ -113,7 +121,7 @@ public partial class MainWindow : Window
         UpdateAutoAcceptUi();
     }
 
-    void MtaRelay_Click(object sender, RoutedEventArgs e) => A.SetMtaRelay(MtaRelayToggle.IsChecked == true);
+    void MtaRelay_Click(object sender, RoutedEventArgs e) => A.SetRelay(MtaRelayToggle.IsChecked == true);
 
     Button ModeChoice(string key, string text, bool chosen) =>
         Choice(text, chosen, () => { A.Service.SetMode(key); StatusPopup.IsOpen = false; });

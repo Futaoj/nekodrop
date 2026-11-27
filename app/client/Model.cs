@@ -27,7 +27,8 @@ public sealed class Device : Observable
     public string Name { get => _name; set { Set(ref _name, value); Raise(nameof(Glyph)); } }
     public string Model { get => _model; set { Set(ref _model, value); Raise(nameof(Glyph)); } }
     public string Protocol { get => _protocol; set { Set(ref _protocol, value); Raise(nameof(IsMta)); } }
-    public bool IsMta => Protocol != "airdrop";
+    /* Android Share (MTA) only: relay pairs AirDrop with MTA, never with LocalSend. */
+    public bool IsMta => Protocol == "mta2";
     public string Glyph
     {
         get
@@ -118,6 +119,8 @@ public sealed class AppModel : Observable
     bool _mtaOn, _mtaRelay;
     /// <summary>Experimental Android Mutual Transmission Alliance (v2 LAN) enabled.</summary>
     public bool MtaOn { get => _mtaOn; set => Set(ref _mtaOn, value); }
+    bool _localSendOn;
+    public bool LocalSendOn { get => _localSendOn; set => Set(ref _localSendOn, value); }
     /// <summary>Experimental Apple &lt;-&gt; Android relay mode enabled.</summary>
-    public bool MtaRelay { get => _mtaRelay; set => Set(ref _mtaRelay, value); }
+    public bool RelayOn { get => _mtaRelay; set => Set(ref _mtaRelay, value); }
 }

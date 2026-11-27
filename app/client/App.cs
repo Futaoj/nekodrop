@@ -69,6 +69,7 @@ public sealed class App : Application
     public ServiceLink Service { get; } = new();
     public Engine Engine { get; } = new();
     public MtaEngine Mta { get; } = new();
+    public LocalSendEngine LocalSend { get; } = new();
     readonly Wake _wake = new();
     Forms.NotifyIcon? _tray;
     MainWindow? _window;
@@ -79,6 +80,24 @@ public sealed class App : Application
     readonly Dictionary<string, List<string>> _recentBatches = [];
     readonly Dictionary<string, (string DeviceId, string DeviceName, List<string> Files)> _sendInfo = [];
     readonly Dictionary<string, (string FromName, List<string> TempPaths)> _relayOrigin = [];
+    /// <summary>Incoming requests from a relay end, and the other end their files go to.</summary>
+    readonly Dictionary<string, RelayEnd> _relayTo = [];
+
+    public RelayEnd? RelayA => RelayEnd.Parse(Settings.RelayA);
+    public RelayEnd? RelayB => RelayEnd.Parse(Settings.RelayB);
+    /// <summary>The relay is on and can work: a pair of two devices whose protocols are on.</summary>
+    public bool RelayActive => Settings.RelayOn && Relay.Blocker(RelayA, RelayB, Settings) == "";
+
+    /// <summary>Look for devices of one protocol (wakes Apple devices for AirDrop).</summary>
+    public void LookOn(string protocol)
+    {
+        switch (protocol)
+        {
+            case RelayEnd.Mta: Mta.Look(true); break;
+            case RelayEnd.LocalSend: LocalSend.Look(true); break;
+            default: Service.Wake(); Engine.Look(true); break;
+        }
+    }
     readonly Dictionary<string, SpeedMeter> _rxSpeed = [];
     readonly Dictionary<string, SpeedMeter> _txSpeed = [];
 
@@ -152,7 +171,7 @@ public sealed class App : Application
         });
         Model.Allow = Settings.Discoverable;
         Model.MtaOn = Settings.MtaOn;
-        Model.MtaRelay = Settings.MtaRelay;
+        Model.RelayOn = Settings.RelayOn;
         Service.Start();
         Engine.Event += o => Dispatcher.BeginInvoke(() => OnEngine(o));
         Engine.Event += o => EngineLog(o.ToJsonString());
@@ -165,15 +184,23 @@ public sealed class App : Application
             EngineLog(o.ToJsonString());
         };
         Mta.Log += EngineLog;
+        LocalSend.Event += o => Dispatcher.BeginInvoke(() => OnEngine(o));
+        LocalSend.Event += o =>
+        {
+            var ev = (string?)o["event"];
+            if (ev == "incoming" || (ev == "send" && (string?)o["state"] == "sending")) return;
+            EngineLog(o.ToJsonString());
+        };
+        LocalSend.Log += EngineLog;
+        Model.LocalSendOn = Settings.LocalSendOn;
         Mta.IncomingHandshake += () => Dispatcher.BeginInvoke(() =>
         {
-            if (Settings.MtaOn && Settings.MtaRelay)
-            {
-                Service.Wake();
-                Engine.Look(true);
-            }
+            /* An Android phone starts a transfer: if it may be a relay end, wake the other end's protocol early. */
+            if (RelayActive && RelayA is { } a && RelayB is { } b && (a.Protocol == RelayEnd.Mta || b.Protocol == RelayEnd.Mta))
+                LookOn(a.Protocol == RelayEnd.Mta ? b.Protocol : a.Protocol);
         });
         Mta.Apply(Settings);
+        LocalSend.Apply(Settings);
         if (Settings.Discoverable) StartEngine();
         _wake.AirDropNearby += () => Dispatcher.BeginInvoke(() =>
         {
@@ -405,7 +432,7 @@ public sealed class App : Application
             ("settings-general", () => new SettingsWindow("general"), 0),
             ("settings-network", () => new SettingsWindow("network"), 0),
             ("settings-appleid", () => new SettingsWindow("appleid"), 0),
-            ("settings-mta", () => { Settings.MtaOn = true; Settings.MtaRelay = true; return new SettingsWindow("mta"); }, 0),
+            ("settings-mta", () => { Settings.MtaOn = true; return new SettingsWindow("mta"); }, 0),
             ("settings-hardware", () => new SettingsWindow("hardware"), 0),
             ("settings-updates", () => new SettingsWindow("updates"), 0),
             ("history", () => new HistoryWindow(), 0),
@@ -584,6 +611,7 @@ public sealed class App : Application
         _send.Activate();
         Engine.Look(true);
         Mta.Look(true);
+        LocalSend.Look(true);
     }
 
     ResourceDictionary? _styles;
@@ -739,24 +767,28 @@ public sealed class App : Application
         Settings.Discoverable = on;
         Settings.Save();
         Mta.Apply(Settings);
+        LocalSend.Apply(Settings);
         if (on) { StartEngine(); Service.Wake(); }
         else Engine.Dispose();
     }
 
     public void ApplyMta()
     {
-        if (!Settings.MtaOn) Settings.MtaRelay = false;
         Model.MtaOn = Settings.MtaOn;
-        Model.MtaRelay = Settings.MtaRelay;
+        Model.RelayOn = Settings.RelayOn;
         Mta.Apply(Settings);
         if (Settings.MtaOn && (_send is not null || _window is { IsVisible: true })) Mta.Look(true);
+        Model.LocalSendOn = Settings.LocalSendOn;
+        LocalSend.Apply(Settings);
+        if (Settings.LocalSendOn && (_send is not null || _window is { IsVisible: true })) LocalSend.Look(true);
     }
 
-    public void SetMtaRelay(bool on)
+    public void SetRelay(bool on)
     {
-        Settings.MtaRelay = Settings.MtaOn && on;
+        Settings.RelayOn = on;
         Settings.Save();
-        Model.MtaRelay = Settings.MtaRelay;
+        Model.RelayOn = Settings.RelayOn;
+        if (on && Relay.Blocker(RelayA, RelayB, Settings) is { Length: > 0 } why) EngineLog("relay: on but cannot work yet: " + why);
     }
 
     public void SetAutoAccept(string mode)
@@ -788,6 +820,7 @@ public sealed class App : Application
         _lookTimer?.Stop();
         Engine.Look(true);
         Mta.Look(true);
+        LocalSend.Look(true);
     }
 
     public void WindowClosed() { if (_send is null) StopLookingLater(); }
@@ -800,7 +833,7 @@ public sealed class App : Application
     /// progress and its outcome are all still there when the panel opens again.
     /// Looking wakes every Apple device nearby, so it does stop in the end.
     /// </summary>
-    void StopLookingLater()
+    public void StopLookingLater()
     {
         _lookTimer?.Stop();
         _lookTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(90) };
@@ -811,6 +844,7 @@ public sealed class App : Application
             _lookTimer.Stop();
             Engine.Look(false);
             Mta.Look(false);
+            LocalSend.Look(false);
         };
         _lookTimer.Start();
     }
@@ -819,6 +853,7 @@ public sealed class App : Application
     {
         _wake.Dispose();
         Mta.Dispose();
+        LocalSend.Dispose();
         Engine.Dispose();
         Service.Dispose();
         if (_tray is not null) _tray.Visible = false;
@@ -991,6 +1026,7 @@ public sealed class App : Application
     public void Answer(string id, bool accept)
     {
         if (MtaEngine.IsMtaRequest(id)) Mta.Answer(id, accept);
+        else if (LocalSendEngine.IsRequest(id)) LocalSend.Answer(id, accept);
         else Engine.Answer(id, accept);
         if (_requests.TryGetValue(id, out var r))
         {
@@ -1006,9 +1042,9 @@ public sealed class App : Application
     /// </summary>
     void AttachAsk(Request r)
     {
-        var isMta = MtaEngine.IsMtaRequest(r.Id);
-        var d = Model.Devices.FirstOrDefault(x => x.IsMta == isMta && string.Equals(x.Name, r.Sender, StringComparison.OrdinalIgnoreCase) && x.Ask is null);
-        if (d is null) Model.Devices.Add(d = new Device { Id = "ask:" + r.Id, Name = r.Sender, Model = r.Model, Protocol = isMta ? "mta2" : "airdrop", ForAsk = true });
+        var protocol = MtaEngine.IsMtaRequest(r.Id) ? "mta2" : LocalSendEngine.IsRequest(r.Id) ? LocalSendEngine.ProtocolName : "airdrop";
+        var d = Model.Devices.FirstOrDefault(x => x.Protocol == protocol && string.Equals(x.Name, r.Sender, StringComparison.OrdinalIgnoreCase) && x.Ask is null);
+        if (d is null) Model.Devices.Add(d = new Device { Id = "ask:" + r.Id, Name = r.Sender, Model = r.Model, Protocol = protocol, ForAsk = true });
         d.Ask = r;
     }
 
@@ -1043,6 +1079,7 @@ public sealed class App : Application
         d.Progress = 0;
         Service.Touch();
         if (MtaEngine.IsMtaPeer(d.Id)) Mta.SendFiles(id, d.Id, files);
+        else if (LocalSendEngine.IsPeer(d.Id)) LocalSend.SendFiles(id, d.Id, files);
         else Engine.SendFiles(id, d.Id, files);
     }
 
@@ -1160,7 +1197,7 @@ public sealed class App : Application
                  * moves channel and re-creates awdl0) knows no peers and is not
                  * looking: the old one's devices go, and an open window looks
                  * again (#9: the send window stayed empty after a move to 149). */
-                foreach (var stale in Model.Devices.Where(x => !x.Busy && !x.IsMta).ToList()) Model.Devices.Remove(stale);
+                foreach (var stale in Model.Devices.Where(x => !x.Busy && x.Protocol == "airdrop").ToList()) Model.Devices.Remove(stale);
                 Model.DiscoveryBeaconUnavailable = false;
                 if (_send is not null || _window is { IsVisible: true }) Engine.Look(true);
                 break;
@@ -1174,7 +1211,7 @@ public sealed class App : Application
                 if (d is null) Model.Devices.Add(d = new Device { Id = id });
                 d.Name = (string?)o["name"] ?? L.T("dev.apple");
                 d.Model = (string?)o["model"] ?? "";
-                d.Protocol = (string?)o["protocol"] ?? (MtaEngine.IsMtaPeer(id) ? "mta2" : "airdrop");
+                d.Protocol = (string?)o["protocol"] ?? (MtaEngine.IsMtaPeer(id) ? "mta2" : LocalSendEngine.IsPeer(id) ? LocalSendEngine.ProtocolName : "airdrop");
                 break;
             }
             case "peer_gone":
@@ -1204,8 +1241,15 @@ public sealed class App : Application
                     if (Settings.RecentSenders.Count > 8) Settings.RecentSenders.RemoveRange(8, Settings.RecentSenders.Count - 8);
                     Settings.Save();
                 }
+                /* Relay: only the two chosen devices; anyone else is a normal receive. */
+                var relayTo = RelayActive ? Relay.PartnerFor(RelayA, RelayB, Relay.ProtocolOf(id), (string?)o["peer"], sender) : null;
+                if (relayTo is not null)
+                {
+                    _relayTo[id] = relayTo;
+                    EngineLog($"relay: {sender} is a relay end; its files go to {relayTo.Label}");
+                }
                 var autoAccept = !waits ||
-                                 (Settings.MtaOn && Settings.MtaRelay) ||
+                                 relayTo is not null ||
                                  Settings.AutoAcceptMode == "everyone" ||
                                  (Settings.AutoAcceptMode == "contacts" && isContact) ||
                                  Settings.AlwaysAccept.Contains(key);
@@ -1223,12 +1267,12 @@ public sealed class App : Application
                 AttachAsk(r);
                 if (autoAccept)
                 {
-                    // Pre-warm Android BLE scanner while iPhone is still uploading in Relay mode!
-                    if (Settings.MtaOn && Settings.MtaRelay && !MtaEngine.IsMtaRequest(id))
-                        Mta.Look(true);
+                    // Relay: find the other end while the sender is still uploading.
+                    if (relayTo is not null) LookOn(relayTo.Protocol);
                     if (waits)
                     {
                         if (MtaEngine.IsMtaRequest(id)) Mta.Answer(id, true);
+                        else if (LocalSendEngine.IsRequest(id)) LocalSend.Answer(id, true);
                         else Engine.Answer(id, true);
                     }
                 }
@@ -1298,10 +1342,11 @@ public sealed class App : Application
                                                         string.Equals(Path.GetFileNameWithoutExtension(m), stem, StringComparison.OrdinalIgnoreCase));
                     if (mov is not null && pairedMovies.Add(mov)) livePairs[n] = mov;
                 }
-                _ = HandleStoredAsync(id, from, folder, names, livePairs, pairedMovies, askIcon, MtaEngine.IsMtaRequest(id));
+                _ = HandleStoredAsync(id, from, folder, names, livePairs, pairedMovies, askIcon, _relayTo.Remove(id, out var relayEnd) ? relayEnd : null);
                 break;
             }
             case "lost":
+                _relayTo.Remove(id);
                 _rxSpeed.Remove(id);
                 _askSender.Remove(id);
                 _askIcon.Remove(id);
@@ -1437,7 +1482,7 @@ public sealed class App : Application
     }
 
     async Task HandleStoredAsync(string id, string from, string folder, List<string> names,
-                                 Dictionary<string, string> livePairs, HashSet<string> pairedMovies, string? askIcon, bool fromMta)
+                                 Dictionary<string, string> livePairs, HashSet<string> pairedMovies, string? askIcon, RelayEnd? relayTo)
     {
         var convertHeic = Settings.AutoConvertHeic;
         var built = await Task.Run(() =>
@@ -1509,7 +1554,7 @@ public sealed class App : Application
                 if (!allTempPaths.Contains(p, StringComparer.OrdinalIgnoreCase))
                     allTempPaths.Add(p);
         }
-        var shouldRelay = Settings.MtaOn && Settings.MtaRelay && relayFiles.Count > 0;
+        var shouldRelay = relayTo is not null && relayFiles.Count > 0;
 
         await Dispatcher.InvokeAsync(() =>
         {
@@ -1517,7 +1562,7 @@ public sealed class App : Application
             Model.RaiseStored();
             if (shouldRelay)
             {
-                _ = TryRelayAsync(id, from, fromMta, folder, relayFiles, allTempPaths);
+                _ = TryRelayAsync(id, from, relayTo!, folder, relayFiles, allTempPaths);
                 return;
             }
             if (built.records.Count == 0)
@@ -1549,23 +1594,16 @@ public sealed class App : Application
         });
     }
 
-    async Task TryRelayAsync(string id, string from, bool fromMta, string folder, List<string> relayFiles, List<string> tempPaths)
+    async Task TryRelayAsync(string id, string from, RelayEnd to, string folder, List<string> relayFiles, List<string> tempPaths)
     {
-        Device? FindTarget() => Model.Devices.FirstOrDefault(d => !d.ForAsk && !d.Busy && (fromMta ? !d.IsMta : d.IsMta));
+        /* Only the chosen other end: never another device that happens to be near. */
+        Device? FindTarget() => Model.Devices.FirstOrDefault(d => to.Is(d) && !d.Busy);
 
         var target = FindTarget();
         if (target is null)
         {
-            if (fromMta)
-            {
-                Service.Wake();
-                Engine.Look(true);
-            }
-            else
-            {
-                Mta.Look(true);
-            }
-            var deadline = DateTime.UtcNow.AddSeconds(fromMta ? 6.5 : 5.0);
+            LookOn(to.Protocol);
+            var deadline = DateTime.UtcNow.AddSeconds(to.Protocol == RelayEnd.AirDrop ? 6.5 : 5.0);
             while (DateTime.UtcNow < deadline)
             {
                 await Task.Delay(250);
@@ -1581,8 +1619,8 @@ public sealed class App : Application
             target ??= FindTarget();
             if (target is null)
             {
-                EngineLog($"relay: no opposite-ecosystem target found for {from}; kept files in {folder}");
-                Shell.DoneToast(id, L.T("mta.relay.noTargetTitle"), L.F("mta.relay.noTargetBody", from), folder);
+                EngineLog($"relay: {to.Label} not found for {from}; kept files in {folder}");
+                Shell.DoneToast(id, L.F("relay.noTargetTitle", to.Name), L.F("mta.relay.noTargetBody", from), folder);
                 return;
             }
             EngineLog($"relay: forwarding {relayFiles.Count} file(s) from {from} -> {target.Name} ({target.Protocol})");

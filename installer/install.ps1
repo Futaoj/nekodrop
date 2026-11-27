@@ -610,7 +610,7 @@ Step "nekodrop's own TAP adapter (DHCP) for Wi-Fi beside AirDrop" {
   try { & "$Source\setup-tap.ps1" -TapSetup "$Source\tap-windows.exe" | Out-Host }
   catch { "    TAP adapter not ready ($($_.Exception.Message)); concurrent mode will fall back to on-demand" }
 }
-Step 'firewall: AirDrop (link-local) and Android Share (local subnet)' {
+Step 'firewall: AirDrop (link-local), Android Share and LocalSend (local subnet)' {
   Get-NetFirewallRule -Group $FirewallGroup -ErrorAction SilentlyContinue | Remove-NetFirewallRule
   $common = @{ Group = $FirewallGroup; Direction = 'Inbound'; Action = 'Allow'; Profile = 'Any'; RemoteAddress = 'fe80::/64' }
   # Three separated ranges so a 100-port Hyper-V/WinNAT excluded block (#30) cannot cover all of them.
@@ -619,6 +619,9 @@ Step 'firewall: AirDrop (link-local) and Android Share (local subnet)' {
   $lan = @{ Group = $FirewallGroup; Direction = 'Inbound'; Action = 'Allow'; Profile = 'Any'; RemoteAddress = 'LocalSubnet' }
   New-NetFirewallRule @lan -DisplayName 'nekodrop Android Share' -Protocol TCP -LocalPort '38771-38779' | Out-Null
   New-NetFirewallRule @lan -DisplayName 'nekodrop Android Share probe' -Protocol UDP -LocalPort '38772-38780' | Out-Null
+  # LocalSend (protocol v2): HTTPS server and multicast discovery on 53317.
+  New-NetFirewallRule @lan -DisplayName 'nekodrop LocalSend' -Protocol TCP -LocalPort 53317 | Out-Null
+  New-NetFirewallRule @lan -DisplayName 'nekodrop LocalSend discovery' -Protocol UDP -LocalPort 53317 | Out-Null
 }
 
 'Service'

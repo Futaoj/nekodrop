@@ -276,17 +276,50 @@
               </StackPanel>
             </DockPanel>
           </Border>
-          <StackPanel x:Name="MtaBody">
-            <Border Style="{StaticResource CardPad}">
+          <Border Style="{StaticResource CardPad}">
+            <DockPanel>
+              <CheckBox x:Name="LocalSendOnBox" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Margin="12,0,0,0"
+                        Checked="RelayInputs_Changed" Unchecked="RelayInputs_Changed"/>
               <StackPanel>
-                <DockPanel>
-                  <CheckBox x:Name="MtaRelayBox" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Margin="12,0,0,0"
-                            Checked="MtaRelay_Changed" Unchecked="MtaRelay_Changed"/>
-                  <StackPanel>
-                    <TextBlock Text="{local:T mta.relay}" Style="{StaticResource T13S}"/>
-                    <TextBlock Text="{local:T mta.relayHint}" Style="{StaticResource Sub12}" TextWrapping="Wrap" Margin="0,2,0,0"/>
-                  </StackPanel>
-                </DockPanel>
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="{local:T ls.on}" Style="{StaticResource T13S}"/>
+                  <Border Background="{DynamicResource WarnBg}" CornerRadius="4" Padding="6,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="{local:T aid.experimental}" FontSize="11" Foreground="{DynamicResource Warn}"/>
+                  </Border>
+                </StackPanel>
+                <TextBlock Text="{local:T ls.onHint}" Style="{StaticResource Sub12}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+              </StackPanel>
+            </DockPanel>
+          </Border>
+          <Border Style="{StaticResource CardPad}">
+            <StackPanel>
+              <DockPanel>
+                <CheckBox x:Name="MtaRelayBox" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Margin="12,0,0,0"
+                          Checked="MtaRelay_Changed" Unchecked="MtaRelay_Changed"/>
+                <StackPanel>
+                  <TextBlock Text="{local:T relay.title}" Style="{StaticResource T13S}"/>
+                  <TextBlock Text="{local:T relay.hint}" Style="{StaticResource Sub12}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                </StackPanel>
+              </DockPanel>
+              <StackPanel x:Name="RelayBody" Margin="0,12,0,0">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                  </Grid.RowDefinitions>
+                  <TextBlock Text="{local:T relay.deviceA}" FontSize="13" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                  <ComboBox x:Name="RelayABox" Grid.Column="1" Style="{StaticResource WinCombo}" SelectionChanged="RelayInputs_Changed"/>
+                  <TextBlock Text="{local:T relay.deviceB}" Grid.Row="1" FontSize="13" VerticalAlignment="Center" Margin="0,8,12,0"/>
+                  <ComboBox x:Name="RelayBBox" Grid.Row="1" Grid.Column="1" Style="{StaticResource WinCombo}" Margin="0,8,0,0" SelectionChanged="RelayInputs_Changed"/>
+                </Grid>
+                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                  <Button x:Name="RelayScanButton" Style="{StaticResource WinButton}" Content="{local:T relay.scan}" Click="RelayScan_Click" Padding="12,6"/>
+                  <TextBlock x:Name="RelayStatus" Style="{StaticResource Sub12}" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
                 <Border Style="{StaticResource Rule}" Margin="0,12"/>
                 <DockPanel x:Name="MtaKeepLocalRow">
                   <CheckBox x:Name="MtaRelayKeepLocalBox" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Margin="12,0,0,0"/>
@@ -296,7 +329,9 @@
                   </StackPanel>
                 </DockPanel>
               </StackPanel>
-            </Border>
+            </StackPanel>
+          </Border>
+          <StackPanel x:Name="MtaBody">
             <Border Style="{StaticResource CardPad}">
               <StackPanel>
                 <TextBlock Text="{local:T mta.diagTitle}" Style="{StaticResource T13S}"/>

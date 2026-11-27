@@ -6,6 +6,20 @@
 
 ---
 
+## Unreleased / 未发布
+
+### 中文
+
+- **LocalSend 互传（实验性，默认关闭）**：*设置 → 互传与中继* 新增「启用 LocalSend 互传」。打开后可以和装了 [LocalSend](https://localsend.org/) 的设备互传（安卓、iPhone、Mac、Windows、Linux），需要在同一个 Wi-Fi 或局域网里。设备出现在雷达上，收发和 AirDrop 用同一套界面。按 LocalSend 协议 v2 实现，使用 TCP / UDP 53317 端口，安装时会加上局域网防火墙规则。暂不支持对方要求 PIN 码。
+- **中继改为两台设备配对**：以前是「苹果发来的转给附近随便一台安卓，反过来也一样」，附近有多台设备时会转错，而且中继一开就会自动接收任何人的文件。现在改为在设置里选好设备 A 和设备 B：只有这两台之间互相转发，可以是 iPhone、安卓、LocalSend 的任意组合，其他人发来的文件照常接收、不会被转发。**从旧版升级后需要先选一次配对，中继才会工作。**
+
+### English
+
+- **LocalSend (experimental, off by default):** A new **Enable LocalSend** switch in *Settings → Sharing & relay*. Send to and receive from devices running [LocalSend](https://localsend.org/) (Android, iPhone, Mac, Windows, Linux) on the same Wi-Fi or local network; they show up on the radar and use the same send and receive screens as AirDrop. Implements LocalSend protocol v2 on TCP / UDP port 53317, with local-network firewall rules added by the installer. Receivers that ask for a PIN are not supported yet.
+- **Relay now pairs two devices:** It used to pass Apple files to whichever Android device was nearby and the other way round, which picked the wrong device when several were around, and it accepted anyone's files while on. Now you choose device A and device B in Settings: files go only between those two, in any mix of iPhone, Android and LocalSend, and anyone else's files are received as usual and never passed on. **After upgrading, choose the pair once before the relay works.**
+
+---
+
 ## v2.3.4 (Preview / 预览版)
 
 ### 中文

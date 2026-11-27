@@ -42,8 +42,10 @@ public partial class SettingsWindow : Window
         AppleIdOnBox.IsChecked = s.AppleIdOn;
         AppleIdOn_Changed(AppleIdOnBox, new RoutedEventArgs());
         MtaOnBox.IsChecked = s.MtaOn;
-        MtaRelayBox.IsChecked = s.MtaRelay;
+        LocalSendOnBox.IsChecked = s.LocalSendOn;
+        MtaRelayBox.IsChecked = s.RelayOn;
         MtaRelayKeepLocalBox.IsChecked = s.MtaRelayKeepLocal;
+        FillRelayChoices(RelayEnd.Parse(s.RelayA), RelayEnd.Parse(s.RelayB));
         MtaOn_Changed(MtaOnBox, new RoutedEventArgs());
         ShowReceive();
         ShowIdentity();
@@ -338,7 +340,10 @@ public partial class SettingsWindow : Window
         s.AppleIdOn = appleIdOn;
         s.Receive = receive;
         s.MtaOn = MtaOnBox.IsChecked == true;
-        s.MtaRelay = s.MtaOn && MtaRelayBox.IsChecked == true;
+        s.LocalSendOn = LocalSendOnBox.IsChecked == true;
+        s.RelayOn = MtaRelayBox.IsChecked == true;
+        s.RelayA = (RelayABox.SelectedItem as RelayChoice)?.End?.Serialize() ?? "";
+        s.RelayB = (RelayBBox.SelectedItem as RelayChoice)?.End?.Serialize() ?? "";
         s.MtaRelayKeepLocal = MtaRelayKeepLocalBox.IsChecked == true;
         var hotkeyChanged = (HotkeyBox.IsChecked == true) != s.Hotkey || _hotkeyKeys != s.HotkeyKeys;
         s.Hotkey = HotkeyBox.IsChecked == true;
@@ -508,9 +513,70 @@ public partial class SettingsWindow : Window
 
     void MtaRelay_Changed(object sender, RoutedEventArgs e)
     {
-        if (MtaKeepLocalRow is null) return;
-        MtaKeepLocalRow.IsEnabled = MtaOnBox.IsChecked == true && MtaRelayBox.IsChecked == true;
-        MtaKeepLocalRow.Opacity = MtaKeepLocalRow.IsEnabled ? 1 : 0.5;
+        if (RelayBody is null) return;
+        RelayBody.IsEnabled = MtaRelayBox.IsChecked == true;
+        RelayBody.Opacity = RelayBody.IsEnabled ? 1 : 0.5;
+        ShowRelayStatus();
+    }
+
+    void RelayInputs_Changed(object sender, RoutedEventArgs e) => ShowRelayStatus();
+
+    /// <summary>A relay end in a picker; End null is "not chosen".</summary>
+    sealed class RelayChoice(RelayEnd? end)
+    {
+        public RelayEnd? End { get; } = end;
+        public override string ToString() => End?.Label ?? L.T("relay.none");
+    }
+
+    /// <summary>The pickers list the saved ends and every device now on the radar.</summary>
+    void FillRelayChoices(RelayEnd? a, RelayEnd? b)
+    {
+        var ends = new List<RelayEnd>();
+        void Add(RelayEnd? e)
+        {
+            if (e is not null && !ends.Any(x => x.Same(e))) ends.Add(e);
+        }
+        Add(a);
+        Add(b);
+        foreach (var d in A.Model.Devices.Where(d => !d.ForAsk).ToList()) Add(RelayEnd.FromDevice(d));
+        foreach (var (box, chosen) in new[] { (RelayABox, a), (RelayBBox, b) })
+        {
+            var items = new List<RelayChoice> { new(null) };
+            items.AddRange(ends.Select(e => new RelayChoice(e)));
+            box.ItemsSource = items;
+            box.SelectedItem = items.FirstOrDefault(i => i.End is not null && chosen is not null && i.End.Same(chosen)) ?? items[0];
+        }
+    }
+
+    void ShowRelayStatus()
+    {
+        if (RelayStatus is null || RelayABox is null || RelayBBox is null) return;
+        var a = (RelayABox.SelectedItem as RelayChoice)?.End;
+        var b = (RelayBBox.SelectedItem as RelayChoice)?.End;
+        var preview = new Settings
+        {
+            MtaOn = MtaOnBox.IsChecked == true,
+            LocalSendOn = LocalSendOnBox.IsChecked == true,
+            Discoverable = A.Settings.Discoverable,
+        };
+        var why = Relay.Blocker(a, b, preview);
+        RelayStatus.Text = why.Length > 0 ? why : L.F("relay.ready", a!.Name, b!.Name);
+    }
+
+    async void RelayScan_Click(object sender, RoutedEventArgs e)
+    {
+        RelayScanButton.IsEnabled = false;
+        RelayStatus.Text = L.T("relay.scanning");
+        A.LookOn(RelayEnd.AirDrop);
+        if (MtaOnBox.IsChecked == true) A.LookOn(RelayEnd.Mta);
+        if (LocalSendOnBox.IsChecked == true) A.LookOn(RelayEnd.LocalSend);
+        await Task.Delay(8000);
+        A.StopLookingLater();
+        var a = (RelayABox.SelectedItem as RelayChoice)?.End;
+        var b = (RelayBBox.SelectedItem as RelayChoice)?.End;
+        FillRelayChoices(a, b);
+        RelayScanButton.IsEnabled = true;
+        ShowRelayStatus();
     }
 
     async void MtaDiag_Click(object sender, RoutedEventArgs e)

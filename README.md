@@ -35,6 +35,7 @@
 - **像 Mac 一样用**：iPhone、iPad、Mac 的 AirDrop 列表里直接出现你的电脑；资源管理器右键 **用 nekodrop 发送**，或用 Windows 分享面板。
 - **仅限联系人**（实验性）：登录 Apple ID 或导入 Mac 证书（[怎么用](docs/USAGE.zh-CN.md#仅限联系人apple-id实验性)）。
 - **安卓互传**（实验性，`v2.3.3` 起）：同一 Wi-Fi 下和一加 / OPPO / 小米 / vivo / 荣耀 / 真我等互传联盟机型双向收发，还能在 iPhone 和安卓之间中转（[怎么用](docs/USAGE.zh-CN.md#实验性功能)）。
+- **LocalSend 互传**（实验性，`v2.3.5` 起）：和装了 LocalSend 的安卓、iPhone、Mac、Linux 设备互传；中继模式可以在任意两台设备之间转发（[怎么用](docs/USAGE.zh-CN.md#实验性功能)）。
 - **装上就不用管**：一个安装包、自动更新、服务自动恢复，出问题一键回退到 Windows 自带 Wi-Fi。
 
 ## 速度

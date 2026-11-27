@@ -58,8 +58,17 @@ public sealed class Settings
     public string Accent { get; set; } = "";
     /// <summary>Experimental: enable Mutual Transmission Alliance (Android Share v2 LAN).</summary>
     public bool MtaOn { get; set; }
-    /// <summary>Experimental: relay files between Apple (AirDrop) and Android (MTA) through this PC.</summary>
-    public bool MtaRelay { get; set; }
+    /// <summary>Experimental LocalSend (protocol v2) on the local network; off by default.</summary>
+    public bool LocalSendOn { get; set; }
+    /// <summary>
+    /// Experimental relay: files from device A are passed on to device B and the
+    /// other way round (RelayA / RelayB, RelayEnd.Serialize); everyone else's
+    /// transfers are received as usual. Replaces the old "Apple to any Android"
+    /// MtaRelay, which needs choosing the pair once.
+    /// </summary>
+    public bool RelayOn { get; set; }
+    public string RelayA { get; set; } = "";
+    public string RelayB { get; set; } = "";
     /// <summary>When relaying files between phones, also keep a copy in SaveFolder on this PC.</summary>
     public bool MtaRelayKeepLocal { get; set; }
     /// <summary>A version the user chose to skip.</summary>

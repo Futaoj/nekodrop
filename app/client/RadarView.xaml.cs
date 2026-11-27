@@ -195,7 +195,7 @@ public partial class RadarView : UserControl
     void OnModel(object? s, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(AppModel.Air) or nameof(AppModel.Detail) or
-            nameof(AppModel.DiscoveryBeaconUnavailable) or nameof(AppModel.MtaOn) or nameof(AppModel.MtaRelay)) Update();
+            nameof(AppModel.DiscoveryBeaconUnavailable) or nameof(AppModel.MtaOn) or nameof(AppModel.RelayOn) or nameof(AppModel.LocalSendOn)) Update();
     }
 
     void View_Checked(object sender, RoutedEventArgs e)
@@ -214,7 +214,7 @@ public partial class RadarView : UserControl
     {
         var air = A.Model.Air;
         var none = A.Model.Devices.Count == 0;
-        var mtaActive = A.Model.MtaOn;
+        var mtaActive = A.Model.MtaOn || A.Model.LocalSendOn; /* LAN sharing works without the radio */
         var ready = air == "ready" || (mtaActive && !none);
         var blocked = !mtaActive && air is "off" or "error" or "service_stopped" or "no_adapter";
         // The list shows devices only; every other state is drawn on the radar.

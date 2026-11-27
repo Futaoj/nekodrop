@@ -101,7 +101,7 @@
             <CheckBox x:Name="MtaRelayToggle" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Click="MtaRelay_Click"/>
             <StackPanel VerticalAlignment="Center" Margin="0,0,8,0">
               <TextBlock Text="{local:T tray.mtaRelay}" FontSize="12" FontWeight="SemiBold"/>
-              <TextBlock Text="{local:T tray.mtaRelaySub}" Style="{StaticResource Dim11}" TextTrimming="CharacterEllipsis"/>
+              <TextBlock x:Name="RelayPairText" Style="{StaticResource Dim11}" TextTrimming="CharacterEllipsis"/>
             </StackPanel>
           </DockPanel>
           <Border Style="{StaticResource Rule}" Margin="0,10,0,8"/>
