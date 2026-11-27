@@ -34,6 +34,7 @@
 - **The card you already have.** Intel AX200 / AX201 / AX210 / AX211 / 9560, Realtek RTL8852CE, MediaTek MT7902 / MT7921 / MT7922. No dongle ([all cards](#supported-cards)).
 - **Works like a Mac.** iPhone, iPad and Mac see your PC in the AirDrop sheet. Send with Explorer's right-click **Send with nekodrop** or the Windows Share sheet.
 - **Contacts Only** (experimental) with your Apple ID or a Mac's certificate ([how](docs/USAGE.md#contacts-only-apple-id-experimental)).
+- **Android Share** (experimental, `v2.3.3`+): send and receive with OnePlus / OPPO / Xiaomi / vivo / Honor / realme phones that support the Mutual Transmission Alliance on the same Wi-Fi, and relay files between iPhone and Android ([how](docs/USAGE.md#experimental-features)).
 - **Install and forget.** One installer, auto-updates, a self-healing service and a one-click restore back to Windows Wi-Fi.
 
 ## Speed
