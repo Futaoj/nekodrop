@@ -40,7 +40,7 @@ function Initialize-Toolchain {
     if (-not (Test-Path $umdfInclude)) {
       throw "UMDF $UmdfVersion headers not found: install the WDK or unpack its NuGet package (README)."
     }
-    $include += $umdfInclude
+    $include += @($umdfInclude, "$wdk\Include\$wdkVersion\shared")
     $lib += "$wdk\Lib\wdf\umdf\x64\$UmdfVersion"
   }
 
