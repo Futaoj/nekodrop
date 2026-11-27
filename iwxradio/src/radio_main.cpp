@@ -560,6 +560,7 @@ int main(int argc, char **argv) {
     uint64_t awdl_unicast_data = 0, yield_tick_us = 0;
     sta_yield::Controller yield;
     bool yield_announced = false;
+    bool yield_he_noted = false;
     int8_t awdl_dbm = -127;
     /* Discovery timing (#4: ~99 s to see the iPhone, #11: ~2 min): one line
      * when the first AWDL frame, the first MIF and the first frame addressed
@@ -1548,8 +1549,15 @@ int main(int argc, char **argv) {
           /* The station failed, rejoined or could not pause meanwhile. */
           if (yield.paused && !sta->yielded()) yield.resumed(t);
           const auto &sp = dev.sta_params();
+          /* Not on a Wi-Fi 6 (HE) link: resuming one after a pause timed out
+           * LINK_CONFIG and the firmware asserted (#96, AX203, v2.3.4). The
+           * pause was only proven on Wi-Fi 5 links (#95). */
+          if (sp.he && !yield_he_noted) {
+            yield_he_noted = true;
+            log_line("station pause for AWDL transfers: skipped on this Wi-Fi 6 link (#96)");
+          }
           const bool eligible = sta->state() == WifiStation::State::Running && sp.channel &&
-                                sp.channel != dev.channel();
+                                sp.channel != dev.channel() && !sp.he;
           sta_yield::Action a = yield.tick(t, awdl_unicast_data, eligible);
           if (a == sta_yield::Action::Pause && !sta->set_yield(true)) {
             yield.refused(t);

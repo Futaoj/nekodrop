@@ -561,7 +561,19 @@ Step 'sign the register-proxy driver with a certificate made and trusted on this
     $signtool = Join-Path $Target 'shell\signtool.exe'
     foreach ($file in 'winawdl_regproxy.cat', 'winawdl_regproxy.dll') {
       $full = Join-Path $driver $file
-      $r = Set-AuthenticodeSignature -FilePath $full -Certificate $cert -HashAlgorithm SHA256
+      # 25H2 can also throw outright ("hash algorithm not supported" on the
+      # .dll, #73 on 2.3.1): treat that like a non-Valid status, not an abort.
+      try {
+        $r = Set-AuthenticodeSignature -FilePath $full -Certificate $cert -HashAlgorithm SHA256 -ErrorAction Stop
+      } catch {
+        $r = [pscustomobject]@{ Status = 'Exception'; StatusMessage = $_.Exception.Message }
+        # The failed cmdlet may have left the file half written: start again from the package's copy.
+        $orig = Join-Path $Source "driver\$file"
+        if ((Test-Path -LiteralPath $orig) -and
+            ([IO.Path]::GetFullPath($orig) -ne [IO.Path]::GetFullPath($full))) {
+          Copy-Item -LiteralPath $orig -Destination $full -Force
+        }
+      }
       if ($r.Status -ne 'Valid') {
         # Windows 11 25H2 (build 26200.9974+) can fail Set-AuthenticodeSignature on
         # .cat files with 0xC0000225 even though signtool.exe signs them cleanly (#73).

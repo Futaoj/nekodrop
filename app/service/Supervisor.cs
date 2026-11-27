@@ -582,6 +582,16 @@ public sealed class Supervisor : IDisposable
         {
             lock (_lock) _detail = text[17..];
         }
+        else if (text.StartsWith("station: ", StringComparison.Ordinal) && text.Contains("TKIP", StringComparison.Ordinal) &&
+                 text.Contains("not supported", StringComparison.Ordinal))
+        {
+            // #97: a WPA/WPA2 mixed router (TKIP group key) failed every 5 s
+            // with no word in the Wi-Fi window; say why and what to change.
+            lock (_lock)
+                _wifiError = "this router uses WPA/TKIP encryption, which nekodrop's own Wi-Fi does not support: " +
+                             "set the router to WPA2-AES (CCMP) or WPA3, or use On-Demand mode";
+            Publish();
+        }
         else if (text.StartsWith("firmware/DMA error:", StringComparison.Ordinal))
         {
             // BE200 #53 reports this as soon as it says ready. AX201 #50

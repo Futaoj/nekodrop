@@ -6,6 +6,22 @@
 
 ---
 
+## v2.3.5 (Preview / 预览版)
+
+### 中文
+
+- **AX203 开了「实验性 Wi-Fi 6 上网」后发不出文件、网卡反复重启**：v2.3.4 里 AX203 传文件时会暂时让出上网连接，但在 Wi-Fi 6 连接上，传完恢复连接时固件会卡死并崩溃，导致发给 iPhone / iPad 失败（"no answer"）、网卡反复重启。这一版在 Wi-Fi 6 连接上不再让出连接，Wi-Fi 5 连接保持 v2.3.4 的做法不变。只影响开了实验性 Wi-Fi 6 的 AX203（[#96](https://github.com/zheznanohana/nekodrop/issues/96)，感谢 [@Aobing-code](https://github.com/Aobing-code) 的测试和日志）。只经过编译和自测，还没有真机验证。
+- **路由器用 WPA/TKIP 加密时连不上 Wi-Fi 却没有任何提示**：nekodrop 自己连 Wi-Fi 只支持 WPA2-AES（CCMP）和 WPA3。以前遇到 WPA/WPA2 混合模式（TKIP）的路由器只会每 5 秒重试一次，现在 Wi-Fi 窗口会直接说明原因：把路由器加密方式改成 WPA2-AES 或 WPA3，或者改用按需模式（[#97](https://github.com/zheznanohana/nekodrop/issues/97)）。
+- **安装时驱动签名直接报错中止**：部分 Windows 11 25H2 上，PowerShell 给驱动 DLL 签名时会直接抛出「不支持哈希算法」异常，跳过了 v2.2.12 加的 signtool 备用签名，安装中止。现在这种异常也会改用 signtool 重签（[#73](https://github.com/zheznanohana/nekodrop/issues/73)，感谢 [@CarzyBilly](https://github.com/CarzyBilly) 的定位和补丁）。
+
+### English
+
+- **AX203 with Experimental Wi-Fi 6 on: sending fails and the radio keeps restarting:** v2.3.4 lets the AX203 step away from its Wi-Fi connection during a transfer, but on a Wi-Fi 6 link the firmware hung and crashed when the link came back, so sending to an iPhone / iPad failed ("no answer") and the radio restarted over and over. On a Wi-Fi 6 link the connection is no longer paused; Wi-Fi 5 links keep the v2.3.4 behavior. Only affects AX203 with experimental Wi-Fi 6 on ([#96](https://github.com/zheznanohana/nekodrop/issues/96), thanks to [@Aobing-code](https://github.com/Aobing-code) for testing and logs). Build and self-tests only, not yet verified on hardware.
+- **No message when a WPA/TKIP router can't be joined:** nekodrop's own Wi-Fi supports only WPA2-AES (CCMP) and WPA3. A WPA/WPA2 mixed-mode (TKIP) router used to be retried every 5 s in silence; the Wi-Fi window now says why and what to do: set the router to WPA2-AES or WPA3, or use On-Demand mode ([#97](https://github.com/zheznanohana/nekodrop/issues/97)).
+- **Install aborted while signing the driver:** On some Windows 11 25H2 builds PowerShell throws "hash algorithm not supported" when signing the driver DLL, which skipped the signtool fallback added in v2.2.12 and stopped the install. That exception now also falls back to signtool ([#73](https://github.com/zheznanohana/nekodrop/issues/73), thanks to [@CarzyBilly](https://github.com/CarzyBilly) for the diagnosis and patch).
+
+---
+
 ## v2.3.4 (Preview / 预览版)
 
 ### 中文
