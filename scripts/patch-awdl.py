@@ -610,18 +610,21 @@ patch_once(
 )
 patch_once(
     owl_rx_c,
-    'nekodrop (#30, #66): iOS/iPadOS/macOS TX A-MSDU',
+    'nekodrop (#30, #66, v2): iOS/iPadOS/macOS TX A-MSDU',
     '\tif (!awdl_valid_llc_header(frame))\n'
     '\t\treturn RX_UNEXPECTED_FORMAT;\n',
-    '\t/* nekodrop (#30, #66): iOS/iPadOS/macOS TX A-MSDU bridge converter wraps\n'
+    '\t/* nekodrop (#30, #66, v2): iOS/iPadOS/macOS TX A-MSDU bridge converter wraps\n'
     '\t * inner 802.3 AWDL length (< 0x0600) in an extra 8-byte RFC 1042 LLC/SNAP\n'
-    '\t * header (aa aa 03 00 00 00 <be16 len>) ahead of aa aa 03 00 17 f2 00 08. */\n'
+    '\t * header (aa aa 03 00 00 00 <be16 len>) ahead of AWDL\'s aa aa 03 00 17 f2 08 00\n'
+    '\t * (PID 0x0800, big-endian). v1 compared the PID as 00 08 and never matched, so\n'
+    '\t * these frames were still dropped. Unwrap any inner LLC/SNAP header; the\n'
+    '\t * check below then logs what is really inside if it is not AWDL\'s. */\n'
     '\tif (buf_len(frame) >= 16 && buf_data(frame)[4] == 0x00 && buf_data(frame)[5] == 0x00 &&\n'
     '\t    buf_data(frame)[0] == 0xaa && buf_data(frame)[1] == 0xaa &&\n'
     '\t    buf_data(frame)[2] == 0x03 && buf_data(frame)[3] == 0x00) {\n'
     '\t\tuint16_t inner_len = ((uint16_t) buf_data(frame)[6] << 8) | buf_data(frame)[7];\n'
     '\t\tif (inner_len >= 16 && inner_len < 0x0600 && 8 + (int) inner_len <= buf_len(frame) &&\n'
-    '\t\t    !memcmp(buf_data(frame) + 8, "\\xaa\\xaa\\x03\\x00\\x17\\xf2\\x00\\x08", 8)) {\n'
+    '\t\t    !memcmp(buf_data(frame) + 8, "\\xaa\\xaa\\x03", 3)) {\n'
     '\t\t\tbuf_strip(frame, 8);\n'
     '\t\t\tif (buf_len(frame) > (int) inner_len)\n'
     '\t\t\t\tbuf_take(frame, buf_len(frame) - (int) inner_len);\n'
