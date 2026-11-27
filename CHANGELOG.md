@@ -6,10 +6,11 @@
 
 ---
 
-## Unreleased / 未发布
+## v2.3.5 (Preview / 预览版)
 
 ### 中文
 
+- **AX203 开了「实验性 Wi-Fi 6 上网」后发不出文件、网卡反复重启**：v2.3.4 里 AX203 传文件时会暂时让出上网连接，但在 Wi-Fi 6 连接上，传完恢复连接时固件会卡死并崩溃，导致发给 iPhone / iPad 失败（"no answer"）、网卡反复重启。这一版在 Wi-Fi 6 连接上不再让出连接，Wi-Fi 5 连接保持 v2.3.4 的做法不变。只影响开了实验性 Wi-Fi 6 的 AX203（[#96](https://github.com/zheznanohana/nekodrop/issues/96)，感谢 [@Aobing-code](https://github.com/Aobing-code) 的测试和日志）。只经过编译和自测，还没有真机验证。
 - **LocalSend 互传（实验性，默认关闭）**：*设置 → 互传与中继* 新增「启用 LocalSend 互传」。打开后可以和装了 [LocalSend](https://localsend.org/) 的设备互传（安卓、iPhone、Mac、Windows、Linux），需要在同一个 Wi-Fi 或局域网里。设备出现在雷达上，收发和 AirDrop 用同一套界面。按 LocalSend 协议 v2 实现，使用 TCP / UDP 53317 端口，安装时会加上局域网防火墙规则。暂不支持对方要求 PIN 码。
 - **中继改为按规则转发**：以前是「苹果发来的转给附近随便一台安卓，反过来也一样」，附近有多台设备时会转错，而且中继一开就会自动接收任何人的文件。现在在 *设置 → 互传与中继* 里添加规则，每条写明「谁发来的文件，转给谁」，iPhone、安卓、LocalSend 可以任意组合，也能一次添加双向规则。上方的流向图画出每台设备的文件转到哪里。只有规则里的来源会被自动接收并转发，其他人发来的照常接收。**从旧版升级后需要先添加规则，中继才会工作。**
 - **路由器是 WPA/WPA2 混合加密时连不上网**（[#97](https://github.com/zheznanohana/nekodrop/issues/97)）：这类路由器的广播组密钥用 TKIP，nekodrop 自己的上网连接不支持，以前会每 5 秒重试一次，电脑一直断网。现在会说明原因（WPA/WPA2 混合、仅 TKIP、WEP 或旧版 WPA），把网卡还给 Windows 继续上网，AirDrop 改为按需使用；这个网络会被记住一周，期间不再尝试接管。把路由器改成 WPA2-PSK（AES）后，在托盘菜单重新选一次「同时」模式即可。
@@ -18,6 +19,7 @@
 
 ### English
 
+- **AX203 with Experimental Wi-Fi 6 on: sending fails and the radio keeps restarting:** v2.3.4 lets the AX203 step away from its Wi-Fi connection during a transfer, but on a Wi-Fi 6 link the firmware hung and crashed when the link came back, so sending to an iPhone / iPad failed ("no answer") and the radio restarted over and over. On a Wi-Fi 6 link the connection is no longer paused; Wi-Fi 5 links keep the v2.3.4 behavior. Only affects AX203 with experimental Wi-Fi 6 on ([#96](https://github.com/zheznanohana/nekodrop/issues/96), thanks to [@Aobing-code](https://github.com/Aobing-code) for testing and logs). Build and self-tests only, not yet verified on hardware.
 - **LocalSend (experimental, off by default):** A new **Enable LocalSend** switch in *Settings → Sharing & relay*. Send to and receive from devices running [LocalSend](https://localsend.org/) (Android, iPhone, Mac, Windows, Linux) on the same Wi-Fi or local network; they show up on the radar and use the same send and receive screens as AirDrop. Implements LocalSend protocol v2 on TCP / UDP port 53317, with local-network firewall rules added by the installer. Receivers that ask for a PIN are not supported yet.
 - **Relay now works by rules:** It used to pass Apple files to whichever Android device was nearby and the other way round, which picked the wrong device when several were around, and it accepted anyone's files while on. Now you add rules in *Settings → Sharing & relay*, each saying whose files go on to which device, in any mix of iPhone, Android and LocalSend, optionally both ways at once; a diagram shows where each device's files go. Only the sources in the rules are accepted and passed on automatically; anyone else's files are received as usual. **After upgrading, add rules before the relay works.**
 - **No internet on a WPA/WPA2 mixed router** ([#97](https://github.com/zheznanohana/nekodrop/issues/97)): such routers keep TKIP as their broadcast (group) cipher, which nekodrop's own connection does not support; it used to retry every 5 s and leave the PC offline. Now it says why (WPA/WPA2 mixed, TKIP only, WEP or the original WPA), gives the card back to Windows so the PC stays online, and runs AirDrop on demand; the network is remembered for a week. After setting the router to WPA2-PSK (AES), choose Concurrent again in the tray menu.
