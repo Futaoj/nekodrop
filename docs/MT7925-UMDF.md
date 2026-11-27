@@ -22,7 +22,7 @@ Windows 的 ACPI 事件跟踪记录了 PnP 绑定期间同一设备的三次 `_A
 在 Windows x64 的仓库根目录运行。使用 Visual Studio C++ Build Tools、Windows SDK、CMake 和 Ninja。构建代理还需要 WDK 的 UMDF 2.31 头文件和库。
 
 ```powershell
-.\scripts\fetch-deps.ps1
+.\scripts\fetch-deps.ps1 -E138Validation
 .\scripts\build-mt7925-fast.ps1
 .\driver\regproxy\build.ps1
 .\scripts\build-e138-sar-probe.ps1
