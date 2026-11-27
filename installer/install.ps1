@@ -547,6 +547,15 @@ public static extern bool MoveFileEx(string from, string to, int flags);
 
 'Driver'
 $driver = Join-Path $Target 'driver'
+# signtool.exe with its output captured. Under $ErrorActionPreference = 'Stop',
+# Windows PowerShell 5.1 turns a native program's stderr line into a terminating
+# error when it is redirected (2>&1), so a verify that merely fails would abort
+# the install (#73); here a failure is an exit code to look at.
+function Invoke-SignTool([string]$Tool, [string[]]$Arguments) {
+  $ErrorActionPreference = 'Continue'
+  $output = @(& $Tool @Arguments 2>&1 | ForEach-Object { "$_" })
+  [pscustomobject]@{ Exit = $LASTEXITCODE; Output = ($output -join ' ').Trim() }
+}
 Step 'sign the register-proxy driver with a certificate made and trusted on this PC' {
   foreach ($store in $TrustStores) {
     Get-ChildItem "Cert:\LocalMachine\$store" | Where-Object { $_.Subject -eq $CertSubject } | Remove-Item
@@ -561,29 +570,47 @@ Step 'sign the register-proxy driver with a certificate made and trusted on this
     $signtool = Join-Path $Target 'shell\signtool.exe'
     foreach ($file in 'winawdl_regproxy.cat', 'winawdl_regproxy.dll') {
       $full = Join-Path $driver $file
-      $r = Set-AuthenticodeSignature -FilePath $full -Certificate $cert -HashAlgorithm SHA256
-      if ($r.Status -ne 'Valid') {
-        # Windows 11 25H2 (build 26200.9974+) can fail Set-AuthenticodeSignature on
-        # .cat files with 0xC0000225 even though signtool.exe signs them cleanly (#73).
-        if (Test-Path -LiteralPath $signtool) {
-          "    Set-AuthenticodeSignature failed on $file ($($r.Status): $($r.StatusMessage)); retrying with signtool.exe"
-          $stOut = & $signtool sign /fd SHA256 /s My /sha1 $cert.Thumbprint $full 2>&1
-          $stExit = $LASTEXITCODE
-          $v = Get-AuthenticodeSignature -FilePath $full
-          $stVerified = $false
-          if ($stExit -eq 0) {
-            if ($v.Status -eq 'Valid') {
-              $stVerified = $true
-            } else {
-              & $signtool verify /pa /q $full 2>&1 | Out-Null
-              if ($LASTEXITCODE -eq 0) { $stVerified = $true }
-            }
-          }
-          if ($stVerified) { continue }
-          $stMsg = ($stOut | Out-String).Trim()
-          throw "$file could not be signed: Set-AuthenticodeSignature=$($r.StatusMessage); signtool (exit $stExit, verify=$($v.Status)): $stMsg"
+      # Windows 11 25H2 (build 26200.9974+) makes Set-AuthenticodeSignature fail in
+      # two ways although signtool.exe signs the same files cleanly (#73): it returns
+      # UnknownError 0xC0000225 for the .cat, and for the .dll it throws ("hash
+      # algorithm not supported") instead of returning. Both go to signtool.
+      $primary = $null
+      try {
+        $r = Set-AuthenticodeSignature -FilePath $full -Certificate $cert -HashAlgorithm SHA256 -ErrorAction Stop
+        if ($r.Status -ne 'Valid' -or $r.SignerCertificate.Thumbprint -ne $cert.Thumbprint) {
+          $primary = "$($r.Status): $($r.StatusMessage)"
         }
-        throw "$file could not be signed: $($r.StatusMessage)"
+      } catch {
+        $primary = $_.Exception.Message
+      }
+      if ($null -eq $primary) { continue }
+      if (-not (Test-Path -LiteralPath $signtool)) { throw "$file could not be signed: $primary" }
+      "    Set-AuthenticodeSignature failed on $file ($primary); retrying with signtool.exe"
+      # The failed cmdlet may have left the file half-written: sign the shipped copy.
+      $original = Join-Path $Source "driver\$file"
+      if ((Test-Path -LiteralPath $original) -and (Resolve-Path -LiteralPath $original).Path -ne (Resolve-Path -LiteralPath $full).Path) {
+        Copy-Item -LiteralPath $original -Destination $full -Force
+      }
+      $st = Invoke-SignTool $signtool @('sign', '/fd', 'SHA256', '/s', 'My', '/sha1', $cert.Thumbprint, $full)
+      $stExit = $st.Exit
+      $v = Get-AuthenticodeSignature -FilePath $full
+      $stVerified = $false
+      if ($stExit -eq 0 -and $v.SignerCertificate.Thumbprint -eq $cert.Thumbprint) {
+        if ($v.Status -eq 'Valid') {
+          $stVerified = $true
+        } else {
+          if ((Invoke-SignTool $signtool @('verify', '/pa', '/q', $full)).Exit -eq 0) { $stVerified = $true }
+        }
+      }
+      if ($stVerified) { "    $file signed with signtool.exe and verified"; continue }
+      throw "$file could not be signed: Set-AuthenticodeSignature=$primary; signtool (exit $stExit, verify=$($v.Status)): $($st.Output)"
+    }
+    # For the log: the DLL and INF match the signed catalog (pnputil checks it too).
+    if (Test-Path -LiteralPath $signtool) {
+      $cat = Join-Path $driver 'winawdl_regproxy.cat'
+      foreach ($file in 'winawdl_regproxy.dll', 'winawdl_regproxy.inf') {
+        $check = Invoke-SignTool $signtool @('verify', '/pa', '/q', '/c', $cat, (Join-Path $driver $file))
+        if ($check.Exit -ne 0) { "    note: signtool could not match $file to the catalog (exit $($check.Exit))" }
       }
     }
     # The Explorer menu's sparse package (Windows 11 first level), same certificate.
