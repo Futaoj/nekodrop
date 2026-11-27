@@ -7,6 +7,7 @@
 #   winlibs MinGW   GCC for awdld
 #   WDK (NuGet)     UMDF headers and tools, only when no WDK is installed
 # Pinned to the versions nekodrop is tested with; the downloads are checked by SHA-256.
+param([switch]$E138Validation)
 $ErrorActionPreference = 'Stop'
 $tp = Join-Path (Split-Path $PSScriptRoot -Parent) 'third_party'
 New-Item -ItemType Directory -Force $tp | Out-Null
@@ -68,17 +69,19 @@ foreach ($f in @(@('mediatek/WIFI_MT7922_patch_mcu_1_1_hdr.bin', '5356256C3A361C
 }
 "linux-firmware (MT7922/MT7921) @ $($lfw.Substring(0, 7))"
 
-# MT7925 E138105B board firmware. The native radio verifies this pair before START.
-$mt7925Revision = '5a3f625f2e9d9f70134af2340d82af3f19ae6891'
-$mt7925Fw = Join-Path $tp 'linux-firmware-mt7925'
-New-Item -ItemType Directory -Force $mt7925Fw | Out-Null
-foreach ($f in @(@('mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin', '67FF85F1A39D1A100A51ABD8E2A26EDD2F198D7052514B6B8981948B231E5016'),
-                 @('mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin', '329C0E27F780550789E4EBA47452731B1723F69F9E67F525D0E50BF3CD2978AC'),
-                 @('LICENSES/LICENCE.mediatek', 'A90D3F66704D85889945FEC5525EA77622549DA83ACED1AAC99828383F8F1805'))) {
-  Get-File "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/$mt7925Revision/$($f[0])" `
-           (Join-Path $mt7925Fw (Split-Path $f[0] -Leaf)) $f[1]
+if ($E138Validation) {
+  # MT7925 E138105B board firmware. The native radio verifies this pair before START.
+  $mt7925Revision = '5a3f625f2e9d9f70134af2340d82af3f19ae6891'
+  $mt7925Fw = Join-Path $tp 'linux-firmware-mt7925'
+  New-Item -ItemType Directory -Force $mt7925Fw | Out-Null
+  foreach ($f in @(@('mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin', '67FF85F1A39D1A100A51ABD8E2A26EDD2F198D7052514B6B8981948B231E5016'),
+                   @('mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin', '329C0E27F780550789E4EBA47452731B1723F69F9E67F525D0E50BF3CD2978AC'),
+                   @('LICENSES/LICENCE.mediatek', 'A90D3F66704D85889945FEC5525EA77622549DA83ACED1AAC99828383F8F1805'))) {
+    Get-File "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/$mt7925Revision/$($f[0])" `
+             (Join-Path $mt7925Fw (Split-Path $f[0] -Leaf)) $f[1]
+  }
+  "linux-firmware (MT7925) @ $($mt7925Revision.Substring(0, 7))"
 }
-"linux-firmware (MT7925) @ $($mt7925Revision.Substring(0, 7))"
 
 # Experimental Intel BE200 (GL/FM) API 100 firmware (embeds PNVM in TLV 74).
 $be200Fw = Join-Path $tp 'linux-firmware-iwlwifi-be200'
