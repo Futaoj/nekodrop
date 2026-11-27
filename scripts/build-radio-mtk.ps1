@@ -23,14 +23,17 @@ foreach ($f in 'WIFI_MT7925_PATCH_MCU_1_1_hdr.bin', 'WIFI_RAM_CODE_MT7925_1_1.bi
 $build = Join-Path $repo 'build\mtkradio'
 & $tools.CMake -S $src -B $build -G Ninja `
   "-DCMAKE_MAKE_PROGRAM=$($tools.Ninja)" `
+  "-DCMAKE_C_COMPILER=$($tools.Cl)" `
   "-DCMAKE_CXX_COMPILER=$($tools.Cl)" `
   -DCMAKE_BUILD_TYPE=Release
 if ($LASTEXITCODE -ne 0) { throw "cmake configure failed ($LASTEXITCODE)" }
 
 & $tools.CMake --build $build
 if ($LASTEXITCODE -ne 0) { throw "build failed ($LASTEXITCODE)" }
-& (Join-Path $build 'ccmp_test.exe')
-if ($LASTEXITCODE -ne 0) { throw "ccmp_test failed ($LASTEXITCODE)" }
+
+$ctest = Join-Path (Split-Path $tools.CMake -Parent) 'ctest.exe'
+& $ctest --test-dir $build --output-on-failure
+if ($LASTEXITCODE -ne 0) { throw "mtkradio ctest failed ($LASTEXITCODE)" }
 
 $fwDest = Join-Path $build 'firmware'
 New-Item -ItemType Directory -Force $fwDest | Out-Null
@@ -41,6 +44,15 @@ foreach ($f in 'WIFI_MT7922_patch_mcu_1_1_hdr.bin', 'WIFI_RAM_CODE_MT7922_1.bin'
                'WIFI_MT7925_PATCH_MCU_1_1_hdr.bin', 'WIFI_RAM_CODE_MT7925_1_1.bin') {
   if (-not (Test-Path (Join-Path $fwDest $f))) { throw "expected firmware missing in $fwDest`: $f" }
 }
+& (Join-Path $build 'mtk_patch_test.exe') `
+  (Join-Path $fwDest 'WIFI_MT7922_patch_mcu_1_1_hdr.bin') `
+  (Join-Path $fwDest 'WIFI_MT7961_patch_mcu_1_2_hdr.bin') `
+  (Join-Path $fwDest 'WIFI_MT7925_PATCH_MCU_1_1_hdr.bin')
+if ($LASTEXITCODE -ne 0) { throw "mtk_patch_test firmware check failed ($LASTEXITCODE)" }
+& (Join-Path $build 'mt7925_transport_test.exe') `
+  (Join-Path $fwDest 'WIFI_MT7925_PATCH_MCU_1_1_hdr.bin') `
+  (Join-Path $fwDest 'WIFI_RAM_CODE_MT7925_1_1.bin')
+if ($LASTEXITCODE -ne 0) { throw "mt7925_transport_test firmware check failed ($LASTEXITCODE)" }
 
 $exe = Join-Path $build 'nekodrop-radio-mtk.exe'
 if (-not (Test-Path $exe)) { throw "expected binary missing: $exe" }
