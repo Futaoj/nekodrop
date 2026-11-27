@@ -1,9 +1,15 @@
 # SPDX-License-Identifier: GPL-2.0-only
-"""Unit tests for nekodrop's link extraction and media capabilities patches."""
+"""Unit tests for nekodrop's patched AirDrop engine."""
+import gzip
+import io
 import json
 import os
 import sys
+import tempfile
 import unittest
+import zlib
+from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 if len(sys.argv) < 2:
@@ -62,6 +68,80 @@ class LinkExtractionTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(path))
         os.unlink(path)
         self.assertEqual(transfer.save_preview_icon({'FileIcon': b'not an image at all!'}, 't2'), '')
+
+
+class UploadCompletionTests(unittest.TestCase):
+    archive = b''.join(transfer.cpio.write_archive([('./sample.txt', 0o100644, 5, 0, [b'hello'])]))
+
+    def test_complete_codec_and_cpio_across_split_writes(self):
+        compressed = zlib.compress(self.archive)
+        bodies = [gzip.compress(self.archive),
+                  len(compressed).to_bytes(4, 'big') + compressed,
+                  (0x80000000 | len(self.archive)).to_bytes(4, 'big') + self.archive]
+        for body in bodies:
+            with self.subTest(prefix=body[:4]):
+                watched = transfer.EndWatchingFile(io.BytesIO(), lambda: None)
+                for byte in body[:-1]:
+                    watched.write(bytes([byte]))
+                    self.assertFalse(watched.at_stream_end)
+                watched.write(body[-1:])
+                self.assertTrue(watched.at_stream_end)
+                watched.write(b'\x80')
+                self.assertFalse(watched.at_stream_end)
+
+    def receive(self, payload, tail, dest):
+        # End-of-input models a silent, still-connected sender. Record which
+        # timeout is active at the exact read that stalled.
+        deadline = transfer.ReadDeadline()
+        request = mock.Mock()
+        request.timeout = deadline.idle_seconds
+        request.settimeout.side_effect = lambda value: setattr(request, 'timeout', value)
+
+        class Input(io.BytesIO):
+            def read(self, size):
+                data = super().read(size)
+                if not data:
+                    self.stalled_timeout = request.timeout
+                    raise TimeoutError(request.timeout)
+                return data
+
+            def readline(self, size):
+                data = super().readline(size)
+                if not data.endswith(b'\n'):
+                    raise TimeoutError(request.timeout)
+                return data
+
+        body = b'%x\r\n' % len(payload) + payload + b'\r\n' + tail
+        handler = SimpleNamespace(request=request, rfile=Input(body), headers={},
+                                  server=SimpleNamespace(settings=SimpleNamespace(dest=dest)))
+        with tempfile.TemporaryFile() as raw:
+            result = receiver.Handler.receive_archive(handler, raw, transfer.ReceiveBudget(dest, 30),
+                                                      ('chunked', None), deadline, 'test', None)
+        if not result[1]:
+            self.assertEqual(handler.rfile.stalled_timeout, transfer.COMPLETE_CHUNK_WAIT_SECONDS)
+        self.assertEqual(request.timeout, deadline.idle_seconds)
+        return result
+
+    def test_missing_and_explicit_terminators_store_identical_files(self):
+        for tail in (b'', b'0\r\n\r\n'):
+            with self.subTest(tail=tail), tempfile.TemporaryDirectory() as dest:
+                names, ended = self.receive(gzip.compress(self.archive), tail, dest)
+                self.assertEqual(names, ['sample.txt'])
+                self.assertEqual(ended, bool(tail))
+                self.assertEqual((Path(dest) / names[0]).read_bytes(), b'hello')
+
+    def test_silent_partial_header_and_invalid_archives_do_not_publish(self):
+        full = gzip.compress(self.archive)
+        stored = (0x80000000 | len(self.archive)).to_bytes(4, 'big') + self.archive
+        cut_block = zlib.compress(self.archive)[:-1]
+        incomplete_then_stored = len(cut_block).to_bytes(4, 'big') + cut_block + stored
+        for payload, tail in ((full, b'0'), (incomplete_then_stored, b''), (full[:-4], b''), (full + b'x', b''),
+                              (stored + b'\x80', b''), (gzip.compress(self.archive[:32]), b'')):
+            with self.subTest(length=len(payload), tail=tail), tempfile.TemporaryDirectory() as dest:
+                with self.assertRaises(TimeoutError) as stall:
+                    self.receive(payload, tail, dest)
+                self.assertEqual(stall.exception.args, (transfer.READ_IDLE_TIMEOUT_SECONDS,))
+                self.assertEqual(list(Path(dest).iterdir()), [])
 
 
 class MediaCapabilitiesTests(unittest.TestCase):

@@ -441,7 +441,7 @@ _identity = pathlib.Path(__file__).resolve().parent.parent / 'installer' / 'neko
 (pathlib.Path(sys.argv[1]) / 'nekodrop_identity.py').write_bytes(_identity.read_bytes())
 
 
-def _hook(name, pairs, mark):
+def _hook(name, pairs, mark, label='Apple ID identity (Contacts Only)'):
     path = pathlib.Path(sys.argv[1]) / name
     text = path.read_text(encoding='utf-8')
     if mark in text:
@@ -451,7 +451,7 @@ def _hook(name, pairs, mark):
             sys.exit(f'{name}: {old[:60]!r} moved; update patch-engine.py')
         text = text.replace(old, new, 1)
     path.write_text(text, encoding='utf-8')
-    print(f'{name}: Apple ID identity (Contacts Only)')
+    print(f'{name}: {label}')
 
 
 _hook('receiver.py', [
@@ -1272,6 +1272,67 @@ if 'AsyncBufferedWriter' not in text:
         text = text.replace(old, new, 1)
     receiver_path.write_text(text, encoding='utf-8')
     print('receiver.py: 4 MiB temp buffer + AsyncBufferedWriter')
+
+# iPhones can omit the zero HTTP chunk after a complete DVZip upload. Apply
+# the short wait only to the first byte of the next chunk header.
+_hook('transfer.py', [
+    ('END_MARKER_WAIT_SECONDS = 0.5', 'COMPLETE_CHUNK_WAIT_SECONDS = 0.04\nEND_MARKER_WAIT_SECONDS = 0.5'),
+    ('            plain = self._inflater.decompress(data, IO_CHUNK_BYTES)',
+     '''            plain = self._inflater.decompress(data, IO_CHUNK_BYTES)
+            if self._inflater.unused_data:
+                raise ValueError('trailing data in compressed stream')'''),
+    ('                self._inflate(bytes(piece))',
+     '''                self._inflate(bytes(piece))
+                if not self._block_left and not self._inflater.eof:
+                    raise ValueError('truncated compressed block')'''),
+    ('def _read_chunked(rfile, writer, deadline):',
+     'def _read_chunked(rfile, writer, deadline, read_chunk_start):'),
+    ('        line = rfile.readline(MAX_CHUNK_LINE_BYTES + 1)\n'
+     '        deadline.between_chunks = False',
+     '''        first = read_chunk_start(1)
+        deadline.between_chunks = False
+        line = first if first in (b'', b'\\n') else first + rfile.readline(MAX_CHUNK_LINE_BYTES)'''),
+    ('                      deadline=None):\n    """Stream one framed request body',
+     '                      deadline=None, read_chunk_start=None):\n    """Stream one framed request body'),
+    ('        _read_chunked(rfile, writer, deadline)\n',
+     '        _read_chunked(rfile, writer, deadline, read_chunk_start or rfile.read)\n'),
+    ('        return self._block_left == 0 and self._scanner.complete',
+     '''        return (self._scanner.complete and not self._held and self._block_left == 0
+                and (self._inflater is None or
+                     (self._inflater.eof and not self._inflater.unused_data)))'''),
+    ('        self._complete = False\n        self._wire = 0',
+     '        self._complete = False\n        self.at_stream_end = False\n        self._wire = 0'),
+    ('        if not self._complete and self._watcher.feed(data):\n            self._complete = True',
+     '''        self.at_stream_end = not self._complete and self._watcher.feed(data)
+        if self.at_stream_end:
+            self._complete = True'''),
+], 'self.at_stream_end =', 'recognize complete DVZip streams between HTTP chunks')
+
+_hook('receiver.py', [
+    ('            deadline.idle_seconds = transfer.END_MARKER_WAIT_SECONDS\n'
+     '            self.request.settimeout(deadline.idle_seconds)',
+     '''            if plan[0] != 'chunked':
+                deadline.idle_seconds = transfer.END_MARKER_WAIT_SECONDS
+                self.request.settimeout(deadline.idle_seconds)'''),
+    ('        sink = transfer.AsyncBufferedWriter(raw)\n        try:',
+     '''        sink = transfer.AsyncBufferedWriter(raw)
+        watched = transfer.EndWatchingFile(sink, expect_little_more, on_progress)
+
+        def read_chunk_start(size):
+            if not watched.at_stream_end:
+                return self.rfile.read(size)
+            self.request.settimeout(transfer.COMPLETE_CHUNK_WAIT_SECONDS)
+            try:
+                return self.rfile.read(size)
+            finally:
+                self.request.settimeout(deadline.idle_seconds)
+
+        try:'''),
+    ('                    transfer.EndWatchingFile(sink, expect_little_more, on_progress),\n'
+     '                    budget.byte_limit, disk=dest, plan=plan, deadline=deadline)',
+     '                    watched, budget.byte_limit, disk=dest, plan=plan, deadline=deadline,\n'
+     '                    read_chunk_start=read_chunk_start)'),
+], 'def read_chunk_start(size):', 'finish verified uploads with a missing HTTP end marker')
 
 # engine.py: keep the Bluetooth beacon running while receiving.  An Apple
 # device's AirDrop list shows only peers whose Bluetooth advertisement it has
