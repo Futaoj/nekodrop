@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  简体中文 · <a href="README.en.md">English</a> · <a href="../../releases/latest">下载</a> · <a href="docs/COMPATIBILITY.zh-CN.md">网卡兼容性</a> · <a href="CHANGELOG.md">更新日志</a>
+  简体中文 · <a href="README.en.md">English</a> · <a href="../../releases/latest">下载</a> · <a href="docs/ARCHITECTURE.zh-CN.md">全景架构</a> · <a href="docs/COMPATIBILITY.zh-CN.md">网卡兼容性</a> · <a href="CHANGELOG.md">更新日志</a>
 </p>
 
 <p align="center">
@@ -45,69 +45,7 @@
 - **实验性高阶性能开关（默认关闭）**：Intel 并发模式可选开启 **Wi-Fi 6 (HE) 上网** 与 **数据面加速**（64 槽位 STA RX Block Ack 重排 + 双线程异步 TAP 写入器，多线程下行实测 156–200 Mbps）。
 - **装上就不用管**：单安装包、内置自动更新（稳定版 / 预览版通道可选）、服务异常自动恢复，高风险实验特性全部默认关闭。
 
-## 全景架构
-
-```mermaid
-flowchart TB
-    subgraph Peers["周边设备 · 三大生态"]
-        direction LR
-        Apple["🍎 Apple 设备<br/>iPhone · iPad · Mac<br/>原生 AirDrop（AWDL + BLE）"]
-        Android["🤖 安卓互传联盟机型<br/>一加 · OPPO · 小米 · vivo · 荣耀 · 真我<br/>MTA v2（BLE + 局域网）"]
-        LocalSend["🌐 全平台设备<br/>Android · iOS · macOS · Win · Linux<br/>LocalSend v2（mTLS 局域网）"]
-    end
-
-    subgraph Client["用户会话 · nekodrop.exe（C# WPF）"]
-        direction TB
-        UI["交互入口<br/>雷达主界面 · 系统托盘 · 右键菜单 · Windows 共享 · 通知预览"]
-        Relay["🔀 跨生态规则中继<br/>单向 / 双向按设备规则自动转发 · 可视化流向图"]
-        subgraph Engines["多协议传输引擎"]
-            direction LR
-            AirDropEng["AirDrop 引擎（Python）<br/>mDNS · HTTPS 8771 · BLE 唤醒<br/>appleid（Rust，仅限联系人）"]
-            MtaEng["互传联盟引擎（C#）<br/>BLE 发现与脱敏诊断<br/>ZIP_STORED 流式解包"]
-            LsEng["LocalSend 引擎（C#）<br/>UDP / TCP 53317<br/>双向 TLS 客户端证书"]
-        end
-        UI --- Relay
-        Relay <--> AirDropEng
-        Relay <--> MtaEng
-        Relay <--> LsEng
-    end
-
-    subgraph NetSvc["虚拟网络接口与系统服务"]
-        direction LR
-        Awdl["awdl0 虚拟网卡<br/>Wintun 8 MiB IPv6<br/>awdld（OWL 协议栈）"]
-        Lan["局域网通道<br/>nekodrop TAP 虚拟网卡<br/>或 Windows 原生 Wi-Fi / 有线"]
-        Svc["NekoDropService（SYSTEM）<br/>CardCatalog 网卡目录 · 并发 / 按需切换<br/>Wi-Fi 管理 · 看门狗自动恢复"]
-    end
-
-    subgraph Driver["纯用户态无线电驱动与硬件层（零内核驱动）"]
-        direction TB
-        Radio["4 套用户态无线电后端（SHM / 命名管道）<br/>Intel: iwxradio（AX200~AX211 / AX203 / BE200）<br/>MediaTek: mtradio（MT7902）· mtkradio（MT7922 / MT7921）<br/>Realtek: devourer（RTL8852CE）"]
-        Proxy["UMDF 寄存器代理驱动（winawdl_regproxy）<br/>用户态 DMA · 无需关闭安全启动 / 测试签名"]
-        Nic["💻 笔记本 / 主板自带 PCIe / CNVi 无线网卡<br/>MAC 0: AWDL（ch 6 / 44 / 149）· MAC 1: 路由器 Wi-Fi 上网"]
-        Radio --> Proxy --> Nic
-    end
-
-    Apple <-->|"AWDL + BLE"| AirDropEng
-    Android <-->|"BLE + LAN"| MtaEng
-    LocalSend <-->|"LAN 53317"| LsEng
-
-    AirDropEng <--> Awdl
-    MtaEng <--> Lan
-    LsEng <--> Lan
-    UI -.->|"JSON 命名管道"| Svc
-
-    Awdl <-->|"4+4 MiB 无锁 SHM"| Radio
-    Lan <-->|"以太网桥接（并发模式）"| Radio
-    Svc -->|"接管 / 还卡 / 监管"| Radio
-
-    style Peers fill:transparent,stroke:#8b5cf6,stroke-width:1.5px
-    style Client fill:transparent,stroke:#3b82f6,stroke-width:1.5px
-    style Engines fill:transparent,stroke:#60a5fa,stroke-dasharray: 4 3
-    style NetSvc fill:transparent,stroke:#10b981,stroke-width:1.5px
-    style Driver fill:transparent,stroke:#f59e0b,stroke-width:1.5px
-```
-
-<sub>更深入的底层设计、DMA 与协议细节见 [工作原理](docs/HOW-IT-WORKS.zh-CN.md) 与 [底层架构设计](docs/DESIGN.md)。</sub>
+> 想了解客户端、三大协议引擎、跨生态中继、虚拟网卡与 4 套用户态无线电驱动的协作方式，见 **[全景架构图](docs/ARCHITECTURE.zh-CN.md)** 与 [工作原理](docs/HOW-IT-WORKS.zh-CN.md)。
 
 ## 速度
 
@@ -164,7 +102,7 @@ Intel AX201、Windows 11、`v2.2.9+`，开启高吞吐模式（HE80 + MTU 1500�
 | [常见问题](docs/SUPPORT.zh-CN.md) | 常见故障排查、一键回退、生成脱敏诊断报告 |
 | [网卡兼容性](docs/COMPATIBILITY.zh-CN.md) · [网卡状态](docs/CARDS.zh-CN.md) | 全部 PCI ID、固件、单卡说明与适配新网卡指南 |
 | [可发送文件类型](docs/FILE-TYPES.zh-CN.md) | 文件/文件夹发送规则与限制说明 |
-| [工作原理](docs/HOW-IT-WORKS.zh-CN.md) | 底层架构、开发进度与从源码构建 |
+| [全景架构](docs/ARCHITECTURE.zh-CN.md) · [工作原理](docs/HOW-IT-WORKS.zh-CN.md) | 四层全景架构图、底层原理、开发进度与从源码构建 |
 | [致谢与代码来源](docs/CREDITS.zh-CN.md) | 贡献者名单、上游开源代码来源与许可证 |
 | [隐私说明](docs/PRIVACY.md) | nekodrop 会连接哪些地址、发送什么数据 |
 | [更新日志](CHANGELOG.md) | 稳定版与预览版完整变更记录 |
