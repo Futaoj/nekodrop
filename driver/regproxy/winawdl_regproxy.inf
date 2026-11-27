@@ -52,6 +52,9 @@ HKR,,Icon,,"-5"
 %DeviceDescMtk792x% = RegProxy, PCI\VEN_14C3&DEV_7961
 %DeviceDescMtk792x% = RegProxy, PCI\VEN_14C3&DEV_0608
 
+; E138 validation target (board and revision specific).
+%DeviceDescMtk7925% = RegProxyE138, PCI\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00
+
 [SourceDisksNames]
 1 = %DiskName%
 
@@ -102,6 +105,27 @@ UmdfRegisterAccessMode    = RegisterAccessUsingUserModeMapping
 UmdfLibraryVersion = 2.31.0
 ServiceBinary      = %13%\winawdl_regproxy.dll
 
+; The E138 also reads two ACPI methods through a file-backed lower target.
+[RegProxyE138.NT]
+CopyFiles = RegProxy_Copy
+Include   = WUDFRD.inf
+Needs     = WUDFRD.NT
+
+[RegProxyE138.NT.HW]
+Include = WUDFRD.inf
+Needs   = WUDFRD.NT.HW
+AddReg  = RegProxy_HwAddReg
+
+[RegProxyE138.NT.Services]
+AddService = WUDFRd, 0x000001fa, WUDFRD_ServiceInstall
+
+[RegProxyE138.NT.Wdf]
+UmdfService               = winawdl_regproxy, RegProxy_Umdf
+UmdfServiceOrder          = winawdl_regproxy
+UmdfDirectHardwareAccess  = AllowDirectHardwareAccess
+UmdfRegisterAccessMode    = RegisterAccessUsingUserModeMapping
+UmdfDispatcher            = FileHandle
+
 [Strings]
 Provider   = "winairdrop project"
 ClassName  = "winawdl user-space radios"
@@ -109,5 +133,6 @@ DeviceDesc = "Intel Wi-Fi user-space register proxy (nekodrop)"
 DeviceDescRtl = "Realtek RTL8852CE user-space register proxy (nekodrop)"
 DeviceDescMtk = "MediaTek MT7902 user-space register proxy (nekodrop)"
 DeviceDescMtk792x = "MediaTek MT7921/MT7922 user-space register proxy (nekodrop)"
+DeviceDescMtk7925 = "MediaTek MT7925 E138 user-space register proxy (nekodrop)"
 DiskName   = "winawdl register proxy"
 WudfRdDisplayName = "Windows Driver Foundation - User-mode Driver Framework Reflector"

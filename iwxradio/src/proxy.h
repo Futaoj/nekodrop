@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+struct _REGPROXY_MT7925_SAR;
+
 struct RegOp {
   uint32_t offset;
   uint32_t value;
@@ -23,6 +25,10 @@ public:
 
   /* Opens the one card bound to the proxy. `error` says why not. */
   bool open(std::string &error);
+#ifndef NEKO_KERNEL
+  bool open(std::string &error, const std::wstring &instance_id);
+  bool read_mt7925_sar(_REGPROXY_MT7925_SAR &reply, std::string &error) const;
+#endif
   bool is_open() const { return _handle != nullptr; }
 
   uint16_t vendor() const { return _vendor; }

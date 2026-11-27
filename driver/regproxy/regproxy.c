@@ -9,6 +9,8 @@
 #include "regproxy_ioctl.h"
 #include <ntstatus.h>
 #include <wdf.h>
+#include <devpkey.h>
+#include <acpiioct.h>
 
 /* Select the largest memory BAR of at least 8 KiB: Intel's 22000/AX210 CSR
  * window is 8 KiB (BAR0), while Realtek RTL8852CE/BE use a 1 MiB BAR2 and
@@ -225,6 +227,124 @@ static NTSTATUS handle_set_close_ops(DEVICE_CONTEXT *ctx, WDFREQUEST request,
   return STATUS_SUCCESS;
 }
 
+static NTSTATUS check_e138(WDFDEVICE dev) {
+  static const WCHAR hardware_id[] = L"PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00";
+  WCHAR ids[512];
+  WDF_DEVICE_PROPERTY_DATA prop;
+  WDF_DEVICE_PROPERTY_DATA_INIT(&prop, &DEVPKEY_Device_HardwareIds);
+  DEVPROPTYPE type;
+  ULONG length;
+  NTSTATUS st = WdfDeviceQueryPropertyEx(dev, &prop, sizeof(ids), ids, &length, &type);
+  if (!NT_SUCCESS(st)) return st;
+  /* PCI lists the most specific (including revision) hardware ID first. */
+  if (type != DEVPROP_TYPE_STRING_LIST || length < sizeof(hardware_id) ||
+      _wcsnicmp(ids, hardware_id, ARRAYSIZE(hardware_id)) != 0)
+    return STATUS_NOT_SUPPORTED;
+  return STATUS_SUCCESS;
+}
+
+static void read_acpi_method(HANDLE file, const char name[4], REGPROXY_SAR_METHOD *out) {
+  ACPI_EVAL_INPUT_BUFFER_V1 input = {0};
+  input.Signature = ACPI_EVAL_INPUT_BUFFER_SIGNATURE_V1;
+  CopyMemory(input.MethodName, name, 4);
+  HANDLE event = CreateEventW(NULL, TRUE, FALSE, NULL);
+  if (!event) {
+    out->status = (unsigned int)STATUS_INSUFFICIENT_RESOURCES;
+    return;
+  }
+  OVERLAPPED io = {0};
+  /* WDF owns the target's I/O completion port. Signal only our event. */
+  io.hEvent = (HANDLE)((ULONG_PTR)event | 1);
+  DWORD bytes = 0;
+  BOOL ok = DeviceIoControl(file, IOCTL_ACPI_EVAL_METHOD, &input, sizeof(input),
+                            out->data, sizeof(out->data), &bytes, &io);
+  DWORD error = ok ? ERROR_SUCCESS : GetLastError();
+  NTSTATUS st = STATUS_SUCCESS;
+  if (error == ERROR_IO_PENDING) {
+    DWORD wait = WaitForSingleObject(event, 2000);
+    if (wait != WAIT_OBJECT_0) {
+      CancelIoEx(file, &io);
+      /* Cancellation can race completion. Keep all buffers live until done. */
+      GetOverlappedResult(file, &io, &bytes, TRUE);
+      st = wait == WAIT_TIMEOUT ? STATUS_IO_TIMEOUT : STATUS_UNSUCCESSFUL;
+    } else {
+      ok = GetOverlappedResult(file, &io, &bytes, FALSE);
+      error = ok ? ERROR_SUCCESS : GetLastError();
+    }
+  }
+  if (st == STATUS_SUCCESS && error != ERROR_SUCCESS) {
+    /* Win32 error mappings are many-to-one. Only the actual I/O completion
+     * can establish STATUS_OBJECT_NAME_NOT_FOUND, never GetLastError alone. */
+    st = (NTSTATUS)io.Internal;
+    if (NT_SUCCESS(st) || (st == STATUS_OBJECT_NAME_NOT_FOUND && error != ERROR_FILE_NOT_FOUND))
+      st = STATUS_UNSUCCESSFUL;
+  }
+  CloseHandle(event);
+  if (bytes > sizeof(out->data) || (st == STATUS_OBJECT_NAME_NOT_FOUND && bytes != 0))
+    st = STATUS_DEVICE_DATA_ERROR;
+  if (st != STATUS_SUCCESS) {
+    SecureZeroMemory(out->data, sizeof(out->data));
+    bytes = 0;
+  }
+  out->status = (unsigned int)st;
+  out->size = (unsigned int)bytes;
+}
+
+static NTSTATUS check_acpi_address(WDFDEVICE dev, HANDLE file) {
+  WDF_DEVICE_PROPERTY_DATA prop;
+  WDF_DEVICE_PROPERTY_DATA_INIT(&prop, &DEVPKEY_Device_Address);
+  DEVPROPTYPE type;
+  ULONG bytes, address;
+  NTSTATUS st = WdfDeviceQueryPropertyEx(dev, &prop, sizeof(address), &address, &bytes, &type);
+  if (!NT_SUCCESS(st)) return st;
+  if (type != DEVPROP_TYPE_UINT32 || bytes != sizeof(address)) return STATUS_DEVICE_DATA_ERROR;
+
+  REGPROXY_SAR_METHOD result = {0};
+  read_acpi_method(file, "_ADR", &result);
+  if (result.status != STATUS_SUCCESS) return (NTSTATUS)result.status;
+  PACPI_EVAL_OUTPUT_BUFFER_V1 output = (PACPI_EVAL_OUTPUT_BUFFER_V1)result.data;
+  if (result.size != sizeof(*output) || output->Length != result.size ||
+      output->Signature != ACPI_EVAL_OUTPUT_BUFFER_SIGNATURE_V1 || output->Count != 1 ||
+      output->Argument[0].Type != ACPI_METHOD_ARGUMENT_INTEGER ||
+      output->Argument[0].DataLength != sizeof(ULONG) || output->Argument[0].Argument != address)
+    return STATUS_DEVICE_DATA_ERROR;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS handle_e138_sar(WDFDEVICE dev, WDFREQUEST request, size_t in_len, size_t *written) {
+  if (in_len) return STATUS_INVALID_PARAMETER;
+  NTSTATUS st = check_e138(dev);
+  if (!NT_SUCCESS(st)) return st;
+  REGPROXY_MT7925_SAR *reply;
+  st = WdfRequestRetrieveOutputBuffer(request, sizeof(*reply), (PVOID *)&reply, NULL);
+  if (!NT_SUCCESS(st)) return st;
+  ZeroMemory(reply, sizeof(*reply));
+  reply->version = REGPROXY_MT7925_SAR_VERSION;
+  /* Driver-created requests need a file-backed lower target on this UMDF
+   * stack. An open failure is a transport error, never an absent AML method. */
+  WDFIOTARGET target;
+  st = WdfIoTargetCreate(dev, WDF_NO_OBJECT_ATTRIBUTES, &target);
+  if (!NT_SUCCESS(st)) return st;
+  WDF_IO_TARGET_OPEN_PARAMS params;
+  WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_FILE(&params, NULL);
+  st = WdfIoTargetOpen(target, &params);
+  if (!NT_SUCCESS(st)) {
+    WdfObjectDelete(target);
+    return st;
+  }
+  HANDLE file = WdfIoTargetWdmGetTargetFileHandle(target);
+  st = file ? check_acpi_address(dev, file) : STATUS_INVALID_HANDLE;
+  if (NT_SUCCESS(st)) {
+    read_acpi_method(file, "MTDS", &reply->mtds);
+    read_acpi_method(file, "MTGS", &reply->mtgs);
+  }
+  WdfIoTargetClose(target);
+  WdfObjectDelete(target);
+  if (!NT_SUCCESS(st)) return st;
+  *written = sizeof(*reply);
+  return STATUS_SUCCESS;
+}
+
 VOID RpEvtIoDeviceControl(WDFQUEUE Queue, WDFREQUEST Request, size_t OutLen,
                           size_t InLen, ULONG Code) {
   UNREFERENCED_PARAMETER(OutLen);
@@ -233,7 +353,9 @@ VOID RpEvtIoDeviceControl(WDFQUEUE Queue, WDFREQUEST Request, size_t OutLen,
   NTSTATUS st = STATUS_INVALID_DEVICE_REQUEST;
   size_t written = 0;
 
-  if (Code == IOCTL_REGPROXY_GET_INFO)
+  if (Code == IOCTL_REGPROXY_MT7925_READ_SAR)
+    st = handle_e138_sar(dev, Request, InLen, &written);
+  else if (Code == IOCTL_REGPROXY_GET_INFO)
     st = handle_get_info(dev, ctx, Request, &written);
   else if (Code == IOCTL_REGPROXY_BATCH)
     st = handle_batch(dev, ctx, Request, &written);

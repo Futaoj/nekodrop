@@ -1,5 +1,6 @@
 # Compiles winawdl_regproxy.dll and validates its INF.
 # Signing and installation are separate, deliberate steps.
+param([switch]$OmitE138)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\..\..\scripts\toolchain.ps1"
 
@@ -23,7 +24,18 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "regproxy.c failed to compile ($LASTEXITCODE)" }
 } finally { Pop-Location }
 
-Copy-Item "$PSScriptRoot\winawdl_regproxy.inf" $out -Force
+$sourceInf = "$PSScriptRoot\winawdl_regproxy.inf"
+if ($OmitE138) {
+  # Do not register the validation model or its dedicated INF sections in a release package.
+  $e138Section = $false
+  $lines = foreach ($line in [IO.File]::ReadAllLines($sourceInf)) {
+    if ($line.StartsWith('[')) { $e138Section = $line.StartsWith('[RegProxyE138.') }
+    if (-not $e138Section -and $line -notmatch '^(%DeviceDescMtk7925%|DeviceDescMtk7925)\s*=|^; (E138 validation target|The E138 also reads)') { $line }
+  }
+  [IO.File]::WriteAllLines("$out\winawdl_regproxy.inf", [string[]]$lines, [Text.Encoding]::Unicode)
+} else {
+  Copy-Item -LiteralPath $sourceInf -Destination $out -Force
+}
 # Basic validation (/v), not the Windows Driver rules (/w): those require the
 # reflector through Include/Needs WUDFRD.inf, which leaves the device without a
 # function driver on Windows 10 (#18). The package is signed on the user's PC,

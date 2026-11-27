@@ -20,6 +20,24 @@ DEFINE_GUID(GUID_DEVINTERFACE_WINAWDL_REGPROXY, 0xb6ac5fd6, 0x9648, 0x4794,
 #define IOCTL_REGPROXY_SET_CLOSE_OPS                                           \
   CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
+/* Read-only ACPI board constraints on the E138. Method names are fixed in
+ * the driver; callers cannot submit AML names, arguments, or register ops. */
+#define IOCTL_REGPROXY_MT7925_READ_SAR                                         \
+  CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_BUFFERED, FILE_READ_ACCESS)
+#define REGPROXY_MT7925_SAR_VERSION 1u
+
+typedef struct _REGPROXY_SAR_METHOD {
+  unsigned int status;
+  unsigned int size;
+  unsigned char data[1024];
+} REGPROXY_SAR_METHOD;
+
+typedef struct _REGPROXY_MT7925_SAR {
+  unsigned int version;
+  REGPROXY_SAR_METHOD mtds;
+  REGPROXY_SAR_METHOD mtgs;
+} REGPROXY_MT7925_SAR;
+
 enum {
   REGPROXY_READ = 0,
   REGPROXY_WRITE = 1,
