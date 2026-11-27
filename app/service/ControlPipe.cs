@@ -76,6 +76,7 @@ public sealed class ControlPipe(Supervisor sup)
                     case "data-plane-accel": sup.SetDataPlaneAccel((bool?)cmd?["on"] ?? false); break;
                     case "station-wifi6": sup.SetStationWifi6((bool?)cmd?["on"] ?? false); break;
                     case "keep-windows-mac": sup.SetKeepWindowsMac((bool?)cmd?["on"] ?? true); break;
+                    case "e138-indoor-cn-channel": sup.SetE138IndoorCnChannel((int?)cmd?["channel"] ?? 0); break;
                     case "quick-release-ondemand": sup.SetQuickReleaseOnDemand((bool?)cmd?["on"] ?? false); break;
                     case "cards":
                     {

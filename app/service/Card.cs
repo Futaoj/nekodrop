@@ -37,9 +37,9 @@ public static class Card
     /// The card to drive: a card the catalog recognizes by its ID first; when
     /// there is none, the card the user matched to a model by hand.
     /// </summary>
-    public static Info? Find()
+    public static Info? Find(string? instanceId = null)
     {
-        Info? manual = null;
+        Info? manual = null, automatic = null, e138 = null;
         var (manualHw, manualModel) = Manual;
         var set = SetupDiGetClassDevsW(IntPtr.Zero, "PCI", IntPtr.Zero, DIGCF_PRESENT | DIGCF_ALLCLASSES);
         if (set == new IntPtr(-1)) return null;
@@ -49,6 +49,7 @@ public static class Card
             for (uint i = 0; SetupDiEnumDeviceInfo(set, i, ref data); i++)
             {
                 var id = InstanceId(set, ref data);
+                if (instanceId is not null && !id.Equals(instanceId, StringComparison.OrdinalIgnoreCase)) continue;
                 // Only active profiles: cards listed for diagnostics only are never taken.
                 var profile = CardCatalog.MatchActive(id);
                 if (profile is null && manual is null && manualHw.Length > 0 &&
@@ -59,11 +60,19 @@ public static class Card
                     continue;
                 }
                 if (profile is null) continue;
-                return Describe(set, ref data, id, profile);
+                if (profile.Backend == RadioBackendKind.Mt7925)
+                {
+                    if (manualModel == "mt7925" && profile.HardwareId.Equals(manualHw, StringComparison.OrdinalIgnoreCase))
+                        return Describe(set, ref data, id, profile);
+                    // Keep the usual adapter when the PC also has an E138 validation board.
+                    e138 ??= Describe(set, ref data, id, profile);
+                }
+                else if (manualModel != "mt7925") return Describe(set, ref data, id, profile);
+                else automatic ??= Describe(set, ref data, id, profile);
             }
         }
         finally { SetupDiDestroyDeviceInfoList(set); }
-        return manual;
+        return automatic ?? manual ?? e138;
     }
 
     static Info Describe(IntPtr set, ref SP_DEVINFO_DATA data, string id, AdapterProfile profile)
@@ -99,7 +108,8 @@ public static class Card
             {
                 var id = InstanceId(set, ref data);
                 if (!CardCatalog.TryParsePciId(id, out var v, out var d) || !vendors.Contains(v)) continue;
-                var recognized = CardCatalog.MatchActive(id) is not null;
+                var profile = CardCatalog.MatchActive(id);
+                var recognized = profile is not null;
                 var className = RegistryProperty(set, ref data, SPDRP_CLASS);
                 // Network adapters, the proxy's own class, or a card with no driver yet;
                 // never the vendors' Ethernet chips' audio, USB or bridge functions.
@@ -107,7 +117,7 @@ public static class Card
                     !className.Equals("WinAwdlRadio", StringComparison.OrdinalIgnoreCase)) continue;
                 var name = RegistryProperty(set, ref data, SPDRP_FRIENDLYNAME);
                 if (name.Length == 0) name = RegistryProperty(set, ref data, SPDRP_DEVICEDESC);
-                list.Add(new Candidate($"PCI\\VEN_{v}&DEV_{d}", name, recognized));
+                list.Add(new Candidate(profile?.HardwareId ?? $"PCI\\VEN_{v}&DEV_{d}", name, recognized));
             }
         }
         finally { SetupDiDestroyDeviceInfoList(set); }
@@ -142,18 +152,19 @@ public static class Card
     /// </summary>
     public static void Bind(string hardwareId, string inf, TimeSpan? timeout = null)
     {
-        var call = Task.Run(() =>
-        {
-            if (!UpdateDriverForPlugAndPlayDevicesW(IntPtr.Zero, hardwareId, inf, INSTALLFLAG_FORCE, out _))
-            {
-                var w = new Win32Exception(Marshal.GetLastWin32Error());
-                throw new CardBindException(
-                    $"binding {Path.GetFileName(inf)} failed: 0x{w.NativeErrorCode:x8} {w.Message}", w);
-            }
-        });
+        var call = Task.Run(() => BindNow(hardwareId, inf));
         if (!call.Wait(timeout ?? TimeSpan.FromSeconds(45)))
             return; /* still running; the device state decides */
         if (call.Exception is { } e) throw e.InnerException ?? e;
+    }
+
+    // The dedicated MT7925 path waits for completion before attempting rollback or another bind.
+    internal static bool BindNow(string hardwareId, string inf)
+    {
+        if (UpdateDriverForPlugAndPlayDevicesW(IntPtr.Zero, hardwareId, inf, INSTALLFLAG_FORCE, out var reboot))
+            return reboot;
+        var w = new Win32Exception(Marshal.GetLastWin32Error());
+        throw new CardBindException($"binding {Path.GetFileName(inf)} failed: 0x{w.NativeErrorCode:x8} {w.Message}", w);
     }
 
     static string InstanceId(IntPtr set, ref SP_DEVINFO_DATA data)

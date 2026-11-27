@@ -18,6 +18,7 @@ public partial class SettingsWindow : Window
     static App A => App.Instance;
     string _folder;
     readonly List<string> _trusted;
+    readonly bool _e138;
     string _releasesUrl = Updater.ReleasesPage;
 
     public SettingsWindow(string tab = "general")
@@ -64,7 +65,16 @@ public partial class SettingsWindow : Window
         ModeOff.IsChecked = mode == "off";
         FastUnlockBox.IsChecked = (bool?)A.Service.Last?["fastUnlock"] ?? false;
         CoexPlanBox.IsChecked = (bool?)A.Service.Last?["coexPlan"] ?? false;
+        _e138 = A.Service.Last?["e138IndoorCnChannel"] is not null;
         HighThroughputBox.IsChecked = (bool?)A.Service.Last?["highThroughput"] ?? false;
+        if (_e138)
+        {
+            HighThroughputBox.Visibility = Visibility.Collapsed;
+            E138ChannelBox.Visibility = Visibility.Visible;
+            E138ChannelBox.SelectedIndex = ((int?)A.Service.Last?["e138IndoorCnChannel"]) switch { 44 => 1, 149 => 2, _ => 0 };
+            ThroughputTitle.Text = L.T("set.e138Fast");
+            ThroughputDescription.Text = L.T("set.e138Fast.short");
+        }
         DataPlaneAccelBox.IsChecked = (bool?)A.Service.Last?["dataPlaneAccel"] ?? false;
         StationWifi6Box.IsChecked = (bool?)A.Service.Last?["stationWifi6"] ?? false;
         KeepMacBox.IsChecked = (bool?)A.Service.Last?["keepWindowsMac"] ?? true;
@@ -218,6 +228,9 @@ public partial class SettingsWindow : Window
             var tag = (bool?)c?["recognized"] == true ? L.T("set.card.recognized") : L.T("set.card.unrecognized");
             CardBox.Items.Add(new Item(hw, $"{(name == "" ? hw : name)} ({hw.Replace("PCI\\", "")}) · {tag}"));
         }
+        if (CardBox.Items.Count > 1 && CardBox.Items.Cast<Item>().Any(c =>
+                c.Key.StartsWith(@"PCI\VEN_14C3&DEV_7925&SUBSYS_", StringComparison.OrdinalIgnoreCase)))
+            CardManual.Visibility = Visibility.Visible;
         ModelBox.Items.Clear();
         foreach (var m in o["models"]?.AsArray() ?? [])
             ModelBox.Items.Add(new Item((string?)m?["key"] ?? "", (string?)m?["name"] ?? "", (string?)m?["vendor"] ?? ""));
@@ -375,7 +388,13 @@ public partial class SettingsWindow : Window
         var coexPlan = CoexPlanBox.IsChecked == true;
         if (coexPlan != ((bool?)A.Service.Last?["coexPlan"] ?? false)) A.Service.SetCoexPlan(coexPlan);
         var highThroughput = HighThroughputBox.IsChecked == true;
-        if (highThroughput != ((bool?)A.Service.Last?["highThroughput"] ?? false)) A.Service.SetHighThroughput(highThroughput);
+        if (_e138)
+        {
+            int channel = E138ChannelBox.SelectedIndex switch { 1 => 44, 2 => 149, _ => 0 };
+            if (channel != ((int?)A.Service.Last?["e138IndoorCnChannel"] ?? 0)) A.Service.SetE138IndoorCnChannel(channel);
+        }
+        else if (highThroughput != ((bool?)A.Service.Last?["highThroughput"] ?? false))
+            A.Service.SetHighThroughput(highThroughput);
         var dataPlaneAccel = DataPlaneAccelBox.IsChecked == true;
         if (dataPlaneAccel != ((bool?)A.Service.Last?["dataPlaneAccel"] ?? false)) A.Service.SetDataPlaneAccel(dataPlaneAccel);
         var keepMac = KeepMacBox.IsChecked == true;

@@ -15,7 +15,7 @@ namespace NekoDrop.Service;
 /// 0.1.37: AX200 and AX211 data, nobody worse; Intel only, not on the kernel path)</param>
 public sealed record RadioStart(AdapterProfile Profile, int Channel, bool Kernel, string Country, string? StaConf,
                                 bool Aggregate, bool FastUnlock, bool CoexPlan = false, bool BtCoexBalanced = false,
-                                bool HighThroughput = false)
+                                bool HighThroughput = false, string? InstanceId = null, string? StopFile = null)
 {
     /// <summary>20 MHz on 2.4 GHz, 80 MHz on 5 GHz.</summary>
     public int Width => Channel <= 14 ? 20 : 80;
@@ -46,6 +46,7 @@ public static class RadioBackends
         new DevourerRadioBackend(),
         new Mt76RadioBackend(),
         new MtkRadioBackend(),
+        new Mt7925RadioBackend(),
     }.ToDictionary(b => b.Kind);
 
     public static IRadioBackend Get(RadioBackendKind kind) =>
@@ -117,6 +118,28 @@ public sealed class Mt76RadioBackend : IRadioBackend
         if (s.Country is { Length: 2 } c && c != "ZZ" && c != "00") args.AddRange(["--country", c]);
         if (s.StaConf is not null) args.AddRange(["--sta-config", s.StaConf]);
         return args;
+    }
+}
+
+/// <summary>MT7925 E138 validation build, using the standard UMDF register proxy.</summary>
+public sealed class Mt7925RadioBackend : IRadioBackend
+{
+    public RadioBackendKind Kind => RadioBackendKind.Mt7925;
+    public string ExeName => "nekodrop-radio-mt7925-fast.exe";
+    public static string FirmwareDirectory => Path.Combine(AppContext.BaseDirectory, "radio", "firmware", "mt7925");
+    public static bool IsFastChannel(int channel) => channel is 44 or 149;
+    public static bool IsHostReady(string line, int channel) => IsFastChannel(channel) &&
+        line.Contains($"MT7925 fast host ready | ch{channel}/80 SHM |", StringComparison.Ordinal);
+
+    public IReadOnlyList<string> BuildArgs(RadioStart s)
+    {
+        string prefix = s.Profile.HardwareId + "\\";
+        if (!IsFastChannel(s.Channel) || s.Country != "CN" || s.Kernel || s.StopFile is null ||
+            !Path.IsPathFullyQualified(s.StopFile) || s.InstanceId is null || s.InstanceId.Length <= prefix.Length ||
+            !s.InstanceId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("E138 needs the exact PCI instance, an indoor CN channel and an absolute stop file");
+        return ["--e138-fast", "--indoor", "--country", "CN", "--channel", s.Channel.ToString(),
+                "--firmware", FirmwareDirectory, "--instance", s.InstanceId, "--stop-file", s.StopFile];
     }
 }
 

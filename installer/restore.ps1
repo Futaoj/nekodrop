@@ -43,11 +43,15 @@ function Get-PciVendorDevice([string]$InstanceId) {
   $id = "$InstanceId".Trim().ToUpper()
   if ($id -match '^PCI\\VEN_([0-9A-F]{4})&DEV_([0-9A-F]{4})(?:&|\\|$)') {
     $v = $Matches[1]; $d = $Matches[2]
+    $hardware = "PCI\VEN_$v&DEV_$d"
+    if ($id -match '^PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00(?:\\|$)') {
+      $hardware = 'PCI\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00'
+    }
     return [pscustomobject]@{
       VendorId   = $v
       DeviceId   = $d
       Key        = ($v + ':' + $d)
-      HardwareId = "PCI\VEN_$v&DEV_$d"
+      HardwareId = $hardware
     }
   }
   return $null
@@ -236,6 +240,10 @@ if ($SelfTest) {
     [pscustomobject]@{ DriverName = $pub; OriginalName = $orig; ProviderName = $prov; ClassName = $cls; DriverVersion = $ver }
   }
 
+  $e138 = 'PCI\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00'
+  if ((Get-PciVendorDevice ($e138 + '\1')).HardwareId -ne $e138) { $fail += 'E138 restore ID was broadened' }
+  if ((Get-PciVendorDevice ($e138.Replace('REV_00', 'REV_01') + '\2')).HardwareId -eq $e138) { $fail += 'other MT7925 revision selected' }
+
   # 1. Supported Intel IDs and strict 4-hex boundary check.
   if ($SupportedIntelIds.Count -ne 16) { $fail += "expected 16 Intel IDs, got $($SupportedIntelIds.Count)" }
   foreach ($d in $SupportedIntelIds) {
@@ -411,6 +419,10 @@ if (-not $dev) {
   '   no Wi-Fi card nekodrop knows or holds is present; nothing to give back'
 } else {
   $pci = Get-PciVendorDevice $dev.InstanceId
+  if ($pci.HardwareId -like '*&SUBSYS_E138105B&REV_00' -and
+      @($presentPci | Where-Object { (Get-PciVendorDevice $_.InstanceId).HardwareId -eq $pci.HardwareId }).Count -ne 1) {
+    throw 'Multiple E138 adapters match the driver update; restore each instance in Device Manager.'
+  }
   $profile = Get-VendorProfile $pci.VendorId
   "   card: $($dev.InstanceId), now $($dev.FriendlyName) ($($dev.Status))"
   # Vendor package: the one nekodrop recorded before taking the card (validated

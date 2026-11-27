@@ -152,6 +152,9 @@ function Test-KnownWifiId([string]$InstanceId) {
 # (10EC:C852) and MediaTek MT7902/MT7921/MT7922, with a 4-hex boundary so a
 # 5-digit device ID (e.g. DEV_43F01 or DEV_C8520) can never match.
 $SupportedCardPattern = '^PCI\\(?:VEN_8086&DEV_(' + ($SupportedIntelIds -join '|') + ')|VEN_8086&DEV_272B|VEN_10EC&DEV_C852|VEN_14C3&DEV_(7902|7961|0608|7922|0616))(?=&|\\|$)'
+function Test-E138ValidationTarget([string]$InstanceId, [bool]$Enabled) {
+  return $Enabled -and $InstanceId -match '^PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00\\[^\\]+$'
+}
 $NoSupportedCard = 'This PC has no Wi-Fi card nekodrop supports (Intel AX201, AX200, AX203, AX210, AX211, AX411, 9560 on Qu, BE200 (experimental), Realtek RTL8852CE 10EC:C852, or MediaTek MT7902/MT7921/MT7922); nekodrop cannot run here.'
 $ReportUrl = 'https://github.com/zheznanohana/nekodrop/blob/main/installer/report.ps1'
 $IssuesUrl = 'https://github.com/zheznanohana/nekodrop/issues'
@@ -238,6 +241,10 @@ if ($SelfTest) {
     [pscustomobject]@{ PnPDeviceID = $pnpId; NdisPhysicalMedium = $medium; PhysicalMediaType = $mediaType }
   }
   function Ascii([string]$s) { return ("$s" -cmatch '^[\x09\x0A\x0D\x20-\x7E]*$') }
+
+  $e138 = 'PCI\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00\4&1'
+  if ((Test-E138ValidationTarget $e138 $false) -or !(Test-E138ValidationTarget $e138 $true) -or
+      (Test-E138ValidationTarget ($e138.Replace('REV_00', 'REV_01')) $true)) { $fail += 'E138 validation admission failed' }
 
   # The supported-card check: exact 16 Intel IDs + Realtek RTL8852CE + MediaTek MT7902/MT7921/MT7922 with 4-hex boundary.
   if ($SupportedCardPattern -ne '^PCI\\(?:VEN_8086&DEV_(43F0|A0F0|02F0|06F0|34F0|3DF0|4DF0|2723|2725|7A70|7AF0|51F0|51F1|54F0|7F70|7740)|VEN_8086&DEV_272B|VEN_10EC&DEV_C852|VEN_14C3&DEV_(7902|7961|0608|7922|0616))(?=&|\\|$)') {
@@ -452,7 +459,14 @@ function Step($what, [scriptblock]$do) {
 }
 
 $pnpAll = @(Get-PnpDevice -PresentOnly)
-if (-not ($pnpAll | Where-Object { $_.InstanceId -match $SupportedCardPattern })) {
+# The regular package does not carry the validation radio. Even in a validation
+# package, only this full board ID is eligible and Settings starts with it off.
+$proxyInf = Join-Path $Source 'driver\winawdl_regproxy.inf'
+$e138Validation = (Test-Path -LiteralPath (Join-Path $Source 'radio\nekodrop-radio-mt7925-fast.exe') -PathType Leaf) -and
+                  (Test-Path -LiteralPath $proxyInf -PathType Leaf) -and
+                  (Select-String -LiteralPath $proxyInf -Pattern '^%DeviceDescMtk7925%\s*=' -Quiet)
+if (-not ($pnpAll | Where-Object { $_.InstanceId -match $SupportedCardPattern -or
+    (Test-E138ValidationTarget $_.InstanceId $e138Validation) })) {
   # Naming the cards is a courtesy: if reading the adapters or formatting
   # fails, the refusal is still made, with the earlier one-line message.
   $refusal = $null

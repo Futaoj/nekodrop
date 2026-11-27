@@ -15,6 +15,8 @@ public enum RadioBackendKind
     /// AWDL monitor/inject and a 5 GHz Wi-Fi station on the host (experimental Concurrent mode,
     /// time-sharing the card's single channel with AWDL).</summary>
     MtkRadio,
+    /// <summary>The E138 board's Connac3 user-mode radio over the standard register proxy.</summary>
+    Mt7925,
 }
 
 /// <summary>
@@ -58,10 +60,11 @@ public sealed record AdapterCapabilities(bool SupportsConcurrentWifi, bool Suppo
 public sealed record AdapterProfile(string VendorId, string DeviceId, string VendorName, string FamilyName,
                                     RadioBackendKind Backend, AdapterCapabilities Capabilities,
                                     string ProxyInfName, string ProxyService, string ProxyProvider,
-                                    string[] VendorProviderPatterns, bool Active, string? RadioFamily = null)
+                                    string[] VendorProviderPatterns, bool Active, string? RadioFamily = null,
+                                    string? BoardIdSuffix = null)
 {
     /// <summary>The hardware ID Windows binds a driver to (UpdateDriverForPlugAndPlayDevices).</summary>
-    public string HardwareId => $"PCI\\VEN_{VendorId}&DEV_{DeviceId}";
+    public string HardwareId => $"PCI\\VEN_{VendorId}&DEV_{DeviceId}{BoardIdSuffix}";
 
     /// <summary>The proxy INF's name without extension, as found inside a renamed oemNN.inf (issue #12).</summary>
     public string ProxyInfStem => Path.GetFileNameWithoutExtension(ProxyInfName);
@@ -102,6 +105,9 @@ public static class CardCatalog
     static readonly AdapterCapabilities MtkRadioCaps = new(true, false, false, false, 0x100000, StationOn24GHz: false);
     static readonly AdapterCapabilities MtkRadioOnDemandCaps = new(false, false, false, false, 0x100000, StationOn24GHz: false);
     static readonly string[] MtkRadioProviders = ["MediaTek", "AMD"];
+    static readonly AdapterProfile Mt7925E138 = new("14C3", "7925", "MediaTek", "MT7925 (E138)",
+        RadioBackendKind.Mt7925, MtkRadioOnDemandCaps, ProxyInf, ProxyService,
+        ProxyProvider, MtkRadioProviders, Active: true, BoardIdSuffix: "&SUBSYS_E138105B&REV_00");
 
     static AdapterProfile Intel(string device, string family) =>
         new("8086", device, "Intel", family, RadioBackendKind.Iwx, AdapterCapabilities.IntelDefault,
@@ -151,6 +157,9 @@ public static class CardCatalog
             ProxyInf, ProxyService, ProxyProvider, MtkRadioProviders, Active: true),
         new AdapterProfile("14C3", "0608", "MediaTek", "MT7921 (RZ608)", RadioBackendKind.MtkRadio, MtkRadioOnDemandCaps,
             ProxyInf, ProxyService, ProxyProvider, MtkRadioProviders, Active: true),
+#if E138_VALIDATION
+        Mt7925E138,
+#endif
     ];
 
     /// <summary>The cards the service takes.</summary>
@@ -187,7 +196,9 @@ public static class CardCatalog
     /// <summary>Any listed profile, active or not (diagnostics and the self-test).</summary>
     public static AdapterProfile? Classify(string instanceId) =>
         TryParsePciId(instanceId, out var v, out var d)
-            ? AllProfiles.FirstOrDefault(p => p.VendorId == v && p.DeviceId == d)
+            ? AllProfiles.FirstOrDefault(p => p.VendorId == v && p.DeviceId == d &&
+                (p.BoardIdSuffix is null || instanceId.Equals(p.HardwareId, StringComparison.OrdinalIgnoreCase) ||
+                 instanceId.StartsWith(p.HardwareId + "\\", StringComparison.OrdinalIgnoreCase)))
             : null;
 
     /// <summary>
@@ -206,12 +217,12 @@ public static class CardCatalog
     public static RadioLaunch BuildRadioLaunch(
         AdapterProfile profile, int channel, bool kernel,
         string country, string? staConf, bool aggregate, bool fastUnlock, bool coexPlan = false,
-        bool btCoexBalanced = false, bool highThroughput = false)
+        bool btCoexBalanced = false, bool highThroughput = false, string? instanceId = null, string? stopFile = null)
     {
         var backend = RadioBackends.Get(profile.Backend);
         return new RadioLaunch(backend.ExeName,
             backend.BuildArgs(new RadioStart(profile, channel, kernel, country, staConf, aggregate, fastUnlock, coexPlan,
-                                             btCoexBalanced, highThroughput)));
+                                             btCoexBalanced, highThroughput, instanceId, stopFile)));
     }
 
     /// <summary>One model the user can pick when a card is not recognized by its ID.</summary>
@@ -236,6 +247,9 @@ public static class CardCatalog
         new("rtl8852ce", "Realtek RTL8852CE", "10EC", RadioBackendKind.Devourer, RealtekCaps, ["Realtek"]),
         new("mt7902", "MediaTek MT7902", "14C3", RadioBackendKind.Mt76, MediaTekCaps, MediaTekProviders),
         new("mt7922", "MediaTek MT7922 / MT7921 (RZ616 / RZ608)", "14C3", RadioBackendKind.MtkRadio, MtkRadioCaps, MtkRadioProviders),
+#if E138_VALIDATION
+        new("mt7925", "MediaTek MT7925 (E138)", "14C3", RadioBackendKind.Mt7925, MtkRadioOnDemandCaps, MtkRadioProviders),
+#endif
     ];
 
     /// <summary>
@@ -247,6 +261,8 @@ public static class CardCatalog
         if (!TryParsePciId(instanceOrHardwareId, out var v, out var d)) return null;
         var m = ManualModels.FirstOrDefault(x => x.Key == modelKey);
         if (m is null || m.VendorId != v) return null;
+        if (m.Backend == RadioBackendKind.Mt7925 || (v == "14C3" && d is "7925" or "0717"))
+            return m.Backend == RadioBackendKind.Mt7925 && MatchActive(instanceOrHardwareId) == Mt7925E138 ? Mt7925E138 : null;
         return new AdapterProfile(v, d, v switch { "8086" => "Intel", "14C3" => "MediaTek", _ => "Realtek" }, m.Name + " (chosen in settings)", m.Backend,
                                   m.Capabilities, ProxyInf, ProxyService, ProxyProvider, m.VendorProviderPatterns,
                                   Active: true, RadioFamily: m.Backend == RadioBackendKind.Iwx ? m.Key : null);
@@ -270,11 +286,21 @@ public static class CardCatalog
         void Check(bool ok, string what) { if (!ok) fail.Add(what); }
 
         // The 15 Intel IDs the service took before the catalog (Card.DeviceIds, 0.1.20)
-        // plus the AX203 (7740), Realtek RTL8852CE (10EC:C852), MediaTek MT7902
-        // (14C3:7902), and MediaTek MT7922/MT7921 (14C3:0616, 7922, 7961, 0608) = 23 active profiles.
+        // Plus BE200, RTL8852CE, MT7902, the four MT7921/MT7922 IDs, and the E138 MT7925.
         string[] intel = ["43F0", "A0F0", "02F0", "06F0", "34F0", "3DF0", "4DF0",
                           "2723", "2725", "7A70", "7AF0", "51F0", "51F1", "54F0", "7F70", "7740"];
-        Check(ActiveProfiles.Count == intel.Length + 7, $"{ActiveProfiles.Count} active profiles, expected {intel.Length + 7}");
+        int expectedCount = intel.Length + 7;
+#if E138_VALIDATION
+        expectedCount++;
+        Check(MatchActive(Mt7925E138.HardwareId) == Mt7925E138, "exact E138 board missing");
+#else
+        Check(MatchActive(Mt7925E138.HardwareId) is null, "default build admitted E138");
+#endif
+        foreach (string id in new[] { Mt7925E138.HardwareId + "1", Mt7925E138.HardwareId.Replace("REV_00", "REV_01"),
+                                       Mt7925E138.HardwareId.Replace("E138105B", "E139105B") })
+            Check(MatchActive(id) is null && ManualProfile(id, "mt7925") is null && ManualProfile(id, "mt7922") is null,
+                "unverified board accepted: " + id);
+        Check(ActiveProfiles.Count == expectedCount, $"{ActiveProfiles.Count} active profiles, expected {expectedCount}");
         Check(AllProfiles.Count == ActiveProfiles.Count, $"{AllProfiles.Count} total profiles, expected {ActiveProfiles.Count}");
         foreach (var dev in intel)
         {
@@ -329,6 +355,21 @@ public static class CardCatalog
         // Radio launch planning for Intel (Iwx) and Realtek (Devourer).
         static bool SameLaunch(RadioLaunch got, string exe, params string[] args) =>
             got.ExeName == exe && got.Args.SequenceEqual(args);
+        const string board = @"PCI\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00\1";
+        const string hostReady = "MT7925 fast host ready | ch149/80 SHM | VHT RX 2SS TX 1SS | discovery_window=1";
+        Check(Mt7925RadioBackend.IsHostReady(hostReady, 149) && !Mt7925RadioBackend.IsHostReady(hostReady, 44) &&
+              !Mt7925RadioBackend.IsHostReady(hostReady.Replace(" SHM", ""), 149), "E138 host readiness");
+        foreach (int channel in new[] { 44, 149 })
+            Check(SameLaunch(BuildRadioLaunch(Mt7925E138, channel, false, "CN", null, false, false,
+                    instanceId: board, stopFile: @"C:\run\session.stop"),
+                "nekodrop-radio-mt7925-fast.exe", "--e138-fast", "--indoor", "--country", "CN", "--channel", channel.ToString(),
+                "--firmware", Mt7925RadioBackend.FirmwareDirectory, "--instance", board, "--stop-file", @"C:\run\session.stop"),
+                $"E138 indoor channel {channel} launch args");
+        foreach (var (channel, country, instance) in new[] { (6, "CN", board), (44, "00", board), (149, "CN", board.Replace("REV_00", "REV_01")) })
+        {
+            try { BuildRadioLaunch(Mt7925E138, channel, false, country, null, false, false, instanceId: instance, stopFile: @"C:\run\session.stop"); fail.Add("invalid E138 launch accepted"); }
+            catch (ArgumentException) { }
+        }
 
         var iwx = ActiveProfiles[0];
         Check(iwx.Backend == RadioBackendKind.Iwx, $"ActiveProfiles[0] backend {iwx.Backend}, expected Iwx");

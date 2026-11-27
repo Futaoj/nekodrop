@@ -9,7 +9,7 @@
 #   nekodrop.exe (client), NekoDropService.exe (service), install/uninstall scripts
 # -Offline skips the downloads (Python embeddable, TAP-Windows) and uses what
 # build\downloads already holds.
-param([switch]$Offline, [string]$PythonVersion = '3.12.8', [string]$TapVersion = '9.24.7-I601')
+param([switch]$Offline, [switch]$E138Validation, [string]$PythonVersion = '3.12.8', [string]$TapVersion = '9.24.7-I601')
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\toolchain.ps1"
 $repo = Split-Path $PSScriptRoot -Parent
@@ -43,6 +43,14 @@ $mtkBuild = "$repo\build\mtkradio"
 Copy-Item "$mtkBuild\nekodrop-radio-mtk.exe" "$stage\radio\"
 Copy-Item "$mtkBuild\firmware\WIFI_MT7922_patch_mcu_1_1_hdr.bin", "$mtkBuild\firmware\WIFI_RAM_CODE_MT7922_1.bin",
           "$mtkBuild\firmware\WIFI_MT7961_patch_mcu_1_2_hdr.bin", "$mtkBuild\firmware\WIFI_RAM_CODE_MT7961_1.bin" "$stage\radio\firmware\"
+
+if ($E138Validation) {
+  & "$PSScriptRoot\build-mt7925-fast.ps1" | Out-Null
+  Copy-Item "$repo\build\mt7925-fast\nekodrop-radio-mt7925-fast.exe" "$stage\radio\"
+  $e138Fw = New-Item -ItemType Directory -Force "$stage\radio\firmware\mt7925"
+  Copy-Item "$repo\third_party\linux-firmware-mt7925\WIFI_MT7925_PATCH_MCU_1_1_hdr.bin",
+            "$repo\third_party\linux-firmware-mt7925\WIFI_RAM_CODE_MT7925_1_1.bin" $e138Fw
+}
 
 'awdl'
 & "$PSScriptRoot\build-awdl.ps1" -MinGW "$repo\third_party\winlibs\mingw64\bin" | Out-Null
@@ -81,7 +89,7 @@ if ((Get-Command cargo -ErrorAction SilentlyContinue) -and (Test-Path "$wd\Cargo
 } else { '  (no Rust or no third_party\WirDrop: Apple ID sign-in left out)' }
 
 'driver'
-& "$repo\driver\regproxy\build.ps1" | Out-Null
+& "$repo\driver\regproxy\build.ps1" -OmitE138:(-not $E138Validation) | Out-Null
 New-Item -ItemType Directory -Force "$stage\driver" | Out-Null
 Copy-Item "$repo\driver\regproxy\build\winawdl_regproxy.inf", "$repo\driver\regproxy\build\winawdl_regproxy.dll" "$stage\driver\"
 $now = Get-Date
@@ -124,7 +132,7 @@ Copy-Item "$PSScriptRoot\kdriver-install.ps1", "$PSScriptRoot\kdriver-restore.ps
 # apps cannot overwrite each other's runtime libraries in the shared folder.
 $single = '--self-contained', 'true', '-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true',
           '-p:EnableCompressionInSingleFile=true', '-p:DebugType=none'
-dotnet publish "$repo\app\service\NekoDrop.Service.csproj" -c Release -o "$stage" --nologo -v q @single
+dotnet publish "-p:IncludeE138Validation=$([bool]$E138Validation)" "$repo\app\service\NekoDrop.Service.csproj" -c Release -o "$stage" --nologo -v q @single
 if ($LASTEXITCODE -ne 0) { throw 'service publish failed' }
 # The card catalog's offline checks (app/service/CardCatalog.cs): no card or admin rights needed.
 & "$stage\NekoDropService.exe" --selftest
@@ -192,11 +200,14 @@ if ($devourerLicense) { Copy-Item $devourerLicense "$stage\licenses\devourer-GPL
 $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe") |
         Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($iscc) {
-  & $iscc "$repo\installer\nekodrop.iss" | Out-Null
+  $packageArgs = @()
+  if ($E138Validation) { $packageArgs += '/DE138Validation' }
+  & $iscc @packageArgs "$repo\installer\nekodrop.iss" | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed ($LASTEXITCODE)" }
   Get-ChildItem "$repo\build\nekodrop-*-setup.exe" | Select-Object Name, Length
 } else {
-  $zip = "$repo\build\nekodrop-2.3.3-windows-x64.zip"
+  $zip = if ($E138Validation) { "$repo\build\nekodrop-e138-validation-windows-x64.zip" }
+         else { "$repo\build\nekodrop-2.3.3-windows-x64.zip" }
   Compress-Archive "$stage\*" $zip -Force
   "Inno Setup not found: made $zip instead (unzip, then run install.ps1 as administrator)."
 }

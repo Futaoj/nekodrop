@@ -15,7 +15,11 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.19041
+#ifdef E138Validation
+OutputBaseFilename=nekodrop-{#AppVersion}-e138-validation-setup
+#else
 OutputBaseFilename=nekodrop-{#AppVersion}-setup
+#endif
 OutputDir=..\build
 Compression=lzma2/ultra64
 SolidCompression=yes
