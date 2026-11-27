@@ -15,6 +15,7 @@
 #
 # Idempotent; exits with an error when the source no longer matches.
 import pathlib
+import subprocess
 import sys
 
 root = pathlib.Path(sys.argv[1])
@@ -655,3 +656,16 @@ patch_once(
     '\t}\n',
     'owl rx.c unwrap RFC 1042-encapsulated 802.3 AWDL A-MSDU subframes',
 )
+
+# These patches target the pinned dependency after the common changes above.
+# Keep the normal awdld executable and select E138 only from the radio HELLO.
+patches = pathlib.Path(__file__).resolve().parents[1] / 'mtkradio' / 'patches'
+for worktree, name in ((root, 'e138-winawdl'), (root / 'upstream' / 'owl', 'e138-owl')):
+    patch = str(patches / f'{name}.patch')
+    apply = ['git', '-C', str(worktree), 'apply', '--ignore-space-change']
+    if subprocess.run(apply + ['--reverse', '--check', patch], capture_output=True).returncode == 0:
+        print(f'{name}: already applied')
+    else:
+        subprocess.run(apply + ['--check', patch], check=True)
+        subprocess.run(apply + [patch], check=True)
+        print(f'{name}: applied')
