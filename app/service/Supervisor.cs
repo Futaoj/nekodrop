@@ -49,6 +49,8 @@ public sealed class Supervisor : IDisposable
     int _restarts;
     /// <summary>When the next restart may run after the radio found no contiguous DMA memory (#30).</summary>
     DateTime _retryAt = DateTime.MinValue;
+    /// <summary>After giving up on DMA memory, automatic wake-ups wait until then (#94).</summary>
+    DateTime _dmaHoldUntil = DateTime.MinValue;
     CancellationTokenSource _cts = new();
 
     public RadioState State { get; private set; } = RadioState.Off;
@@ -396,7 +398,19 @@ public sealed class Supervisor : IDisposable
     public void Wake(bool retry = false)
     {
         lock (_lock)
+        {
             if (_holdFirmwareRetry && !retry) return;
+            /* Out of DMA memory (#94): a wake-up (a phone sharing nearby, every second
+             * or so) restarted the radio at once and reset the back-off, so it retried
+             * several times a second, each try locking gigabytes of pages to look for
+             * low ones. The watchdog restarts when the back-off is over. */
+            var now = DateTime.UtcNow;
+            if (!retry && ((_retryAt != DateTime.MinValue && now < _retryAt) || now < _dmaHoldUntil))
+            {
+                _lastUse = now;
+                return;
+            }
+        }
         _lastUse = DateTime.UtcNow;
         if (_cfg.Mode != NetMode.Off) Start("woken");
     }
@@ -658,16 +672,6 @@ public sealed class Supervisor : IDisposable
         else if (text.StartsWith("bring-up failed: ", StringComparison.Ordinal))
         {
             lock (_lock) _detail = text[17..];
-        }
-        else if (text.StartsWith("station: ", StringComparison.Ordinal) && text.Contains("TKIP", StringComparison.Ordinal) &&
-                 text.Contains("not supported", StringComparison.Ordinal))
-        {
-            // #97: a WPA/WPA2 mixed router (TKIP group key) failed every 5 s
-            // with no word in the Wi-Fi window; say why and what to change.
-            lock (_lock)
-                _wifiError = "this router uses WPA/TKIP encryption, which nekodrop's own Wi-Fi does not support: " +
-                             "set the router to WPA2-AES (CCMP) or WPA3, or use On-Demand mode";
-            Publish();
         }
         else if (text.StartsWith("firmware/DMA error:", StringComparison.Ordinal))
         {
@@ -967,6 +971,7 @@ public sealed class Supervisor : IDisposable
                 _retryAt = DateTime.MinValue;
                 if (++_restarts > 5)
                 {
+                    if (dmaShortage) lock (_lock) _dmaHoldUntil = DateTime.UtcNow + TimeSpan.FromSeconds(60);
                     Say("the radio keeps failing; giving the card back");
                     Stop("too many failures", giveBack: true);
                     lock (_lock) { State = RadioState.Error; _detail = "the radio keeps failing"; }
