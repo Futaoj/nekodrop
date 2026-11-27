@@ -89,6 +89,7 @@ Intel AX201、Windows 11、`v2.2.9+`，开启高吞吐模式（HE80 + MTU 1500�
 | [网卡兼容性](docs/COMPATIBILITY.zh-CN.md) · [网卡状态](docs/CARDS.zh-CN.md) | 每张卡的 PCI ID 和固件；怎么适配新网卡 |
 | [工作原理](docs/HOW-IT-WORKS.zh-CN.md) | 架构、开发进度、从源码构建 |
 | [致谢](docs/CREDITS.zh-CN.md) | 贡献者、代码来源、许可证 |
+| [隐私说明](docs/PRIVACY.md) | nekodrop 会连哪些地方、发送什么 |
 | [更新日志](CHANGELOG.md) | 版本历史 |
 
 ## 交流群
@@ -106,6 +107,15 @@ Intel AX201、Windows 11、`v2.2.9+`，开启高吞吐模式（HE80 + MTU 1500�
 感谢 [@BaiBaiAi](https://github.com/BaiBaiAi)、[@XXD051030](https://github.com/XXD051030)、[@GGBond-cer](https://github.com/GGBond-cer)、[@DaiJiequn](https://github.com/DaiJiequn)、[@sh17632](https://github.com/sh17632)、[@YiHoooong](https://github.com/YiHoooong)、[@Yanlyn](https://github.com/Yanlyn)，以及所有提交日志的朋友。每个人做了什么：[致谢](docs/CREDITS.zh-CN.md#贡献者)。
 
 欢迎在 [Issues](../../issues) 反馈问题，请附上[诊断报告](docs/SUPPORT.zh-CN.md#反馈问题诊断报告)。
+
+## 代码签名政策 / Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).（申请中：签名生效前发布的安装包仍未签名。）
+
+- 提交者与审核者（Committers and reviewers）：[@zheznanohana](https://github.com/zheznanohana)。外部贡献者的每个 PR 都由维护者审核后才合并。
+- 签名审批者（Approvers）：[@zheznanohana](https://github.com/zheznanohana)。每个版本签名前都要人工批准。
+- 安装包由 GitHub Actions 从本仓库源码构建（[build.yml](.github/workflows/build.yml)）。
+- 隐私：除非用户明确要求，本程序不会把任何信息发送到其他联网系统。详见[隐私说明](docs/PRIVACY.md)。
 
 ## 许可
 

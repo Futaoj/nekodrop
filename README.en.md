@@ -89,6 +89,7 @@ More screenshots and every feature: [Using nekodrop](docs/USAGE.md).
 | [Card compatibility](docs/COMPATIBILITY.md) · [Card status](docs/CARDS.md) | Every card, PCI ID and firmware; how to port a new card |
 | [How it works](docs/HOW-IT-WORKS.md) | Architecture, project status, building from source |
 | [Credits](docs/CREDITS.md) | Contributors, where the code comes from, licenses |
+| [Privacy](docs/PRIVACY.md) | Where nekodrop connects and what it sends |
 | [Changelog](CHANGELOG.md) | Release history |
 
 ## Community
@@ -106,6 +107,15 @@ Community link: [LINUX DO](https://linux.do/).
 Thanks to [@BaiBaiAi](https://github.com/BaiBaiAi), [@XXD051030](https://github.com/XXD051030), [@GGBond-cer](https://github.com/GGBond-cer), [@DaiJiequn](https://github.com/DaiJiequn), [@sh17632](https://github.com/sh17632), [@YiHoooong](https://github.com/YiHoooong), [@Yanlyn](https://github.com/Yanlyn) and everyone who sent logs. What each of them did: [Credits](docs/CREDITS.md#contributors).
 
 Bug reports with a [diagnostic report](docs/SUPPORT.md#reporting-a-problem-the-diagnostic-report) are welcome in [Issues](../../issues).
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). (Applied for: installers released before signing starts are still unsigned.)
+
+- Committers and reviewers: [@zheznanohana](https://github.com/zheznanohana). Every pull request from an outside contributor is reviewed by the maintainer before it is merged.
+- Approvers: [@zheznanohana](https://github.com/zheznanohana). Every release is approved by hand before it is signed.
+- Installers are built from this repository's source by GitHub Actions ([build.yml](.github/workflows/build.yml)).
+- Privacy: this program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. See the [privacy notice](docs/PRIVACY.md).
 
 ## License
 
