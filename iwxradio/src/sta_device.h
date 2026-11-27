@@ -55,6 +55,10 @@ public:
   virtual const StaParams &sta_params() const = 0;
   /* Experimental Wi-Fi 6 station: the card and firmware can join as HE. */
   virtual bool sta_he_capable() const { return false; }
+  /* Takes the associated link off the air (true) and back (false), so the
+   * radio stays on AWDL's channel; sta_transmit fails meanwhile. False:
+   * the backend cannot, or the firmware refused. */
+  virtual bool sta_pause(bool) { return false; }
 
 protected:
   ~StaDevice() = default;
@@ -98,6 +102,7 @@ public:
   void sta_leave() override { _dev.sta_leave(); }
   const StaParams &sta_params() const override { return _dev.sta_params(); }
   bool sta_he_capable() const override { return _dev.sta_he_capable(); }
+  bool sta_pause(bool pause) override { return _dev.sta_pause(pause); }
 
 private:
   Dev &_dev;

@@ -71,6 +71,10 @@ public:
   /* On Bz the listener is never promiscuous (the firmware then stops matching
    * ACKs to its own unicast), so set_promiscuous is a no-op there. */
   bool bz_card() const { return _card.bz; }
+  /* AX203: Bz MAC with the HR radio (not BE200's FM). The PR #95 transfer
+   * fixes (station pause, declined ADDBA, station power save) are measured
+   * on it only. */
+  bool ax203_card() const { return _card.bz && _card.firmware.find("-hr-") != std::string::npos; }
   /* Bz with --mac-type sta: keeps a session protection running so the
    * unassociated BSS_STA listener link has the radio. Call often; no-op
    * otherwise. */
@@ -183,6 +187,12 @@ public:
   int sta_transmit_agg(const uint8_t *frame, size_t len, bool encrypt, bool kick = true);
   void sta_kick_tx_agg();
   void sta_leave();
+  /* The station link off the air while AWDL carries a transfer (MLD
+   * firmware): the firmware stops visiting the AP's channel and frames to
+   * the AP are dropped until sta_pause(false). False where unsupported. */
+  bool sta_pause(bool pause);
+  bool sta_paused() const { return _sta_paused; }
+  unsigned sta_pause_dropped() const { return _sta_pause_dropped; }
   bool sta_active() const { return _sta_mac_added; }
   const StaParams &sta_params() const { return _sta; }
   /* Experimental Wi-Fi 6 station: an HE radio (not a Wireless-AC "jf" one)
@@ -424,7 +434,9 @@ private:
   bool _sta_phy_added = false, _sta_mac_added = false, _sta_binding_added = false,
        _sta_link_added = false, _sta_link_active = false,
        _sta_sta_added = false, _sta_queue_enabled = false, _sta_shared_binding = false,
-       _sta_assoc = false, _sta_tlc = false, _sta_session_prot = false, _sta_mfp = false;
+       _sta_assoc = false, _sta_tlc = false, _sta_session_prot = false, _sta_mfp = false,
+       _sta_paused = false;
+  unsigned _sta_pause_dropped = 0;
   uint16_t _sta_aid = 0;
   uint8_t _sta_dtim = 1, _sta_ba_tids = 0, _sta_gtk_mask = 0, _sta_igtk_id = 0;
   uint32_t _sta_ptk_flags = 0;
