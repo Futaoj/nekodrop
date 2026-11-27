@@ -129,6 +129,23 @@ public static class Native
     }
 
     /// <summary>
+    /// The work area of the screen that actually owns <paramref name="w"/>. A
+    /// narrow panel sits against the right edge of one monitor; dialogs centred
+    /// on that panel can otherwise cross the monitor seam or leave the work area.
+    /// </summary>
+    public static Rect WorkAreaOf(Window w)
+    {
+        var hwnd = new WindowInteropHelper(w).Handle;
+        var area = hwnd != IntPtr.Zero
+            ? System.Windows.Forms.Screen.FromHandle(hwnd).WorkingArea
+            : System.Windows.Forms.Screen.FromPoint(System.Windows.Forms.Cursor.Position).WorkingArea;
+        var m = PresentationSource.FromVisual(w)?.CompositionTarget?.TransformFromDevice ?? System.Windows.Media.Matrix.Identity;
+        var tl = m.Transform(new Point(area.Left, area.Top));
+        var br = m.Transform(new Point(area.Right, area.Bottom));
+        return new Rect(tl, br);
+    }
+
+    /// <summary>
     /// Puts a fixed-size panel in the bottom-right corner of the work area of
     /// the screen under the mouse. Positions in physical pixels so this also
     /// works before the window has a PresentationSource and when the target

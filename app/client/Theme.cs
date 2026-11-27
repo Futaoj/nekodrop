@@ -76,6 +76,9 @@ public static class Theme
             ["MicaAlt"] = B(dark ? C(0xF7282A30) : C(0xF7F8F9FC)),
             ["Card"] = B(card),
             ["CardHover"] = B(cardHover),
+            // A modal warning is opaque: the app's cards are 80% white over Mica, but
+            // text behind a dialog would read through them.
+            ["DialogSurface"] = B(dark ? C(0xFF2B2D31) : C(0xFFFFFFFF)),
             ["RadarBg"] = B(dark ? A(Colors.White, 0.032) : A(Colors.White, 0.50)),
             ["Border"] = B(border),
             ["BorderStrong"] = B(borderStrong),
