@@ -11,12 +11,12 @@
 ### 中文
 
 - **新增 MediaTek MT7925 / AMD RZ717（`14C3:7925`，Wi-Fi 7，实验性）纯用户态按需支持**：
-  - 接入标准 UMDF 寄存器代理（`winawdl_regproxy.inf`）、服务目录（`CardCatalog` 按需模式）、安装/诊断/一键回退脚本与锁定 SHA-256 的 `linux-firmware` 固件拉取流程，无需内核驱动或开启 Windows 测试模式；尚未完成全流程真机验证，欢迎附[诊断报告](docs/MT7925.md)反馈。
+  - 接入标准 UMDF 寄存器代理（`winawdl_regproxy.inf`）、服务目录（`CardCatalog` 按需模式）、安装/诊断/一键回退脚本与锁定 SHA-256 的 `linux-firmware` 固件拉取流程，无需内核驱动或开启 Windows 测试模式；已在 `SUBSYS_E138105B` 上实测 iPhone → Windows 接收 **127.81 MB（10.19 MB/s，SHA-256 一致）** 与冷重启恢复正常（详见 [docs/MT7925.md](docs/MT7925.md)）。
 
 ### English
 
 - **Add experimental pure user-mode MediaTek MT7925 / AMD RZ717 (`14C3:7925`, Wi-Fi 7) On-Demand support:**
-  - Wired into the standard UMDF register proxy (`winawdl_regproxy.inf`), `CardCatalog` (On-Demand mode), installer/report/restore scripts, and SHA-256 pinned `linux-firmware` fetch/staging scripts with zero kernel drivers or test signing; awaiting live hardware reports (see [docs/MT7925.md](docs/MT7925.md)).
+  - Wired into the standard UMDF register proxy (`winawdl_regproxy.inf`), `CardCatalog` (On-Demand mode), installer/report/restore scripts, and SHA-256 pinned `linux-firmware` fetch/staging scripts with zero kernel drivers or test signing; verified on `SUBSYS_E138105B` with **127.81 MB iPhone → Windows AirDrop at 10.19 MB/s (SHA-256 matched)** and clean idle/reboot restore (see [docs/MT7925.md](docs/MT7925.md)).
 
 ---
 
