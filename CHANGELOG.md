@@ -6,6 +6,20 @@
 
 ---
 
+## v2.3.6 (Preview / 预览版)
+
+### 中文
+
+- **LocalSend 发送失败**：发给 LocalSend 设备时会报「An error occurred while sending the request」。原因是 LocalSend 接收方要求发送方出示自己的证书，nekodrop 没带，对方就断开了连接。现在会带上证书，已在一加手机上的官方 LocalSend 实测发送成功。发送失败时的提示也改成了人话；如果对方没有回应，会自动换 HTTP / HTTPS 再试一次。
+- **中继设置页**：还没有规则时，「还没有规则」几个字和中间的方框叠在一起，已修好。
+
+### English
+
+- **Sending to LocalSend failed** with "An error occurred while sending the request": LocalSend receivers demand the sender's own certificate and dropped the connection without one. nekodrop now presents it; tested sending to the official LocalSend app on a OnePlus phone. Failures now read as a plain sentence, and a receiver that does not answer is tried once more over the other of HTTP / HTTPS.
+- **Relay settings:** with no rules, "No rules yet" no longer overlaps the box in the middle.
+
+---
+
 ## v2.3.5 (Preview / 预览版)
 
 ### 中文

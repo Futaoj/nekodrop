@@ -467,6 +467,7 @@ public static class L
         ["ls.onHint"] = ("和装了 LocalSend 的手机、电脑互传（安卓、iPhone、Mac、Windows、Linux 都行），需要在同一个 Wi-Fi 或局域网里。使用 TCP / UDP 53317 端口。",
                          "Send to and receive from phones and computers running LocalSend (Android, iPhone, Mac, Windows, Linux) on the same Wi-Fi or local network. Uses TCP / UDP port 53317."),
         ["ls.err.pin"] = ("对方要求输入 PIN 码，目前还不支持", "The receiver asks for a PIN, which is not supported yet"),
+        ["ls.err.unreachable"] = ("连不上对方的 LocalSend：请确认对方打开了 LocalSend 并停留在前台（锁屏或切到后台可能会停止接收），且两台设备在同一个网络里", "Could not reach the receiver's LocalSend: make sure LocalSend is open on it and in the foreground (it may stop receiving when locked or in the background), on the same network"),
         ["ls.err.busy"] = ("对方正在接收别的文件，请稍后再试", "The receiver is busy with another transfer; try again shortly"),
         ["tray.mtaRelaySub"] = ("苹果 ⇄ 安卓自动转发", "Auto-relay Apple ⇄ Android"),
         ["mta.tag"] = ("互传联盟", "Android Share"),

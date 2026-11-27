@@ -71,6 +71,7 @@ public sealed class LocalSendEngine : IDisposable
         public bool Https = true;
         public DateTime LastSeen;
         public string Emitted = "";
+        public string Where = ""; /* address, port and scheme last logged */
         public string Id => PeerPrefix + Fingerprint;
         public string BaseUrl => $"{(Https ? "https" : "http")}://{(Address.AddressFamily == AddressFamily.InterNetworkV6 ? $"[{Address}]" : Address.ToString())}:{Port}";
     }
@@ -168,8 +169,16 @@ public sealed class LocalSendEngine : IDisposable
             _running = true;
             _http = new HttpClient(new SocketsHttpHandler
             {
-                /* Members use self-signed certificates; the fingerprint, not a CA, says who they are. */
-                SslOptions = new SslClientAuthenticationOptions { RemoteCertificateValidationCallback = (_, _, _, _) => true },
+                /* Members use self-signed certificates; the fingerprint, not a CA, says who they are.
+                 * A receiver also demands ours as a client certificate (how it learns the
+                 * sender's fingerprint) and drops the TLS handshake without one: the
+                 * official Android app does (OnePlus, protocol 2.2). */
+                SslOptions = new SslClientAuthenticationOptions
+                {
+                    RemoteCertificateValidationCallback = (_, _, _, _) => true,
+                    ClientCertificates = new X509CertificateCollection { _cert! },
+                    LocalCertificateSelectionCallback = (_, _, _, _, _) => _cert!,
+                },
                 ConnectTimeout = TimeSpan.FromSeconds(4),
                 PooledConnectionLifetime = TimeSpan.FromMinutes(1),
             }) { Timeout = Timeout.InfiniteTimeSpan };
@@ -385,6 +394,12 @@ public sealed class LocalSendEngine : IDisposable
         p.Type = Trim((string?)o["deviceType"], "desktop");
         if (o["port"] is JsonValue pv && pv.TryGetValue<int>(out var port) && port is > 0 and < 65536) p.Port = port;
         if ((string?)o["protocol"] is { } proto) p.Https = !string.Equals(proto, "http", StringComparison.OrdinalIgnoreCase);
+        var where = $"{p.Address}:{p.Port} {(p.Https ? "https" : "http")}";
+        if (p.Where != where)
+        {
+            p.Where = where;
+            Say($"{p.Alias} is at {where}");
+        }
         var label = ModelLabel(p);
         var shown = p.Alias + "|" + label;
         if (p.Emitted != shown)
@@ -760,8 +775,10 @@ public sealed class LocalSendEngine : IDisposable
             }
             catch (Exception e)
             {
-                Say($"send to {peer.Alias} failed: {e.Message}");
-                Emit(new JsonObject { ["event"] = "send", ["id"] = id, ["state"] = "failed", ["reason"] = e.Message });
+                Say($"send to {peer.Alias} failed: {Describe(e)}");
+                /* A connection-level failure gets a plain sentence, not .NET's "An error occurred while sending the request". */
+                var reason = e is HttpRequestException { StatusCode: null } or IOException ? L.T("ls.err.unreachable") : e.Message;
+                Emit(new JsonObject { ["event"] = "send", ["id"] = id, ["state"] = "failed", ["reason"] = reason });
             }
             finally { _sends.TryRemove(id, out _); }
         });
@@ -799,8 +816,7 @@ public sealed class LocalSendEngine : IDisposable
         using (var askCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
         {
             askCts.CancelAfter(TimeSpan.FromMinutes(3)); /* the receiver's user decides meanwhile */
-            using var body = new StringContent(prepare.ToJsonString(), Encoding.UTF8, "application/json");
-            using var resp = await http.PostAsync(peer.BaseUrl + "/api/localsend/v2/prepare-upload", body, askCts.Token);
+            using var resp = await PostPrepareAsync(http, peer, prepare.ToJsonString(), askCts.Token);
             switch ((int)resp.StatusCode)
             {
                 case 200: break;
@@ -856,6 +872,51 @@ public sealed class LocalSendEngine : IDisposable
         }
         Say($"sent {infos.Count} file(s), {total} bytes to {peer.Alias}");
         Emit(new JsonObject { ["event"] = "send", ["id"] = id, ["state"] = "sent", ["done"] = (double)total, ["total"] = (double)total });
+    }
+
+    /// <summary>
+    /// prepare-upload, trying the other scheme once if the first got no answer at
+    /// all: a member announces "https" or "http", but one that turned encryption
+    /// off (or on) since, or announced it wrong, then still works. The scheme that
+    /// answered is kept for the uploads.
+    /// </summary>
+    async Task<HttpResponseMessage> PostPrepareAsync(HttpClient http, Peer peer, string json, CancellationToken ct)
+    {
+        try
+        {
+            using var body = new StringContent(json, Encoding.UTF8, "application/json");
+            return await http.PostAsync(peer.BaseUrl + "/api/localsend/v2/prepare-upload", body, ct);
+        }
+        catch (HttpRequestException first) when (!ct.IsCancellationRequested && first.StatusCode is null)
+        {
+            Say($"prepare-upload to {peer.BaseUrl} got no answer: {Describe(first)}; trying {(peer.Https ? "http" : "https")}");
+            peer.Https = !peer.Https;
+            try
+            {
+                using var body = new StringContent(json, Encoding.UTF8, "application/json");
+                var resp = await http.PostAsync(peer.BaseUrl + "/api/localsend/v2/prepare-upload", body, ct);
+                Say($"{peer.Alias} answers on {(peer.Https ? "https" : "http")}");
+                return resp;
+            }
+            catch (HttpRequestException second) when (!ct.IsCancellationRequested)
+            {
+                peer.Https = !peer.Https;
+                Say($"prepare-upload to {peer.Alias} failed both ways: {Describe(second)}");
+                throw new LocalSendUnreachable(first);
+            }
+        }
+    }
+
+    /// <summary>The receiver's LocalSend did not answer at all (not running, asleep, or blocked).</summary>
+    sealed class LocalSendUnreachable(Exception inner) : Exception(L.T("ls.err.unreachable"), inner);
+
+    /// <summary>An exception and its inner ones, for the log (.NET's outer HTTP message alone says nothing).</summary>
+    static string Describe(Exception e)
+    {
+        var parts = new List<string>();
+        for (var x = e; x is not null && parts.Count < 5; x = x.InnerException)
+            parts.Add($"{x.GetType().Name}: {x.Message}");
+        return string.Join(" <- ", parts);
     }
 
     sealed class ProgressContent(Stream src, long length, Action<long> progress) : HttpContent
