@@ -118,9 +118,12 @@ function Test-E138ValidationTarget([string]$InstanceId, [bool]$Enabled) {
   return $Enabled -and $InstanceId -match '^PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00\\[^\\]+$'
 }
 function Test-E138ValidationPackage([string]$Root) {
-  $radio = Join-Path $Root 'radio\nekodrop-radio-mt7925-fast.exe'
+  $radio = Join-Path $Root 'radio\nekodrop-radio-mtk.exe'
+  $firmware = Join-Path $Root 'radio\firmware\mt7925'
   $inf = Join-Path $Root 'driver\winawdl_regproxy.inf'
   return (Test-Path -LiteralPath $radio -PathType Leaf) -and
+         (Test-Path -LiteralPath (Join-Path $firmware 'WIFI_MT7925_PATCH_MCU_1_1_hdr.bin') -PathType Leaf) -and
+         (Test-Path -LiteralPath (Join-Path $firmware 'WIFI_RAM_CODE_MT7925_1_1.bin') -PathType Leaf) -and
          (Test-Path -LiteralPath $inf -PathType Leaf) -and
          (Select-String -LiteralPath $inf -Pattern '^\s*%DeviceDescMtk7925%\s*=\s*RegProxyE138\s*,\s*PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00\s*$' -Quiet)
 }

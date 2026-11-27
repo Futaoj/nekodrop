@@ -37,16 +37,14 @@ $mtBuild = "$repo\build\mtradio"
 Copy-Item "$mtBuild\nekodrop-radio-mt.exe" "$stage\radio\"
 Copy-Item "$mtBuild\firmware\WIFI_RAM_CODE_MT7902_1.bin", "$mtBuild\firmware\WIFI_MT7902_patch_mcu_1_1_hdr.bin" "$stage\radio\firmware\"
 
-'radio (MediaTek MT7922/MT7921)'
-& "$PSScriptRoot\build-radio-mtk.ps1" | Out-Null
-$mtkBuild = "$repo\build\mtkradio"
+'radio (MediaTek MT792x)'
+& "$PSScriptRoot\build-radio-mtk.ps1" -E138Validation:$E138Validation | Out-Null
+$mtkBuild = if ($E138Validation) { "$repo\build\mtkradio-e138" } else { "$repo\build\mtkradio" }
 Copy-Item "$mtkBuild\nekodrop-radio-mtk.exe" "$stage\radio\"
 Copy-Item "$mtkBuild\firmware\WIFI_MT7922_patch_mcu_1_1_hdr.bin", "$mtkBuild\firmware\WIFI_RAM_CODE_MT7922_1.bin",
           "$mtkBuild\firmware\WIFI_MT7961_patch_mcu_1_2_hdr.bin", "$mtkBuild\firmware\WIFI_RAM_CODE_MT7961_1.bin" "$stage\radio\firmware\"
 
 if ($E138Validation) {
-  & "$PSScriptRoot\build-mt7925-fast.ps1" | Out-Null
-  Copy-Item "$repo\build\mt7925-fast\nekodrop-radio-mt7925-fast.exe" "$stage\radio\"
   $e138Fw = New-Item -ItemType Directory -Force "$stage\radio\firmware\mt7925"
   Copy-Item "$repo\third_party\linux-firmware-mt7925\WIFI_MT7925_PATCH_MCU_1_1_hdr.bin",
             "$repo\third_party\linux-firmware-mt7925\WIFI_RAM_CODE_MT7925_1_1.bin" $e138Fw

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-// Dedicated E138 FastBa radio.
+// E138 validation modes in the MediaTek family radio.
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -8,6 +8,7 @@
 #endif
 #include "mt7925_upload_ack.h"
 #include <windows.h>
+#include <shellapi.h>
 #include <timeapi.h>
 
 #include <algorithm>
@@ -19,6 +20,7 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <span>
 #include <string>
@@ -924,7 +926,12 @@ bool run_mt7925_awdl_link(mtk::MtkDevice &dev, std::string &error) {
 
 } // namespace
 
-int wmain(int argc, wchar_t **argv) {
+int run_e138_radio() {
+  // PCI instance, stop file and firmware paths use the original Unicode argv.
+  int argc = 0;
+  std::unique_ptr<LPWSTR, decltype(&LocalFree)> args(CommandLineToArgvW(GetCommandLineW(), &argc), LocalFree);
+  if (!args) return 2;
+  auto argv = args.get();
   std::filesystem::path firmware, stop_file;
   std::wstring instance, country;
   bool fast = false, indoor = false, passive = false, explicit_channel = false;
@@ -984,7 +991,7 @@ int wmain(int argc, wchar_t **argv) {
   if (passive) {
     uint32_t beacons = 0;
     unsigned frames = 0;
-    if (!mtk::MtkDevice::check_e138_passive(instance, firmware_dir, stopping, beacons, frames, error)) {
+    if (!mtk::MtkDevice::check_e138_passive(instance, firmware_dir, stopping, beacons, frames, error, log_line)) {
       log_line("MT7925 E138 passive check failed: " + error);
       return 1;
     }

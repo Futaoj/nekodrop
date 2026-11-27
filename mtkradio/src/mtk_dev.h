@@ -114,7 +114,8 @@ public:
 
   // Opens a private device for one passive channel-44 scan and closes it before returning.
   static bool check_e138_passive(const std::wstring &instance, const std::string &firmware,
-                                 StopCheck stop, uint32_t &beacons, unsigned &frames, std::string &error);
+                                 StopCheck stop, uint32_t &beacons, unsigned &frames,
+                                 std::string &error, const Logger &report);
   static bool is_e138_instance(const std::wstring &instance);
 
   void set_tx_status_handler(TxStatusHandler h) { _on_tx_status = std::move(h); }
@@ -300,7 +301,6 @@ private:
   bool mt7925_emi_protection(std::string &error);
   bool mt7925_wfsys_reset(std::string &error);
   bool mt7925_probe(std::string &error);
-  bool mt7925_acquire_chip(std::string &error);
   bool mt7925_hard_reset(std::string &error);
   bool mt7925_dma_disable(std::string &error);
   bool mt7925_dma_init(std::string &error);

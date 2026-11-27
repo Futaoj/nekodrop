@@ -46,17 +46,11 @@ add_library(mtk_connac3 STATIC
 target_include_directories(mtk_connac3 PUBLIC ${CONNAC3_SRC})
 set_target_properties(mtk_connac3 PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
 
-option(NEKODROP_E138_FAST "Build the dedicated MT7925 E138 AWDL daemon" OFF)
-if(NEKODROP_E138_FAST)
-  set(mtk_daemon nekodrop-radio-mt7925-fast)
-  set(mtk_main src/e138_main.cpp)
-else()
-  set(mtk_daemon nekodrop-radio-mtk)
-  set(mtk_main src/mtk_main.cpp)
-endif()
+option(NEKODROP_E138_VALIDATION "Include E138 validation modes in the MediaTek family radio" OFF)
+set(mtk_daemon nekodrop-radio-mtk)
 
 add_executable(${mtk_daemon}
-  ${mtk_main}
+  src/mtk_main.cpp
   src/mtk_dev.cpp
   src/mtk_dev_7925.cpp
   src/mtk_dev_7925_tx.cpp
@@ -71,6 +65,11 @@ target_include_directories(${mtk_daemon} PRIVATE src ${IWX_SRC} ${MT_SRC} ../dri
 target_compile_definitions(${mtk_daemon} PRIVATE ${MTK_DEFS})
 target_compile_options(${mtk_daemon} PRIVATE ${MTK_OPTS})
 target_link_libraries(${mtk_daemon} PRIVATE mtk_stashared mtk_connac3 setupapi winmm advapi32 bcrypt)
+if(NEKODROP_E138_VALIDATION)
+  target_sources(${mtk_daemon} PRIVATE src/e138_main.cpp)
+  target_compile_definitions(${mtk_daemon} PRIVATE NEKODROP_E138_VALIDATION)
+  target_link_libraries(${mtk_daemon} PRIVATE shell32)
+endif()
 
 add_executable(ccmp_test
   ../mtradio/tests/ccmp_test.cpp
@@ -82,10 +81,9 @@ target_compile_options(ccmp_test PRIVATE ${MTK_OPTS})
 target_link_libraries(ccmp_test PRIVATE bcrypt)
 
 enable_testing()
-if(NEKODROP_E138_FAST)
-  add_test(NAME e138_passive_cli COMMAND ${CMAKE_COMMAND}
-    -DRADIO=$<TARGET_FILE:${mtk_daemon}> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/e138-passive-cli.cmake)
-endif()
+add_test(NAME mtk_family_cli COMMAND ${CMAKE_COMMAND}
+  -DRADIO=$<TARGET_FILE:${mtk_daemon}> -DE138_VALIDATION=${NEKODROP_E138_VALIDATION}
+  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/e138-passive-cli.cmake)
 add_test(NAME ccmp COMMAND ccmp_test)
 
 add_executable(mt7925_transport_test tests/mt7925-transport-test.cpp)

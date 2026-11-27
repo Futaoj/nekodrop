@@ -117,9 +117,12 @@ function Test-E138ValidationTarget([string]$InstanceId, [bool]$Enabled) {
   return $Enabled -and $InstanceId -match '^PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00\\[^\\]+$'
 }
 function Test-E138ValidationPackage([string]$Root) {
-  $radio = Join-Path $Root 'radio\nekodrop-radio-mt7925-fast.exe'
+  $radio = Join-Path $Root 'radio\nekodrop-radio-mtk.exe'
+  $firmware = Join-Path $Root 'radio\firmware\mt7925'
   $inf = Join-Path $Root 'driver\winawdl_regproxy.inf'
   return (Test-Path -LiteralPath $radio -PathType Leaf) -and
+         (Test-Path -LiteralPath (Join-Path $firmware 'WIFI_MT7925_PATCH_MCU_1_1_hdr.bin') -PathType Leaf) -and
+         (Test-Path -LiteralPath (Join-Path $firmware 'WIFI_RAM_CODE_MT7925_1_1.bin') -PathType Leaf) -and
          (Test-Path -LiteralPath $inf -PathType Leaf) -and
          (Select-String -LiteralPath $inf -Pattern '^\s*%DeviceDescMtk7925%\s*=\s*RegProxyE138\s*,\s*PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00\s*$' -Quiet)
 }
@@ -264,19 +267,27 @@ if ($SelfTest) {
   $fixture = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString()))
   $radioDir = New-Item -ItemType Directory -Path (Join-Path $fixture.FullName 'radio')
   $driverDir = New-Item -ItemType Directory -Path (Join-Path $fixture.FullName 'driver')
-  $testRadio = Join-Path $radioDir.FullName 'nekodrop-radio-mt7925-fast.exe'
+  $fwRoot = New-Item -ItemType Directory -Path (Join-Path $radioDir.FullName 'firmware')
+  $fwDir = New-Item -ItemType Directory -Path (Join-Path $fwRoot.FullName 'mt7925')
+  $testPatch = Join-Path $fwDir.FullName 'WIFI_MT7925_PATCH_MCU_1_1_hdr.bin'
+  $testRam = Join-Path $fwDir.FullName 'WIFI_RAM_CODE_MT7925_1_1.bin'
+  $testRadio = Join-Path $radioDir.FullName 'nekodrop-radio-mtk.exe'
   $testInf = Join-Path $driverDir.FullName 'winawdl_regproxy.inf'
   $exact = '%DeviceDescMtk7925% = RegProxyE138, PCI\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00'
   try {
     [IO.File]::WriteAllText($testInf, $exact)
     if (Test-E138ValidationPackage $fixture.FullName) { $fail += 'E138 INF alone enabled validation' }
     [IO.File]::WriteAllBytes($testRadio, [byte[]]@())
+    if (Test-E138ValidationPackage $fixture.FullName) { $fail += 'shared radio and INF enabled E138 without its firmware' }
+    [IO.File]::WriteAllBytes($testPatch, [byte[]]@())
+    if (Test-E138ValidationPackage $fixture.FullName) { $fail += 'missing E138 RAM firmware accepted' }
+    [IO.File]::WriteAllBytes($testRam, [byte[]]@())
     if (-not (Test-E138ValidationPackage $fixture.FullName)) { $fail += 'missing E138 validation package' }
     [IO.File]::WriteAllText($testInf, $exact.Replace('REV_00','REV_01'))
     if (Test-E138ValidationPackage $fixture.FullName) { $fail += 'E138 package matched wrong INF revision' }
   } finally {
-    foreach ($file in $testInf, $testRadio) { [IO.File]::Delete($file) }
-    foreach ($dir in $radioDir, $driverDir, $fixture) { [IO.Directory]::Delete($dir.FullName) }
+    foreach ($file in $testInf, $testRadio, $testPatch, $testRam) { [IO.File]::Delete($file) }
+    foreach ($dir in $fwDir, $fwRoot, $radioDir, $driverDir, $fixture) { [IO.Directory]::Delete($dir.FullName) }
   }
   foreach ($mtkDev in '7902', '7961', '0608', '7922', '0616') {
     if ("PCI\VEN_14C3&DEV_$mtkDev&SUBSYS_60401A3B&REV_00\4&1" -notmatch $SupportedCardPattern) { $fail += "14C3:$mtkDev not accepted" }
@@ -516,7 +527,9 @@ function Stop-FromTarget {
   $root = [IO.Path]::GetFullPath($Target).TrimEnd('\') + '\'
   # Never by path under a drive root or a folder that is not nekodrop's.
   $byPath = $root.Length -gt 4 -and ((Test-Path (Join-Path $root 'NekoDropService.exe')) -or (Test-Path (Join-Path $root 'python\python.exe')))
-  $ours = @(Get-Process nekodrop, nekodrop-radio, nekodrop-radio-rtl, nekodrop-radio-mt, nekodrop-radio-mtk, awdld, NekoDropService -ErrorAction SilentlyContinue) +
+  # The family radio is shared with E138 validation builds. Scope it to the
+  # target installation using the path check below.
+  $ours = @(Get-Process nekodrop, nekodrop-radio, nekodrop-radio-rtl, nekodrop-radio-mt, awdld, NekoDropService -ErrorAction SilentlyContinue) +
           @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
               try { $byPath -and $_.Path -and $_.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) } catch { $false } })
   # Processes started from elsewhere that name the folder on their command

@@ -19,12 +19,17 @@ bool read_mt7925_sar(const RegProxy &proxy, LUOBO_MT7925_BOARD_SAR &sar,
                 reply.mtds.status, reply.mtds.size, reply.mtgs.status, reply.mtgs.size);
   report = status;
   LUOBO_MT7925_BOARD_SAR decoded{};
-  if (reply.mtds.size > sizeof(reply.mtds.data) || reply.mtgs.size > sizeof(reply.mtgs.data) ||
+  if (reply.mtds.size > sizeof(reply.mtds.data) ||
       !LuoboDecodeMt7925Sar(false, reply.mtds.status, reply.mtds.data, reply.mtds.size,
-                           &decoded.Dynamic) ||
-      !LuoboDecodeMt7925Sar(true, reply.mtgs.status, reply.mtgs.data, reply.mtgs.size,
-                           &decoded.Geographic)) {
-    error = "MT7925 SAR methods returned unavailable or malformed data";
+                           &decoded.Dynamic)) {
+    error = "MT7925 dynamic SAR method unavailable or malformed";
+    return false;
+  }
+  if (decoded.Dynamic.Enabled &&
+      (reply.mtgs.size > sizeof(reply.mtgs.data) ||
+       !LuoboDecodeMt7925Sar(true, reply.mtgs.status, reply.mtgs.data, reply.mtgs.size,
+                            &decoded.Geographic))) {
+    error = "MT7925 geographic SAR method unavailable or malformed for the enabled dynamic profile";
     return false;
   }
   sar = decoded;

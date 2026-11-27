@@ -437,13 +437,18 @@ bool MtkDevice::probe(std::string &error, const std::wstring &instance_id) {
   log("regproxy opened: PCI " + hex32((_proxy.vendor() << 16) | _proxy.device()) +
       " BAR0=" + hex32(_proxy.bar_len()));
 
+  if (is_e138_instance(instance_id) &&
+      (_proxy.vendor() != PCI_VENDOR_MEDIATEK || _proxy.device() != 0x7925u)) {
+    error = "E138 instance does not report the expected MT7925 PCI ID";
+    return false;
+  }
   if (_proxy.vendor() != PCI_VENDOR_MEDIATEK && _proxy.vendor() != 0x0b48) {
     error = "bound card is not MediaTek (vendor=" + hex32(_proxy.vendor()) + ")";
     return false;
   }
   if (_proxy.vendor() == PCI_VENDOR_MEDIATEK && _proxy.device() == 0x7925u) {
-    if (instance_id.empty()) {
-      error = "MT7925 requires the dedicated E138 radio and an exact PCI instance ID";
+    if (!is_e138_instance(instance_id)) {
+      error = "MT7925 requires E138 mode and an exact PCI instance ID";
       return false;
     }
     _probe_complete = mt7925_probe(error);

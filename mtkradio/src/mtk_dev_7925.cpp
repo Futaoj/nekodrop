@@ -19,6 +19,7 @@
 #include "mt7925_mcu_wait.h"
 #include "mt7925_rx.h"
 #include "mt7925_sar.h"
+#include "mt7925_txpower_info.h"
 
 extern "C" {
 #include "clc_power.h"
@@ -203,7 +204,8 @@ bool MtkDevice::is_e138_instance(const std::wstring &instance) {
 }
 
 bool MtkDevice::check_e138_passive(const std::wstring &instance, const std::string &firmware,
-                                  StopCheck stop, uint32_t &beacons, unsigned &frames, std::string &error) {
+                                  StopCheck stop, uint32_t &beacons, unsigned &frames,
+                                  std::string &error, const Logger &report) {
   beacons = 0;
   frames = 0;
   if (!is_e138_instance(instance) || !std::filesystem::u8path(firmware).is_absolute() || !stop || stop()) {
@@ -215,15 +217,11 @@ bool MtkDevice::check_e138_passive(const std::wstring &instance, const std::stri
   // MCU/download and RX rings. No frame contents or addresses leave the scan.
   auto dev = std::make_unique<MtkDevice>(Logger{});
   dev->_stopping = std::move(stop);
-  dev->_country = "00";
-  dev->_channel = 0;
-  dev->_width_mhz = 20;
-  if (!dev->_proxy.open(error, instance)) return false;
-  if (dev->_proxy.vendor() != 0x14c3 || dev->_proxy.device() != 0x7925) {
-    error = "selected PCI instance is not an MT7925";
-    return false;
-  }
-  if (!dev->mt7925_acquire_chip(error) || !dev->mt7925_load_firmware(firmware, error)) return false;
+  Options options;
+  options.instance_id = instance;
+  options.country = "00";
+  options.firmware_dir = firmware;
+  if (!dev->open(options, error)) return false;
   if (dev->_tx_data.count || dev->_mt7925_power_ready || dev->_mt7925_active_lab || dev->_stopping()) {
     error = "passive scan stopped or unexpected active radio state";
     return false;
@@ -233,24 +231,42 @@ bool MtkDevice::check_e138_passive(const std::wstring &instance, const std::stri
     error = "channel 44 passive scan stopped, refused or incomplete";
     return false;
   }
+  // Scanning may have restored a different RF channel. Report the firmware's
+  // channel-band field verbatim; this is telemetry, never an input to TX policy.
+  mt7925::TxPowerReadback info{};
+  const auto &request = mt7925::txpower_read_request;
+  std::string observed;
+  const int status = dev->mt7925_exchange(mt7925::txpower_command, request.data(), sizeof(request), 1000,
+      [&](uint8_t seq, const uint8_t *packet, uint32_t size) {
+        if (size >= 56 && packet[37] == seq && !(packet[38] & 4) && packet[36] != 1)
+          observed = " event=" + hex32(packet[36]) + " declared=" + std::to_string(rd16(packet + 32)) +
+                     " tlv=" + std::to_string(rd16(packet + 50)) + " category=" + std::to_string(packet[52]) +
+                     " phy=" + std::to_string(packet[53]);
+        return mt7925::decode_txpower_info(seq, packet, size, info);
+      });
+  if (dev->_stopping()) {
+    error = "passive check stopped during firmware power readback";
+    return false;
+  }
+  if (report) {
+    if (status == MT_OK) {
+      std::string result = "MT7925 current TMAC table: phy=" + std::to_string(info.phy) +
+          " channel_band_raw=" + std::to_string(info.channel_band) + " format_raw=" + std::to_string(info.format) +
+          " tag=" + std::to_string(info.tag) + " available_rates=" + std::to_string(info.available) +
+          "/" + std::to_string(mt7925::txpower_rate_count);
+      if (info.available)
+        result += " raw_min=" + std::to_string(info.lowest) + " raw_max=" + std::to_string(info.highest);
+      report(result);
+    } else {
+      report("MT7925 current TMAC table unavailable: transport=" + std::to_string(status) + observed);
+    }
+  }
   return true;
 }
 
 bool MtkDevice::mt7925_probe(std::string &error) {
-  // Check this board's ACPI endpoint before taking ownership, restarting its
-  // firmware or publishing DMA rings. Power programming reads the tables again
-  // just before use so it never relies on a stale preflight.
-  LUOBO_MT7925_BOARD_SAR board_sar{};
-  std::string sar_report;
-  if (!read_mt7925_sar(_proxy, board_sar, sar_report, error)) {
-    if (!sar_report.empty()) log("MT7925 SAR " + sar_report);
-    return false;
-  }
-
-  return mt7925_acquire_chip(error);
-}
-
-bool MtkDevice::mt7925_acquire_chip(std::string &error) {
+  // Both modes start with the firmware's passive world domain. The active
+  // paths read platform limits when calculating power, before enabling TX.
   _is_mt7925 = true;
   _l1_base = 0xffffffffu;
 

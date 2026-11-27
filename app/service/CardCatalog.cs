@@ -362,7 +362,7 @@ public static class CardCatalog
         foreach (int channel in new[] { 44, 149 })
             Check(SameLaunch(BuildRadioLaunch(Mt7925E138, channel, false, "CN", null, false, false,
                     instanceId: board, stopFile: @"C:\run\session.stop"),
-                "nekodrop-radio-mt7925-fast.exe", "--e138-fast", "--indoor", "--country", "CN", "--channel", channel.ToString(),
+                "nekodrop-radio-mtk.exe", "--e138-fast", "--indoor", "--country", "CN", "--channel", channel.ToString(),
                 "--firmware", Mt7925RadioBackend.FirmwareDirectory, "--instance", board, "--stop-file", @"C:\run\session.stop"),
                 $"E138 indoor channel {channel} launch args");
         foreach (var (channel, country, instance) in new[] { (6, "CN", board), (44, "00", board), (149, "CN", board.Replace("REV_00", "REV_01")) })

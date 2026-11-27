@@ -125,7 +125,7 @@ public sealed class Mt76RadioBackend : IRadioBackend
 public sealed class Mt7925RadioBackend : IRadioBackend
 {
     public RadioBackendKind Kind => RadioBackendKind.Mt7925;
-    public string ExeName => "nekodrop-radio-mt7925-fast.exe";
+    public string ExeName => MtkRadioBackend.FamilyExe;
     public static string FirmwareDirectory => Path.Combine(AppContext.BaseDirectory, "radio", "firmware", "mt7925");
     public static bool IsFastChannel(int channel) => channel is 44 or 149;
     public static bool IsHostReady(string line, int channel) => IsFastChannel(channel) &&
@@ -152,7 +152,8 @@ public sealed class Mt7925RadioBackend : IRadioBackend
 public sealed class MtkRadioBackend : IRadioBackend
 {
     public RadioBackendKind Kind => RadioBackendKind.MtkRadio;
-    public string ExeName => "nekodrop-radio-mtk.exe";
+    public const string FamilyExe = "nekodrop-radio-mtk.exe";
+    public string ExeName => FamilyExe;
 
     public IReadOnlyList<string> BuildArgs(RadioStart s)
     {

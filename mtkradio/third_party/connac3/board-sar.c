@@ -78,10 +78,12 @@ static bool EvalBoardSar5g(const LUOBO_MT7925_BOARD_SAR *sar, unsigned subband,
     unsigned region, int cap, int *limit)
 {
     const LUOBO_MT7925_SAR_TABLE *d = &sar->Dynamic, *g = &sar->Geographic;
-    if ((d->State != LuoboSarAbsent && d->State != LuoboSarDynamic) ||
-        (g->State != LuoboSarAbsent && g->State != LuoboSarGeographic)) return false;
+    if (d->State != LuoboSarAbsent && d->State != LuoboSarDynamic) return false;
     int board = 127;
     if (d->State == LuoboSarDynamic && d->Enabled) {
+        /* mt792x_init_acpi_sar_power consults geography only for an enabled
+           dynamic profile. An unread geographical table can tighten this path. */
+        if (g->State != LuoboSarAbsent && g->State != LuoboSarGeographic) return false;
         /* Zero is a valid half-dBm ceiling. Only 0xff denotes no limit. */
         uint8_t dyn = subband == 0 ? d->DynamicLimit : d->Dynamic5g[subband];
         board = dyn == 0xff ? 127 : dyn;

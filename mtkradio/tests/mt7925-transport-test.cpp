@@ -5,6 +5,7 @@
 #include "mt7925_regs.h"
 #include "mt7925_active.h"
 #include "mt7925_mcu_wait.h"
+#include "mt7925_txpower_info.h"
 #include "mt7925_ba.h"
 #include "mt7925-ba-cases.h"
 #include "mt7925-link-cases.h"
@@ -254,6 +255,65 @@ void verify_abort_wait() {
       [&](unsigned) { return Rx0Peek{true, true, ack.data(), ack_bytes}; }, never_decode) == MT_FW_TIMEOUT);
   assert(peek_mcu_reply(0, 2, 4, false,
       [](unsigned i) { assert(i == 0); return Rx0Peek{}; }, never_decode) == MT_FW_TIMEOUT);
+}
+
+void verify_power_readback() {
+  using namespace mtk::mt7925;
+  static_assert(txpower_rate_count == 417);
+  // sizeof(mt7925_mcu_rxd) + sizeof(mt7925_txpwr_event), from the upstream ABI.
+  std::array<uint8_t, 893> packet{};
+  const auto set16 = [&](unsigned at, unsigned value) {
+    packet[at] = static_cast<uint8_t>(value);
+    packet[at + 1] = static_cast<uint8_t>(value >> 8);
+  };
+  set16(32, 861);
+  set16(34, 0x3800);
+  packet[36] = 0x2a;
+  packet[37] = 3;
+  set16(50, 841);  // E138 firmware reports TLV body length, excluding tag + length.
+  packet[52] = 5;
+  packet[54] = 1;
+  packet[55] = 1;
+  std::fill_n(packet.data() + 56, 834, 127);
+  TxPowerReadback info{};
+  const auto decode = [&] { return decode_txpower_info(3, packet.data(), packet.size(), info); };
+  assert(decode() == MT_OK && info.available == 0);
+  packet[56] = 0x80;
+  packet[57] = 126; // other PHY column
+  packet[56 + 2 * 416] = 12;
+  assert(decode() == MT_OK && info.available == 2 && info.lowest == -128 && info.highest == 12);
+  assert(info.phy == 0 && info.channel_band == 1 && info.format == 1);
+  packet[37] = 5;
+  assert(decode() == MT_PENDING);
+  packet[37] = 3;
+  packet[38] = 4;
+  assert(decode() == MT_PENDING);
+  packet[38] = 0;
+  packet[53] = 1;
+  assert(decode() == MT_PENDING);
+  packet[53] = 0;
+  packet[52] = 2; // request and response have distinct category IDs
+  assert(decode() == MT_PENDING);
+  packet[52] = 5;
+  set16(50, 840);
+  assert(decode() == MT_INVALID && info.available == 2);
+  set16(50, 842);
+  assert(decode() == MT_INVALID);
+  set16(50, 845);  // Incorrect header-inclusive interpretation.
+  assert(decode() == MT_INVALID);
+  set16(50, 841);
+  assert(decode_txpower_info(3, packet.data(), packet.size() - 1, info) == MT_INVALID);
+  packet[36] = 0x43;
+  assert(decode() == MT_PENDING);
+  packet[36] = 1;
+  set16(32, 20);
+  packet[44] = 0x2b;
+  set16(50, 0);
+  assert(decode() == MT_PENDING);
+  packet[48] = 4;
+  assert(decode() == MT_FW_PROTOCOL);
+  packet[44] = 0x2c;
+  assert(decode() == MT_PENDING && info.available == 2);
 }
 
 void verify_passive_scan() {
@@ -724,6 +784,7 @@ int main(int argc, char **argv) {
   verify_mcu();
   verify_abort_wait();
   verify_passive_scan();
+  verify_power_readback();
   verify_active_wire();
   verify_awdl_rates();
   verify_mt7925_ba_cases();

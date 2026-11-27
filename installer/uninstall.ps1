@@ -74,7 +74,8 @@ function Stop-FromTarget {
   $keep = @(Get-ProtectedProcessIds)
   # Everything running from the install folder, the AirDrop engine's python.exe
   # too (#22). The uninstaller and this PowerShell process are not ours to kill.
-  $ours = @(Get-Process nekodrop, nekodrop-radio, nekodrop-radio-rtl, nekodrop-radio-mt, nekodrop-radio-mtk, awdld -ErrorAction SilentlyContinue)
+  # Scope the shared MediaTek family radio to this installation by path below.
+  $ours = @(Get-Process nekodrop, nekodrop-radio, nekodrop-radio-rtl, nekodrop-radio-mt, awdld -ErrorAction SilentlyContinue)
   $ours += @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
       try {
         $byPath -and $_.Path -and $_.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -and

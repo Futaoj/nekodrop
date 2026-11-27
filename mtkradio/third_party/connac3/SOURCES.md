@@ -17,3 +17,11 @@ nekodrop's own code. [LICENSE](LICENSE) contains the Clear BSD license.
 
 The Connac3 receive Block Ack station commands in `src/mt7925_ba.h` follow the
 [upstream Linux MT7925 MCU layout](https://github.com/torvalds/linux/blob/master/drivers/net/wireless/mediatek/mt76/mt7925/mcu.c).
+
+The passive TMAC power-table readback uses the pinned mt76
+[request and response layout](https://github.com/openwrt/mt76/blob/4d7f2bed49cde7f1aa3b6e6e2d0bd8dc869f722e/mt7925/mcu.h#L64-L91)
+and [query](https://github.com/openwrt/mt76/blob/4d7f2bed49cde7f1aa3b6e6e2d0bd8dc869f722e/mt7925/mcu.c#L2447-L2475).
+The unsolicited-bit check, sequence matching and message bounds apply before
+the decoder reads the rate table. MediaTek's gen4m identifies the
+[TXPOWER event](https://github.com/MotorolaMobilityLLC/vendor-mediatek-kernel_modules-connectivity-wlan-core-gen4m/blob/6d1f7b3ca7a6c42141af60c6ce573eac73c45e84/include/nic_uni_cmd_event.h#L4885)
+and the [all-rates response category](https://github.com/MotorolaMobilityLLC/vendor-mediatek-kernel_modules-connectivity-wlan-core-gen4m/blob/6d1f7b3ca7a6c42141af60c6ce573eac73c45e84/include/nic_cmd_event.h#L88).

@@ -42,6 +42,7 @@
 #include <mutex>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -277,10 +278,18 @@ constexpr uint8_t kNoPeerAway[16] = {0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
 
 } // namespace
 
-int main(int argc, char **argv) {
-  SetConsoleCtrlHandler(on_console, TRUE);
-  timeBeginPeriod(1);
+#ifdef NEKODROP_E138_VALIDATION
+int run_e138_radio();
+#endif
 
+int main(int argc, char **argv) {
+  if (argc == 2 && std::string_view(argv[1]) == "--help") {
+    std::puts("MT7921/MT7922: nekodrop-radio-mtk <channel> [--width MHz] [--country CC] [--firmware DIR] [--sta-config FILE] [--he80]");
+#ifdef NEKODROP_E138_VALIDATION
+    std::puts("MT7925 E138: --check-passive or --e138-fast --indoor --country CN [--channel 44|149], plus --instance ID --firmware DIR --stop-file FILE");
+#endif
+    return 0;
+  }
   bool probe_only = false;
   bool reset_only = false;
   bool boot_test = false;
@@ -296,7 +305,17 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; i++) {
     const std::string a = argv[i];
     const auto next_val = [&]() -> std::string { return (i + 1 < argc) ? argv[++i] : ""; };
-    if (a == "--probe") {
+    // Reserve E138 options in both builds. An incomplete E138 invocation
+    // must never fall through to opening the first available register proxy.
+    if (a == "--e138-fast" || a == "--check-passive" || a == "--instance" ||
+        a == "--stop-file" || a == "--indoor" || a == "--channel") {
+#ifdef NEKODROP_E138_VALIDATION
+      return run_e138_radio();
+#else
+      log_line("This mtkradio build does not include E138 validation modes");
+      return 2;
+#endif
+    } else if (a == "--probe") {
       probe_only = true;
     } else if (a == "--reset") {
       reset_only = true;
@@ -326,6 +345,8 @@ int main(int argc, char **argv) {
     }
   }
   if (channel <= 14) width = 20;
+  SetConsoleCtrlHandler(on_console, TRUE);
+  timeBeginPeriod(1);
 
   mtk::MtkDevice dev(log_line);
   dev.set_stop_check(stopping);

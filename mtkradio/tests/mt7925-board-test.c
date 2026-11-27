@@ -63,6 +63,14 @@ static void VerifyLimits(void)
     dyn2[4] = 0;
     Decode(false, dyn2, sizeof(dyn2), &oem.Dynamic);
     assert(LuoboMt7925BoardSarLimit(&oem, 36, 1, 40, &cap) && cap == 40);
+    oem.Geographic.State = LuoboSarUnknown;
+    assert(LuoboMt7925BoardSarLimit(&oem, 36, 1, 40, &cap) && cap == 40);
+    oem.Dynamic.Enabled = true;
+    assert(!LuoboMt7925BoardSarLimit(&oem, 36, 1, 40, &cap));
+    assert(LuoboDecodeMt7925Sar(false, 0xc0000034u, NULL, 0, &oem.Dynamic));
+    assert(LuoboMt7925BoardSarLimit5g(&oem, 149, 1, 12, &cap) && cap == 12);
+    assert(!LuoboDecodeMt7925Sar(false, 0xc0000128u, NULL, 0, &oem.Dynamic));
+    assert(!LuoboMt7925BoardSarLimit5g(&oem, 149, 1, 12, &cap));
     assert(LuoboDecodeMt7925Sar(false, 0xc0000034u, NULL, 0, &oem.Dynamic));
     assert(LuoboDecodeMt7925Sar(true, 0xc0000034u, NULL, 0, &oem.Geographic));
     assert(LuoboMt7925BoardSarLimit(&oem, 36, 0, -2, &cap) && cap == -2);
