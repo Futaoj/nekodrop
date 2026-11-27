@@ -494,7 +494,7 @@ function Wireless-Summary($dev) {
   $hw = if ($c.Bus -and $c.HardwareId -and $c.HardwareId -ne $c.Bus) { "$($c.Bus)\$($c.HardwareId)" } else { $c.HardwareId }
   return "$(Dev-Name $dev) (``$(Redact $hw)``): $($c.Chip), $($c.Status)"
 }
-$procs = @('nekodrop-radio', 'nekodrop-radio-rtl', 'nekodrop-radio-mt', 'nekodrop-radio-mtk', 'nekodrop-radio-mt7925', 'awdld', 'awdld-mt7925', 'nekodrop', 'NekoDropService') | ForEach-Object {
+$procs = @('nekodrop-radio', 'nekodrop-radio-rtl', 'nekodrop-radio-mt', 'nekodrop-radio-mtk', 'nekodrop-radio-mt7925', 'nekodrop-radio-mt7925-fast', 'awdld', 'awdld-mt7925', 'nekodrop', 'NekoDropService') | ForEach-Object {
   $p = Get-Process $_ -ErrorAction SilentlyContinue
   if ($p) { "$_ (running)" } else { "$_ (not running)" }
 }

@@ -41,7 +41,7 @@
 
 - **53 MB/s both ways:** 846 MB transferred in ~16 s with 0 drops on an Intel AX201, reliable back-to-back sends, and no idle BLE interference knocking unlocked iPhones off Wi-Fi ([benchmarks](#speed)).
 - **Stay online while using AirDrop:** Intel and MediaTek (MT7902 / MT7922) run **Concurrent mode** (Wi-Fi + AirDrop on one card); keeps your original Windows Wi-Fi MAC address by default (preserving DHCP leases and MAC filters) and gracefully returns the card to Windows on unsupported router encryption (such as WPA/TKIP mixed mode).
-- **Pure user-mode, zero kernel drivers:** Powered by a UMDF register-proxy driver and 4 user-mode radio backends (Intel / MediaTek / Realtek). **No disabling Secure Boot, no Windows Test Signing mode**, and one-click rollback to stock Windows Wi-Fi.
+- **User-mode backends for the standard card profiles:** Powered by a UMDF register-proxy driver and 4 user-mode radio backends (Intel / MediaTek / Realtek). **No disabling Secure Boot, no Windows Test Signing mode**, and one-click rollback to stock Windows Wi-Fi. The experimental MT7925 E138 port requires a test-signed driver.
 - **Native Windows UX:** AirDrop-style radar view, Windows 11 first-level Explorer right-click (**Send with nekodrop**), Windows Share sheet integration, rich toast preview with one-click clipboard copy, clear unsupported file/folder warning cards ([supported file types](docs/FILE-TYPES.md)), and one-click clear staged files.
 - **Experimental high-throughput switches (opt-in):** Intel Concurrent mode offers optional **Wi-Fi 6 (HE)** station connectivity and **Data-plane acceleration** (64-slot host STA RX Block Ack reordering + dual async TAP writers, measured 156–200 Mbps multi-connection).
 - **Install and forget:** Single installer, built-in auto-updater (Stable / Preview channels), automatic service recovery, and all experimental features kept strictly opt-in.
@@ -70,7 +70,7 @@ Uses your laptop or desktop's built-in PCIe / CNVi Wi-Fi card — no external US
 | **MediaTek / AMD** | `mtradio` | MT7902 | 5 GHz Concurrent Wi-Fi / On demand | ✅ Tested both ways |
 | **MediaTek / AMD** | `mtkradio` | MT7922 / AMD RZ616 | 5 GHz Concurrent Wi-Fi (exp.) / On demand | ✅ Tested both ways |
 | **MediaTek / AMD** | `mtkradio` | MT7921 / AMD RZ608 | On demand | 🧪 Experimental |
-| **MediaTek** | MT7925 E138 | E138105B / REV_00 | On demand, optional 5 GHz indoors in mainland China | Experimental, requires test signing. iPhone uploads averaged 39.1–41.0 MB/s. [Measurements](mt7925/README.md) |
+| **MediaTek** | `mt7925` | MT7925 E138105B / REV_00 | On demand, optional 5 GHz indoors in mainland China | Experimental, requires test signing. iPhone uploads averaged 39.1–41.0 MB/s. [Measurements](mt7925/README.md) |
 | **Realtek** | `devourer` | RTL8852CE | On demand | ✅ Community-tested (~24.5 MB/s) |
 
 > Unlisted cards are not supported for AWDL (Qualcomm, Broadcom, Intel BE201/BE211, legacy Intel 9260, etc.). Full PCI IDs, firmware, and per-card notes: **[Card compatibility](docs/COMPATIBILITY.md)** · **[Card status & porting a new card](docs/CARDS.md)**.

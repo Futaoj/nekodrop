@@ -41,7 +41,7 @@
 
 - **双向 53 MB/s 极速直连**：Intel AX201 实测 846 MB 文件约 16 秒传完、0 丢包，连发稳定不掉线，且不干扰亮屏 iPhone 的正常 Wi-Fi（[实测数据](#速度)）。
 - **单卡同时上网 + AirDrop**：Intel 与 MediaTek（MT7902 / MT7922）支持**并发模式**，一张网卡同时连 Wi-Fi 上网与收发 AirDrop；默认沿用原网卡 MAC 地址（路由器 DHCP 固定 IP、MAC 过滤照常生效），遇到 WPA/TKIP 混合加密等旧路由器时自动说明原因并优雅退回 Windows Wi-Fi。
-- **纯用户态、零内核驱动门槛**：基于 UMDF 寄存器代理驱动与 4 套独立用户态无线电后端（Intel / MediaTek / Realtek），**无需关闭 Secure Boot、无需开启 Windows 测试模式**，出问题一键回退到 Windows 原厂 Wi-Fi。
+- **常规网卡使用用户态后端**：基于 UMDF 寄存器代理驱动与 4 套独立用户态无线电后端（Intel / MediaTek / Realtek），**无需关闭 Secure Boot、无需开启 Windows 测试模式**，出问题一键回退到 Windows 原厂 Wi-Fi。实验性 MT7925 E138 适配另需测试签名驱动。
 - **像原生系统一样顺手**：AirDrop 风格雷达视图、资源管理器一级右键 **用 nekodrop 发送**、Windows 共享面板、系统通知预览与一键复制剪贴板、不可发送文件类型/文件夹清晰引导卡片（[支持的文件类型](docs/FILE-TYPES.zh-CN.md)）、一键清空待发送列表。
 - **实验性高阶性能开关（默认关闭）**：Intel 并发模式可选开启 **Wi-Fi 6 (HE) 上网** 与 **数据面加速**（64 槽位 STA RX Block Ack 重排 + 双线程异步 TAP 写入器，多线程下行实测 156–200 Mbps）。
 - **装上就不用管**：单安装包、内置自动更新（稳定版 / 预览版通道可选）、服务异常自动恢复，高风险实验特性全部默认关闭。
@@ -70,7 +70,7 @@ Intel AX201、Windows 11、`v2.2.9+`，开启高吞吐模式（HE80 + MTU 1500�
 | **MediaTek / AMD** | `mtradio` | MT7902 | 5 GHz 同时连 Wi-Fi / 按需 | ✅ 双向实测可用 |
 | **MediaTek / AMD** | `mtkradio` | MT7922 / AMD RZ616 | 5 GHz 同时连 Wi-Fi（实验性）/ 按需 | ✅ 双向实测可用 |
 | **MediaTek / AMD** | `mtkradio` | MT7921 / AMD RZ608 | 按需接管 | 🧪 实验性 |
-| **MediaTek** | MT7925 E138 | E138105B / REV_00 | 按需接管，可选中国大陆室内 5 GHz | 实验性，需测试签名。iPhone → Windows 整份平均 39.1–41.0 MB/s。[实测与安装](mt7925/README.md) |
+| **MediaTek** | `mt7925` | MT7925 E138105B / REV_00 | 按需接管，可选中国大陆室内 5 GHz | 实验性，需测试签名。iPhone → Windows 整份平均 39.1–41.0 MB/s。[实测与安装](mt7925/README.md) |
 | **Realtek** | `devourer` | RTL8852CE | 按需接管 | ✅ 社区实测可用（约 24.5 MB/s） |
 
 > 未列出的无线网卡暂不支持 AWDL（如高通 Qualcomm、博通 Broadcom、Intel BE201/BE211、老款 Intel 9260 等）。完整 PCI ID、固件版本与每张卡的详细说明见 **[网卡兼容性](docs/COMPATIBILITY.zh-CN.md)** · **[网卡状态与适配新网卡](docs/CARDS.zh-CN.md)**。

@@ -457,3 +457,74 @@
  /* How wide a channel the radio receives on, in MHz. */
  uint8_t radio_client_width_mhz(const struct radio_client *client);
  
+--- /dev/null
++++ b/awdl/tests/mt7925_discovery_test.c
+@@ -0,0 +1,68 @@
++/* Offline test. Compile with awdl/win from the patched winawdl tree on the include path. */
++#include <stdio.h>
++#define CHECK(expr) do { if (!(expr)) { fprintf(stderr, "failed: %s\n", #expr); return 1; } } while (0)
++
++#include "mt7925_discovery_window.h"
++
++int main(void) {
++	uint8_t frame[74] = {0x33, 0x33, 0, 0, 0, 0xfb};
++	frame[12] = 0x86;
++	frame[13] = 0xdd;
++	frame[14] = 0x60;
++	frame[19] = 20;
++	frame[20] = 17;
++	frame[38] = 0xff;
++	frame[39] = 0x02;
++	frame[53] = 0xfb;
++	frame[56] = 0x14;
++	frame[57] = 0xe9;
++	frame[59] = 20;
++	CHECK(mt7925_discovery_is_mdns(frame, sizeof(frame)));
++	CHECK(!mt7925_discovery_is_mdns(frame, sizeof(frame) - 1));
++	frame[57]++;
++	CHECK(!mt7925_discovery_is_mdns(frame, sizeof(frame)));
++	frame[57]--;
++	frame[20] = 58; /* ICMPv6 multicast never takes the alternate window. */
++	CHECK(!mt7925_discovery_is_mdns(frame, sizeof(frame)));
++	frame[20] = 17;
++	frame[53] = 0xfa;
++	CHECK(!mt7925_discovery_is_mdns(frame, sizeof(frame)));
++
++	CHECK(mt7925_fast_enabled(0x25, 44, 80, true, "1"));
++	CHECK(mt7925_fast_enabled(0x25, 149, 80, true, "1"));
++	CHECK(!mt7925_fast_enabled(0, 149, 80, true, "1"));
++	CHECK(!mt7925_fast_enabled(0x25, 149, 20, true, "1"));
++	CHECK(!mt7925_fast_enabled(0x25, 149, 80, false, "1"));
++	CHECK(!mt7925_fast_enabled(0x25, 149, 80, true, "0"));
++	CHECK(mt7925_extended_discovery(true, 44));
++	CHECK(!mt7925_extended_discovery(true, 149));
++	CHECK(!mt7925_extended_discovery(false, 44));
++	CHECK(!mt7925_fast_enabled(0x25, 44, 20, true, "1"));
++	CHECK(!mt7925_fast_enabled(0x25, 44, 80, false, "1"));
++	CHECK(!mt7925_fast_enabled(0, 44, 80, true, "1"));
++	CHECK(!mt7925_fast_enabled(0x25, 36, 80, true, "1"));
++	CHECK(!mt7925_fast_enabled(0x25, 44, 80, true, ""));
++	CHECK(!mt7925_fast_enabled(0x25, 44, 80, true, "10"));
++
++	CHECK(mt7925_discovery_in_window(44, 44, 0));
++	CHECK(!mt7925_discovery_in_window(44, 149, 0));
++	CHECK(!mt7925_discovery_in_window(36, 44, 0));
++	CHECK(!mt7925_discovery_in_window(44, 44, 0.001));
++	CHECK(!mt7925_discovery_in_window(44, 44, -0.001));
++	CHECK(mt7925_discovery_fresh(513000, 1000));
++	CHECK(!mt7925_discovery_fresh(513001, 1000));
++	CHECK(!mt7925_discovery_fresh(999, 1000));
++	CHECK(!mt7925_discovery_fresh(1000, 0));
++
++	/* A confirmed legacy 149 slot may give way to only the adjacent 44 slot. */
++	CHECK(mt7925_discovery_defer_legacy(1, false, 149, 44, 44, 513000, 1000));
++	CHECK(!mt7925_discovery_defer_legacy(1, true, 149, 44, 44, 513000, 1000));
++	CHECK(!mt7925_discovery_defer_legacy(2, false, 149, 44, 44, 513000, 1000));
++	CHECK(!mt7925_discovery_defer_legacy(1, false, 0, 44, 44, 513000, 1000));
++	CHECK(!mt7925_discovery_defer_legacy(1, false, 0xff, 44, 44, 513000, 1000));
++	CHECK(!mt7925_discovery_defer_legacy(1, false, 44, 44, 44, 513000, 1000));
++	CHECK(!mt7925_discovery_defer_legacy(1, false, 149, 36, 44, 513000, 1000));
++	CHECK(!mt7925_discovery_defer_legacy(1, false, 149, 44, 149, 513000, 1000));
++	CHECK(!mt7925_discovery_defer_legacy(1, false, 149, 44, 44, 513001, 1000));
++	CHECK(!mt7925_discovery_defer_legacy(1, false, 149, 44, 44, 513000, 0));
++}
