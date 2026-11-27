@@ -286,6 +286,16 @@ int main(int argc, char **argv) {
       /* FCS (#24/#25): CRC-32 check value, then a frame with its FCS. */
       const uint8_t nine[] = {'1', '2', '3', '4', '5', '6', '7', '8', '9'};
       CHECK(awdl::crc32_ieee(nine, 9) == 0xCBF43926u, "CRC-32 check value");
+      CHECK(awdl::crc32_ieee(nullptr, 0) == 0, "empty CRC-32");
+      /* Independent IEEE CRC-32 vectors for unaligned input and every tail length. */
+      alignas(8) uint8_t pattern[72];
+      for (size_t i = 0; i < sizeof(pattern); ++i) pattern[i] = static_cast<uint8_t>(i * 37 + 11);
+      constexpr uint32_t expected[] = {0xA454924Bu, 0x63AD523Bu, 0xE30FCC30u, 0xDF8C8A7Fu,
+                                       0x040BC0EFu, 0xE5DEDFBDu, 0x2585660Fu, 0xD3FC1BEDu};
+      bool tails_ok = true;
+      for (size_t tail = 0; tail < 8; ++tail)
+        tails_ok &= awdl::crc32_ieee(pattern + 1, 64 + tail) == expected[tail];
+      CHECK(tails_ok, "CRC-32 with unaligned monitor frames and partial final words");
       std::vector<uint8_t> g = f;
       g.push_back(21); g.push_back(2); g.push_back(0); g.push_back(3); g.push_back(2); /* version TLV */
       const size_t bare = g.size();

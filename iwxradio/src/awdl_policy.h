@@ -7,6 +7,7 @@
  * around them is replaced by plain structs.
  */
 #pragma once
+#include "awdl_fcs.h"
 #include <vector>
 
 #include <cstddef>
@@ -110,40 +111,6 @@ struct PeerCountry {
 inline bool is_awdl_action(const uint8_t *f, size_t len) {
   return len >= 30 && f[0] == 0xd0 && f[24] == 0x7f && f[25] == 0x00 && f[26] == 0x17 &&
          f[27] == 0xf2 && f[28] == 0x08;
-}
-
-/* ------------------------------------------------------------- FCS */
-
-/* IEEE 802.3 CRC-32, as the 802.11 FCS uses. */
-inline uint32_t crc32_ieee(const uint8_t *p, size_t n) {
-  struct Table {
-    uint32_t t[256];
-    Table() {
-      for (uint32_t i = 0; i < 256; i++) {
-        uint32_t c = i;
-        for (int k = 0; k < 8; k++) c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
-        t[i] = c;
-      }
-    }
-  };
-  static const Table table;
-  uint32_t c = 0xFFFFFFFFu;
-  for (size_t i = 0; i < n; i++) c = table.t[(c ^ p[i]) & 0xff] ^ (c >> 8);
-  return c ^ 0xFFFFFFFFu;
-}
-
-/* The length without the FCS when the last four bytes are this frame's valid
- * FCS, else `len`. The monitor context asks for IWX_MAC_FILTER_IN_CRC32
- * ("append the FCS"), and whether the firmware does so differs between
- * cards: OWL rejects an AWDL action frame with any bytes after its last
- * TLV, before it marks a MIF, so a peer whose frames keep their FCS never
- * turns valid ("not valid yet", AX211/AX411, #24/#25). A frame without an
- * FCS matches by chance with odds of 2^-32. */
-inline size_t strip_valid_fcs(const uint8_t *f, size_t len) {
-  if (len < 14) return len;
-  const uint8_t *t = f + len - 4;
-  const uint32_t fcs = uint32_t(t[0]) | uint32_t(t[1]) << 8 | uint32_t(t[2]) << 16 | uint32_t(t[3]) << 24;
-  return crc32_ieee(f, len - 4) == fcs ? len - 4 : len;
 }
 
 /* How an AWDL action frame's TLVs (after the 24-byte header and 16 fixed
