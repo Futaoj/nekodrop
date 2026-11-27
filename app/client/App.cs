@@ -442,6 +442,13 @@ public sealed class App : Application
                 Settings.RelayRules = Relay.Save([new RelayRule(iphone, phone), new RelayRule(ipad, phone), new RelayRule(phone, iphone)]);
                 return new SettingsWindow("mta");
             }, 0),
+            ("settings-mta-empty", () =>
+            {
+                Settings.MtaOn = true;
+                Settings.RelayOn = true;
+                Settings.RelayRules = [];
+                return new SettingsWindow("mta");
+            }, 0),
             ("settings-hardware", () => new SettingsWindow("hardware"), 0),
             ("settings-updates", () => new SettingsWindow("updates"), 0),
             ("history", () => new HistoryWindow(), 0),

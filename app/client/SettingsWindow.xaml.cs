@@ -636,6 +636,14 @@ public partial class SettingsWindow : Window
             Canvas.SetTop(t, y);
             canvas.Children.Add(t);
         }
+        if (_relayRules.Count == 0)
+        {
+            /* Nothing to draw yet: just the two lines, not an empty PC box under the text. */
+            canvas.Height = 48;
+            Label(L.T("relay.noRulesFlow"), 0, 6, width, dim, 13);
+            Label(L.T("relay.others"), 0, 28, width, dim);
+            return;
+        }
         Label(L.T("relay.colFrom"), 0, 0, colW, dim);
         Label(L.T("relay.colPc"), pcX, 0, pcW, dim);
         Label(L.T("relay.colTo"), width - colW, 0, colW, dim);
@@ -700,7 +708,6 @@ public partial class SettingsWindow : Window
             Arrow(new Point(colW, sy), new Point(pcX, midY + (sy - midY) * 0.25), working, color);
             Arrow(new Point(pcX + pcW, midY + (ty - midY) * 0.25), new Point(width - colW, ty), working, color);
         }
-        if (_relayRules.Count == 0) Label(L.T("relay.noRulesFlow"), 0, midY - 8, width, dim, 12);
         Label(L.T("relay.others"), 0, height - 16, width, dim);
     }
 
