@@ -54,6 +54,14 @@ static class TapMac
         return (Convert.ToByte(mac[..2], 16) & 1) != 0 ? null : mac; /* multicast bit */
     }
 
+    /// <summary>Formats a valid 12-hex MAC as "AA:BB:CC:DD:EE:FF", or null.</summary>
+    public static string? FormatColon(string? mac)
+    {
+        var v = Valid(mac);
+        if (v is null) return null;
+        return $"{v[0..2]}:{v[2..4]}:{v[4..6]}:{v[6..8]}:{v[8..10]}:{v[10..12]}";
+    }
+
     /// <summary>
     /// Gives the TAP adapter this address (null: back to its own). The adapter
     /// restarts. Returns "" or what went wrong.
@@ -87,7 +95,7 @@ static class TapMac
                 if (mac is null || TapMacNow() == mac) return "";
                 Thread.Sleep(250);
             }
-            return "";
+            return mac is not null && TapMacNow() != mac ? "adapter kept its own MAC address" : "";
         }
         catch (Exception e) { return e.Message; }
     }

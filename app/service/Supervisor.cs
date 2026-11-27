@@ -110,6 +110,7 @@ public sealed class Supervisor : IDisposable
                 ["dataPlaneAccel"] = _cfg.DataPlaneAccel,
                 ["stationWifi6"] = _cfg.StationWifi6,
                 ["keepWindowsMac"] = _cfg.KeepWindowsMac,
+                ["quickReleaseOnDemand"] = _cfg.QuickReleaseOnDemand,
                 ["card"] = _cardLabel,
                 ["manualCard"] = _cfg.ManualCard,
                 ["manualModel"] = _cfg.ManualModel,
@@ -250,31 +251,20 @@ public sealed class Supervisor : IDisposable
         Publish();
     }
 
-    /// <summary>The TAP adapter shows Windows' Wi-Fi address, or its own when that is turned off (#96).</summary>
+    /// <summary>
+    /// Cleans up any legacy TAP NetworkAddress override left by v2.3.5/v2.3.6 (#96).
+    /// Windows' Wi-Fi MAC is now carried in sta.conf (`mac=...`) and translated at
+    /// the TAP boundary so factory OUI MACs work without tap-windows6 rejecting them.
+    /// </summary>
     void EnsureTapMac()
     {
-        string? want;
         bool applied;
-        lock (_lock)
-        {
-            want = _cfg.KeepWindowsMac ? TapMac.Valid(_cfg.WindowsMac) : null;
-            applied = _cfg.TapMacApplied;
-        }
-        var now = TapMac.TapMacNow();
-        if (want is not null && now != want)
-        {
-            var why = TapMac.Apply(want);
-            if (why == "") lock (_lock) { _cfg.TapMacApplied = true; _cfg.Save(); }
-            Say(why == "" ? "Wi-Fi: the nekodrop adapter now uses Windows' Wi-Fi MAC address"
-                          : "Wi-Fi: could not give the nekodrop adapter Windows' MAC address: " + why);
-        }
-        else if (want is null && applied)
-        {
-            var why = TapMac.Apply(null);
-            if (why == "") lock (_lock) { _cfg.TapMacApplied = false; _cfg.Save(); }
-            Say(why == "" ? "Wi-Fi: the nekodrop adapter uses its own MAC address again"
-                          : "Wi-Fi: could not reset the nekodrop adapter's MAC address: " + why);
-        }
+        lock (_lock) applied = _cfg.TapMacApplied;
+        if (!applied) return;
+        var why = TapMac.Apply(null);
+        if (why == "") lock (_lock) { _cfg.TapMacApplied = false; _cfg.Save(); }
+        Say(why == "" ? "Wi-Fi: reset legacy TAP MAC override (air MAC translation is used instead)"
+                      : "Wi-Fi: could not reset legacy TAP MAC override: " + why);
     }
 
     /// <summary>Concurrent mode shows the router Windows' Wi-Fi MAC address (#96); a running radio restarts.</summary>
@@ -289,6 +279,20 @@ public sealed class Supervisor : IDisposable
         Say($"Wi-Fi: use Windows' MAC address: {(on ? "on" : "off")}");
         if (State is RadioState.On or RadioState.Starting)
             _ = Task.Run(() => Relaunch(_channel == 0 ? _cfg.StartChannel : _channel));
+        Publish();
+    }
+
+    /// <summary>In on-demand mode, give the Wi-Fi card back a few seconds after a transfer completes (#96).</summary>
+    public void SetQuickReleaseOnDemand(bool on)
+    {
+        lock (_lock)
+        {
+            if (_cfg.QuickReleaseOnDemand == on) return;
+            _cfg.QuickReleaseOnDemand = on;
+            _cfg.Save();
+            if (!on) _quickReleaseAt = DateTime.MinValue;
+        }
+        Say($"on-demand quick release after transfer: {(on ? "on" : "off")}");
         Publish();
     }
 
@@ -404,22 +408,29 @@ public sealed class Supervisor : IDisposable
         return "";
     }
 
+    DateTime _quickReleaseAt = DateTime.MinValue;
+    DateTime _quickReleaseCooldownUntil = DateTime.MinValue;
+
     /// <summary>The client wants AirDrop now (opened the window, a phone nearby is sharing).</summary>
-    public void Wake(bool retry = false)
+    public void Wake(bool retry = false, bool fromBle = false)
     {
         lock (_lock)
         {
             if (_holdFirmwareRetry && !retry) return;
+            var now = DateTime.UtcNow;
+            /* After quick release in on-demand mode, ignore passive BLE wake-ups
+             * briefly so a nearby unlocked iPad does not take the card right back (#96). */
+            if (fromBle && !retry && now < _quickReleaseCooldownUntil) return;
             /* Out of DMA memory (#94): a wake-up (a phone sharing nearby, every second
              * or so) restarted the radio at once and reset the back-off, so it retried
              * several times a second, each try locking gigabytes of pages to look for
              * low ones. The watchdog restarts when the back-off is over. */
-            var now = DateTime.UtcNow;
             if (!retry && ((_retryAt != DateTime.MinValue && now < _retryAt) || now < _dmaHoldUntil))
             {
                 _lastUse = now;
                 return;
             }
+            if (!fromBle) _quickReleaseAt = DateTime.MinValue;
         }
         _lastUse = DateTime.UtcNow;
         if (_cfg.Mode != NetMode.Off) Start("woken");
@@ -441,7 +452,21 @@ public sealed class Supervisor : IDisposable
         Publish();
     }
 
-    public void Touch() => _lastUse = DateTime.UtcNow;
+    public void Touch()
+    {
+        lock (_lock) _quickReleaseAt = DateTime.MinValue;
+        _lastUse = DateTime.UtcNow;
+    }
+
+    /// <summary>An AirDrop transfer finished: release the card soon when on-demand quick release is on (#96).</summary>
+    public void TransferDone()
+    {
+        lock (_lock)
+        {
+            if (EffectiveMode() == NetMode.OnDemand && State == RadioState.On && _cfg.QuickReleaseOnDemand)
+                _quickReleaseAt = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        }
+    }
 
     public void Start(string why)
     {
@@ -581,8 +606,11 @@ public sealed class Supervisor : IDisposable
                 lock (_lock) _staSsid = net?.Ssid ?? "";
                 if (net is not null && (net.Open || net.Passphrase is not null || net.PskHex is not null))
                 {
-                    staConf = Wlan.WriteStaConfig(net, _cfg.DataPlaneAccel, _cfg.StationWifi6);
-                    Say($"Wi-Fi: joining \"{net.Ssid}\" ({net.Security}, channel {net.Channel}) beside AirDrop");
+                    string? staMac;
+                    lock (_lock) staMac = _cfg.KeepWindowsMac ? TapMac.FormatColon(_cfg.WindowsMac) : null;
+                    staConf = Wlan.WriteStaConfig(net, _cfg.DataPlaneAccel, _cfg.StationWifi6, staMac);
+                    Say($"Wi-Fi: joining \"{net.Ssid}\" ({net.Security}, channel {net.Channel}) beside AirDrop" +
+                        (staMac is not null ? " (using Windows' Wi-Fi MAC address)" : ""));
                 }
                 else if (net is null && !wired && !_userOff && !_userChose &&
                          why is "Wi-Fi is not connected" or "no WLAN interface" or "" &&
@@ -1157,7 +1185,19 @@ public sealed class Supervisor : IDisposable
                 if (mtk && _mtkBackgroundScans < 4) _mtkBackgroundScans++;
                 WifiScan(background: true);
             }
-            if (EffectiveMode() == NetMode.OnDemand && State == RadioState.On &&
+            bool doQuickRelease = false;
+            lock (_lock)
+            {
+                if (_quickReleaseAt != DateTime.MinValue && DateTime.UtcNow >= _quickReleaseAt)
+                {
+                    _quickReleaseAt = DateTime.MinValue;
+                    doQuickRelease = EffectiveMode() == NetMode.OnDemand && State == RadioState.On && _cfg.QuickReleaseOnDemand;
+                    if (doQuickRelease) _quickReleaseCooldownUntil = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+                }
+            }
+            if (doQuickRelease)
+                Stop("transfer done (quick release)", giveBack: true);
+            else if (EffectiveMode() == NetMode.OnDemand && State == RadioState.On &&
                 DateTime.UtcNow - _lastUse > TimeSpan.FromSeconds(_cfg.IdleSeconds))
                 Stop("idle", giveBack: true);
             if (DateTime.UtcNow - _probeAt >= TimeSpan.FromSeconds(15))

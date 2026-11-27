@@ -94,6 +94,11 @@ public sealed class ServiceConfig
     public string ManualModel { get; set; } = "";
     /// <summary>Seconds without AirDrop use before on-demand mode gives the card back.</summary>
     public int IdleSeconds { get; set; } = 90;
+    /// <summary>
+    /// In on-demand mode, give the Wi-Fi card back to Windows a few seconds after a
+    /// transfer completes instead of waiting IdleSeconds (#96). Off by default.
+    /// </summary>
+    public bool QuickReleaseOnDemand { get; set; }
     /// <summary>Intel's own INF (oemNN.inf), remembered when the card is first taken.</summary>
     public string VendorInf { get; set; } = "";
 

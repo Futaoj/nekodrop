@@ -62,8 +62,10 @@ public sealed class ServiceLink : IDisposable
         catch (ObjectDisposedException) { }
     }
 
-    public void Wake(bool retry = false) => Send(new JsonObject { ["do"] = "wake", ["retry"] = retry });
+    public void Wake(bool retry = false, bool fromBle = false) =>
+        Send(new JsonObject { ["do"] = "wake", ["retry"] = retry, ["fromBle"] = fromBle });
     public void Touch() => Send(new JsonObject { ["do"] = "touch" });
+    public void TransferDone() => Send(new JsonObject { ["do"] = "transfer-done" });
     public void SetMode(string mode) => Send(new JsonObject { ["do"] = "mode", ["mode"] = mode });
     public void SetFastUnlock(bool on) => Send(new JsonObject { ["do"] = "fast-unlock", ["on"] = on });
     public void SetCoexPlan(bool on) => Send(new JsonObject { ["do"] = "coex-plan", ["on"] = on });
@@ -72,6 +74,7 @@ public sealed class ServiceLink : IDisposable
     public void SetDataPlaneAccel(bool on) => Send(new JsonObject { ["do"] = "data-plane-accel", ["on"] = on });
     public void SetStationWifi6(bool on) => Send(new JsonObject { ["do"] = "station-wifi6", ["on"] = on });
     public void SetKeepWindowsMac(bool on) => Send(new JsonObject { ["do"] = "keep-windows-mac", ["on"] = on });
+    public void SetQuickReleaseOnDemand(bool on) => Send(new JsonObject { ["do"] = "quick-release-ondemand", ["on"] = on });
     /// <summary>Asks for the card list and models (answered with a "cards" event).</summary>
     public void RequestCards() => Send(new JsonObject { ["do"] = "cards" });
     /// <summary>Runs `hardwareId` as `model`; "" and "" go back to automatic.</summary>

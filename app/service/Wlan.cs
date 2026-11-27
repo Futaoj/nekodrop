@@ -254,7 +254,7 @@ public static class Wlan
     }
 
     /// <summary>Writes the radio's --sta-config file, readable by SYSTEM and Administrators only.</summary>
-    public static string WriteStaConfig(Network n, bool dataPlaneAccel = false, bool wifi6 = false)
+    public static string WriteStaConfig(Network n, bool dataPlaneAccel = false, bool wifi6 = false, string? staMac = null)
     {
         var dir = Path.Combine(ServiceConfig.Folder, "run");
         ServiceConfig.EnsureSecureDirectory();
@@ -269,6 +269,9 @@ public static class Wlan
         lines.Add(dataPlaneAccel ? "tap_writers=2" : "tap_writers=0");
         // Experimental Wi-Fi 6 (HE) toward an access point that offers it.
         lines.Add(wifi6 ? "he=1" : "he=0");
+        // Air MAC address (#96): translated at the TAP boundary so factory OUI MACs work
+        // without tap-windows6 rejecting non-locally-administered NetworkAddress values.
+        if (!string.IsNullOrEmpty(staMac)) lines.Add($"mac={staMac}");
         if (n.Open) lines.Add("open=1");
         else if (n.PskHex is not null) lines.Add($"psk={n.PskHex}");
         else lines.Add($"passphrase={n.Passphrase}");

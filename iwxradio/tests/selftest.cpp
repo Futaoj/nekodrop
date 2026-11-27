@@ -19,6 +19,7 @@
 #include "../src/iwx_rx_ba.h"
 #include "../src/wpa3.h"
 #include "../src/sta_he.h"
+#include "../src/sta_mac_nat.h"
 #include "radio_backend_test.h"
 #include <cstring>
 #include <vector>
@@ -686,6 +687,62 @@ int main(int argc, char **argv) {
     CHECK(sta_he::tlc_mask(0xfffe, 1, true) == 0 && sta_he::ap_streams(0xfffe) == 1 && sta_he::ap_streams(0xfffa) == 2,
           "HE: one-stream AP");
     CHECK(sta_he::htc_flags(ap) == (1u | 1u << 4), "HE: HT Control flags (HTC-HE, BSR)");
+  }
+
+  /* Station MAC translation at the TAP boundary (#96): ARP, DHCPv4, IPv6 NDP. */
+  {
+    const uint8_t tap_mac[6] = {0x00, 0xff, 0xb1, 0xc5, 0x24, 0xcc};
+    const uint8_t win_mac[6] = {0xa4, 0x6b, 0xb6, 0x12, 0x34, 0x56}; /* universal OUI (bit 1 == 0) */
+    uint8_t arp[28] = {0x00, 0x01, 0x08, 0x00, 0x06, 0x04, 0x00, 0x01};
+    std::memcpy(arp + 8, tap_mac, 6);
+    CHECK(sta_mac_nat::translate_payload(0x0806, arp, sizeof(arp), tap_mac, win_mac, true) &&
+              std::memcmp(arp + 8, win_mac, 6) == 0,
+          "MAC NAT: ARP TX rewrites sender hardware address");
+    std::memcpy(arp + 18, win_mac, 6);
+    CHECK(sta_mac_nat::translate_payload(0x0806, arp, sizeof(arp), win_mac, tap_mac, false) &&
+              std::memcmp(arp + 18, tap_mac, 6) == 0,
+          "MAC NAT: ARP RX rewrites target hardware address");
+
+    /* IPv4 DHCP Discover (20 IPv4 + 8 UDP + 250 BOOTP/options). */
+    std::vector<uint8_t> dhcp(20 + 8 + 250, 0);
+    dhcp[0] = 0x45;
+    dhcp[9] = 17;
+    dhcp[16] = 255; dhcp[17] = 255; dhcp[18] = 255; dhcp[19] = 255;
+    const uint16_t ulen = 8 + 250;
+    dhcp[20] = 0; dhcp[21] = 68; dhcp[22] = 0; dhcp[23] = 67;
+    dhcp[24] = static_cast<uint8_t>(ulen >> 8); dhcp[25] = static_cast<uint8_t>(ulen);
+    dhcp[26] = 0x12; dhcp[27] = 0x34; /* non-zero so checksum is recomputed */
+    uint8_t *bp = dhcp.data() + 28;
+    bp[0] = 1; bp[1] = 1; bp[2] = 6;
+    std::memcpy(bp + 28, tap_mac, 6);
+    bp[236] = 0x63; bp[237] = 0x82; bp[238] = 0x53; bp[239] = 0x63;
+    bp[240] = 61; bp[241] = 7; bp[242] = 1;
+    std::memcpy(bp + 243, tap_mac, 6);
+    CHECK(sta_mac_nat::translate_payload(0x0800, dhcp.data(), dhcp.size(), tap_mac, win_mac, true) &&
+              std::memcmp(bp + 28, win_mac, 6) == 0 && std::memcmp(bp + 243, win_mac, 6) == 0,
+          "MAC NAT: DHCPv4 TX rewrites chaddr and Option 61");
+    uint32_t sum = sta_mac_nat::csum_add(0, dhcp.data() + 12, 8);
+    sum += 17u + ulen;
+    sum = sta_mac_nat::csum_add(sum, dhcp.data() + 20, ulen);
+    CHECK(sta_mac_nat::csum_fold(sum) == 0, "MAC NAT: DHCPv4 TX UDP checksum valid");
+
+    /* IPv6 NDP Neighbor Solicitation (40 IPv6 + 32 ICMPv6). */
+    std::vector<uint8_t> ndp(40 + 32, 0);
+    ndp[0] = 0x60;
+    ndp[5] = 32;
+    ndp[6] = 58;
+    ndp[8] = 0xfe; ndp[9] = 0x80;
+    ndp[24] = 0xff; ndp[25] = 0x02;
+    ndp[40] = 135; /* NS */
+    ndp[64] = 1; ndp[65] = 1; /* SLLA */
+    std::memcpy(ndp.data() + 66, tap_mac, 6);
+    CHECK(sta_mac_nat::translate_payload(0x86dd, ndp.data(), ndp.size(), tap_mac, win_mac, true) &&
+              std::memcmp(ndp.data() + 66, win_mac, 6) == 0,
+          "MAC NAT: IPv6 NDP rewrites SLLA option");
+    uint32_t sum6 = sta_mac_nat::csum_add(0, ndp.data() + 8, 32);
+    sum6 += 32u + 58u;
+    sum6 = sta_mac_nat::csum_add(sum6, ndp.data() + 40, 32);
+    CHECK(sta_mac_nat::csum_fold(sum6) == 0, "MAC NAT: IPv6 NDP ICMPv6 checksum valid");
   }
 
   std::printf(failures ? "%d FAILED\n" : "all passed\n", failures);

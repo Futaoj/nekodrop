@@ -63,8 +63,9 @@ public sealed class ControlPipe(Supervisor sup)
                 switch ((string?)cmd?["do"])
                 {
                     case "status": await Send(writer, sup.Snapshot()); break;
-                    case "wake": sup.Wake(retry: (bool?)cmd?["retry"] == true); break;
+                    case "wake": sup.Wake(retry: (bool?)cmd?["retry"] == true, fromBle: (bool?)cmd?["fromBle"] == true); break;
                     case "touch": sup.Touch(); break;
+                    case "transfer-done": sup.TransferDone(); break;
                     case "stop": sup.Stop("asked by the client", giveBack: true); break;
                     case "mode":
                         if (Enum.TryParse<NetMode>((string?)cmd?["mode"], true, out var m)) sup.SetMode(m);
@@ -76,6 +77,7 @@ public sealed class ControlPipe(Supervisor sup)
                     case "station-wifi6": sup.SetStationWifi6((bool?)cmd?["on"] ?? false); break;
                     case "keep-windows-mac": sup.SetKeepWindowsMac((bool?)cmd?["on"] ?? true); break;
                     case "e138-indoor-cn": sup.SetE138IndoorCn((bool?)cmd?["on"] == true); break;
+                    case "quick-release-ondemand": sup.SetQuickReleaseOnDemand((bool?)cmd?["on"] ?? false); break;
                     case "cards":
                     {
                         // For the manual choice: the PCI network controllers and the models a card can be run as.

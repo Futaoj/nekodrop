@@ -42,8 +42,13 @@ struct StaConfig {
   /* Experimental Wi-Fi 6: ask an HE access point for HE (802.11ax) when the
    * card can; an AP without HE is joined as before. Off by default. */
   bool he = false;
+  /* Optional air MAC address (e.g. Windows' Wi-Fi MAC, #96): used over 802.11
+   * and translated at the TAP boundary so factory OUI MACs work without
+   * tap-windows6 rejecting non-locally-administered NetworkAddress overrides. */
+  bool has_mac = false;
+  uint8_t mac[6] = {};
 
-  /* key=value lines: ssid, bssid, channel, passphrase, psk, open, tap, width, ba, tap_writers, he. */
+  /* key=value lines: ssid, bssid, channel, passphrase, psk, open, tap, width, ba, tap_writers, he, mac. */
   bool load(const std::string &path, std::string &error);
 };
 
@@ -150,6 +155,8 @@ private:
   TapAdapter _tap;
   StaConfig _cfg;
   std::array<uint8_t, 6> _addr{};
+  std::array<uint8_t, 6> _tap_mac{};
+  bool _mac_nat = false;
   State _state = State::Idle;
   uint64_t _now = 0, _state_since = 0, _last_try = 0;
   unsigned _tries = 0, _joins = 0;

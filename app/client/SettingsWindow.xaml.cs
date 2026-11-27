@@ -75,6 +75,7 @@ public partial class SettingsWindow : Window
         DataPlaneAccelBox.IsChecked = (bool?)A.Service.Last?["dataPlaneAccel"] ?? false;
         StationWifi6Box.IsChecked = (bool?)A.Service.Last?["stationWifi6"] ?? false;
         KeepMacBox.IsChecked = (bool?)A.Service.Last?["keepWindowsMac"] ?? true;
+        QuickReleaseBox.IsChecked = (bool?)A.Service.Last?["quickReleaseOnDemand"] ?? false;
         CheckUpdatesBox.IsChecked = s.CheckUpdates;
         PreviewUpdatesBox.IsChecked = s.PreviewUpdates;
         DeleteInstallerBox.IsChecked = s.DeleteInstallerAfterInstall;
@@ -390,6 +391,8 @@ public partial class SettingsWindow : Window
         if (dataPlaneAccel != ((bool?)A.Service.Last?["dataPlaneAccel"] ?? false)) A.Service.SetDataPlaneAccel(dataPlaneAccel);
         var keepMac = KeepMacBox.IsChecked == true;
         if (keepMac != ((bool?)A.Service.Last?["keepWindowsMac"] ?? true)) A.Service.SetKeepWindowsMac(keepMac);
+        var quickRelease = QuickReleaseBox.IsChecked == true;
+        if (quickRelease != ((bool?)A.Service.Last?["quickReleaseOnDemand"] ?? false)) A.Service.SetQuickReleaseOnDemand(quickRelease);
         var stationWifi6 = StationWifi6Box.IsChecked == true;
         if (stationWifi6 != ((bool?)A.Service.Last?["stationWifi6"] ?? false)) A.Service.SetStationWifi6(stationWifi6);
         A.Window?.FolderChanged();
