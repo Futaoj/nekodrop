@@ -8,8 +8,8 @@
 
 ## Unreleased / 未发布
 
-- 为 MT7925 E138 REV_00 提供单独的用户态验证构建。实机止于板级 SAR 查询，此构建的双向 AirDrop 及速度尚待验证。[实机记录](docs/MT7925-UMDF.md)
-- Added a separate user-mode validation build for MT7925 E138 REV_00. The hardware probe stopped at the board SAR query. Two-way AirDrop and throughput remain unverified for this build. [Hardware results](docs/MT7925-UMDF.md)
+- 为 MT7925 E138 REV_00 提供单独的用户态验证构建。实机已完成信道 44 被动接收，主动发射仍受阻于板级 SAR 查询。[实机记录](docs/MT7925-UMDF.md)
+- Added a separate user-mode validation build for MT7925 E138 REV_00. The board received frames on channel 44. The SAR query still blocks transmission. Two-way AirDrop and throughput remain unverified for this build. [Hardware results](docs/MT7925-UMDF.md)
 
 ## v2.3.8 (Preview / 预览版)
 

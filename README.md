@@ -72,7 +72,7 @@ Intel AX201、Windows 11、`v2.2.9+`，开启高吞吐模式（HE80 + MTU 1500�
 | **MediaTek / AMD** | `mtkradio` | MT7921 / AMD RZ608 | 按需接管 | 🧪 实验性 |
 | **Realtek** | `devourer` | RTL8852CE | 按需接管 | ✅ 社区实测可用（约 24.5 MB/s） |
 
-**MT7925 E138 用户态验证版**仅包含 `SUBSYS_E138105B`、`REV_00` 的按需适配。实机测试在读取板级 SAR 功率限制时停止，尚无该版本的 AirDrop 收发或吞吐结果。此后端需单独构建。见[验证记录](docs/MT7925-UMDF.md)。
+**MT7925 E138 用户态验证版**仅包含 `SUBSYS_E138105B`、`REV_00` 的按需适配。已在实机收到信道 44 的无线帧。主动发射仍受阻于板级 SAR 查询，尚无该版本的 AirDrop 收发或吞吐结果。此后端需单独构建。见[验证记录](docs/MT7925-UMDF.md)。
 
 > 未列出的无线网卡暂不支持 AWDL（如高通 Qualcomm、博通 Broadcom、Intel BE201/BE211、老款 Intel 9260 等）。完整 PCI ID、固件版本与每张卡的详细说明见 **[网卡兼容性](docs/COMPATIBILITY.zh-CN.md)** · **[网卡状态与适配新网卡](docs/CARDS.zh-CN.md)**。
 

@@ -15,7 +15,7 @@ Windows 已将本分支的 UMDF 代理绑定到 E138 REV_00。PnP 报告的设�
 
 Windows 的 ACPI 事件跟踪记录了 PnP 绑定期间同一设备的三次 `_ADR` 求值，以及探针运行期间零次 `_ADR` 求值。本轮没有证据能把错误归因于某个特定的下层驱动。Windows 可通过平台扩展动态提供 ACPI 方法，静态固件表不足以证明运行时缺少 SAR 方法。[Microsoft 对 ACPI 平台扩展的说明](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-peps-for-acpi-services)
 
-诊断时已核对设备的 `UmdfDispatcher=FileHandle` 配置。以上结果无法判定固件是否提供板级 SAR 方法。实机流程因此止于只读探针，未启动无线发射或进行 AirDrop 收发。每轮均恢复 MediaTek 原厂驱动并清除了本轮的驱动包与临时证书信任。
+诊断时已核对设备的 `UmdfDispatcher=FileHandle` 配置。以上结果无法判定固件是否提供板级 SAR 方法。主动收发流程因此止于只读探针。独立的被动诊断流程只加载固定哈希的固件、检查 EFUSE 与世界域规则，并在信道 44 被动扫描 250 ms。两次在实机分别收到 5、6 个无线帧，固件分别报告 5、6 个信标。整合版第二轮原生进程退出码为 0。该流程没有分配数据发送环或启动 AWDL 主机。每轮均恢复 MediaTek 原厂驱动并清除了本轮的驱动包与临时证书信任。
 
 ## 离线构建与检查
 
@@ -28,7 +28,7 @@ Windows 的 ACPI 事件跟踪记录了 PnP 绑定期间同一设备的三次 `_A
 .\scripts\build-e138-sar-probe.ps1
 ```
 
-无线后端构建脚本校验两份固定版本固件的 SHA-256，运行 CCMP、传输、板级 SAR、监管策略和 ROM patch 分段校验五项 CTest，并以固件文件为输入再次运行传输测试。代理构建脚本编译 DLL 和校验 INF。以上步骤仅生成或检查文件。
+无线后端构建脚本校验两份固定版本固件的 SHA-256，运行 CCMP、被动诊断参数、传输、板级 SAR、监管策略和 ROM patch 分段校验六项 CTest，并以固件文件为输入再次运行传输测试。代理构建脚本编译 DLL 和校验 INF。以上步骤仅生成或检查文件。
 
 ## 服务与图形界面验证构建
 
@@ -57,6 +57,17 @@ if ($LASTEXITCODE) { throw "SAR probe failed ($LASTEXITCODE)" }
 ```
 
 输出分别给出 `MTDS` 和 `MTGS` 的 NTSTATUS 与字节数。退出码 0 表示每个方法返回了带有效 ACPI 包头的响应，或明确报告方法不存在（`0xc0000034`，0 字节）。退出码 1 表示打开代理、查询或响应检查失败，2 表示参数有误。探针检查的是查询通路。无线后端在启用发射前还会解码完整 SAR 表，并核对固件监管域、CLC 和信道功率限制。
+
+## 检查实际固件和被动接收
+
+在验证代理已接管准确的 E138 实例、服务已释放无线进程时，可在具备锁定内存页权限的会话中运行下面的单次检查。`$boards` 使用上文的精确实例筛选。程序只尝试一次预定义的信道 44 被动扫描，输出聚合计数，随后释放设备。命令成功但计数为零时，仅代表固件完成了扫描。
+
+```powershell
+$stopFile = Join-Path $env:TEMP ("e138-passive-" + [guid]::NewGuid().ToString("N"))
+& .\build\mt7925-fast\nekodrop-radio-mt7925-fast.exe --check-passive `
+    --instance $boards[0].InstanceId --firmware (Resolve-Path .\third_party\linux-firmware-mt7925).Path `
+    --stop-file $stopFile
+```
 
 ## 实机验收范围
 

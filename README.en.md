@@ -72,7 +72,7 @@ Uses your laptop or desktop's built-in PCIe / CNVi Wi-Fi card — no external US
 | **MediaTek / AMD** | `mtkradio` | MT7921 / AMD RZ608 | On demand | 🧪 Experimental |
 | **Realtek** | `devourer` | RTL8852CE | On demand | ✅ Community-tested (~24.5 MB/s) |
 
-**MT7925 E138 user-mode validation build.** The on-demand candidate targets `SUBSYS_E138105B`, `REV_00` only. The hardware probe stopped at the board SAR power-limit query. AirDrop transfers and throughput remain unverified for this build. [Validation record](docs/MT7925-UMDF.md)
+**MT7925 E138 user-mode validation build.** The on-demand candidate targets `SUBSYS_E138105B`, `REV_00` only. Passive reception on channel 44 works on the test board. The board SAR query still blocks transmission. AirDrop transfers and throughput remain unverified for this build. [Validation record](docs/MT7925-UMDF.md)
 
 > Unlisted cards are not supported for AWDL (Qualcomm, Broadcom, Intel BE201/BE211, legacy Intel 9260, etc.). Full PCI IDs, firmware, and per-card notes: **[Card compatibility](docs/COMPATIBILITY.md)** · **[Card status & porting a new card](docs/CARDS.md)**.
 
