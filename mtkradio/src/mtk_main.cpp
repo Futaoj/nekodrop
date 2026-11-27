@@ -400,10 +400,11 @@ int main(int argc, char **argv) {
   /* Runtime channel moves and STA record commands use bounded timeouts so
    * timesharing and scans never stall the radio for seconds. MT7921 (0x7961)
    * needs > 500 ms when entering a new 80 MHz calibration subband (e.g. ch 36 /
-   * 52 / 100 / 116 / 132), and timing out early causes overlapping switches (#72). */
+   * 52 / 100 / 116 / 132), and MT7925 (0x7925) runs RLM + sniffer + ROC on
+   * each channel switch. */
   const bool is_mt7921 = (dev.chip_id() == 0x7961);
-  dev.move_timeout_ms = is_mt7921 ? 1500u : 500u;
-  dev.sta_cmd_timeout_ms = is_mt7921 ? 1000u : 500u;
+  dev.move_timeout_ms = is_mt7921 ? 1500u : (dev.is_mt7925() ? 1000u : 500u);
+  dev.sta_cmd_timeout_ms = (is_mt7921 || dev.is_mt7925()) ? 1000u : 500u;
 
   std::mutex cmd_mu;
   std::deque<PendingCmd> cmds;

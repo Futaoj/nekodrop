@@ -17,7 +17,11 @@
 
 #include "mtk_dma.h"
 #include "mtk_regs.h"
+#include "mt7925_ba.h"
+#include "mt7925_rx.h"
 #include "../../iwxradio/src/proxy.h"
+
+struct mt_regdomain;
 
 namespace mtk {
 
@@ -26,6 +30,11 @@ struct RxFrame {
   size_t len = 0;
   int8_t dbm = -127;
   uint8_t channel = 0;
+  uint8_t source_ring = 0xff; /* Connac3 RX0 or RX2 */
+  bool has_timestamp = false;
+  uint32_t timestamp_us = 0;  /* raw RXD group 2, uncalibrated per ring */
+  uint8_t phy_mode = 0xff;    /* Connac3 RXD group 3 when present */
+  mt7925::RxPhy phy{};
 };
 
 struct TxParams {
@@ -53,6 +62,7 @@ struct Ring {
   std::vector<DmaBuf> txwi; /* per-slot 64-byte TXD+TXP buffer (TX data only) */
   std::vector<uint8_t> rx_reasm; /* multi-descriptor RX A-MSDU reassembly (up to 12 KiB) */
   bool rx_reasm_drop = false;    /* discard trailing descriptors of an oversized/corrupt frame */
+  mt7925::RxDmaSnapshot rx_didx; /* Connac3 producer frontier sampled at batch boundaries */
 
   MtkDesc *descs() const { return reinterpret_cast<MtkDesc *>(desc_buf.va); }
 };
@@ -145,8 +155,10 @@ public:
 
   uint32_t chip_id() const { return _chip_id; }
   uint32_t hw_rev() const { return _hw_rev; }
+  bool is_mt7925() const { return _is_mt7925; }
   uint8_t channel() const { return _channel; }
   unsigned width_mhz() const { return _width_mhz; }
+  uint8_t mt7925_rx_streams() const { return _mt7925_rx_streams; }
 
   /* Low-level register helpers (exposed for diagnostics). */
   uint32_t rr(uint32_t addr);
@@ -220,6 +232,72 @@ private:
 
   void log(const std::string &msg);
 
+  /* MT7925 (Connac3) hardware backend methods (mtk_dev_7925.cpp, mtk_dev_7925_tx.cpp) */
+  uint32_t mt7925_remap_l1(uint32_t addr);
+  uint32_t mt7925_translate_addr(uint32_t addr);
+  bool mt7925_driver_own(std::string &error);
+  bool mt7925_fw_own();
+  bool mt7925_emi_protection(std::string &error);
+  bool mt7925_wfsys_reset(std::string &error);
+  bool mt7925_probe(std::string &error);
+  bool mt7925_hard_reset(std::string &error);
+  bool mt7925_dma_disable(std::string &error);
+  bool mt7925_dma_init(std::string &error);
+  bool mt7925_dma_enable(std::string &error);
+  using McuDecoder = std::function<int(uint8_t, const uint8_t *, uint32_t)>;
+  int mt7925_exchange(uint32_t command, const uint8_t *data, uint32_t bytes,
+                      unsigned timeout_ms, const McuDecoder &decode = {}, bool roc_abort = false);
+  static int mt7925_send(void *context, uint32_t command, const uint8_t *data,
+                         uint32_t bytes, int wait, uint32_t *status);
+  bool mt7925_mcu_send_uni(uint16_t cid, const void *payload, size_t len, bool wait_rsp,
+                           unsigned timeout_ms = 3000, bool roc_abort = false);
+  bool mt7925_chip_cmd(const char *cmd, size_t len);
+  bool mt7925_load_firmware(const std::string &fw_dir, std::string &error);
+  bool mt7925_init_regulatory(std::string &error);
+  int mt7925_query_regdomain(const uint8_t country[2], mt_regdomain &domain);
+  bool mt7925_passive_scan(uint8_t channel, const RxHandler &on_rx,
+                           std::array<uint8_t, 2> *firmware_country = nullptr,
+                           uint16_t dwell_ms = 0, uint32_t *firmware_beacons = nullptr);
+  bool mt7925_program_concurrent_power(const std::string &country_hint, std::string &error);
+  bool mt7925_set_idle_bss(uint8_t bss, const uint8_t mac[6]);
+  bool mt7925_setup_bss(uint8_t bss, uint8_t channel, unsigned width_mhz, const uint8_t mac[6],
+                        const uint8_t bssid[6], bool qos_edca);
+  bool mt7925_update_bss_rlm(uint8_t bss, uint8_t channel, unsigned width_mhz);
+  bool mt7925_roc_acquire(uint8_t channel, uint8_t bss, uint8_t type, uint16_t duration,
+                          std::string &error, unsigned width_mhz = 20);
+  bool mt7925_roc_release();
+  bool mt7925_start_monitor(uint8_t channel, unsigned width_mhz, const uint8_t address[6]);
+  bool mt7925_set_channel(uint8_t channel, unsigned width_mhz, uint8_t switch_reason);
+  bool mt7925_set_address(const uint8_t address[6]);
+  bool mt7925_set_station_identity(const uint8_t addr[6], const uint8_t bssid[6]);
+  void mt7925_clear_station_identity();
+  bool mt7925_sta_add(uint8_t wcid, const uint8_t peer[6], const PeerCaps &caps, uint8_t omac);
+  bool mt7925_sta_remove(uint8_t wcid, const uint8_t peer[6], uint8_t omac);
+  bool mt7925_sta_ba(uint8_t wcid, const uint8_t peer[6], uint8_t tid, uint16_t ssn, uint16_t win,
+                     bool tx, bool enable, uint8_t omac);
+  int mt7925_queue_general_frame(const uint8_t *frame, size_t len, uint8_t bss, uint16_t wcid,
+                                 bool fixed_rate, uint8_t rate_slot, bool no_ack, bool force_altx,
+                                 bool allow_ba, bool kick);
+  int mt7925_transmit_raw(const uint8_t *frame, size_t len, uint16_t rate_val, uint8_t omac,
+                          bool no_ack, bool force_altx);
+  int mt7925_transmit_sta(const uint8_t *frame, size_t len, uint8_t wcid, uint8_t omac);
+  bool mt7925_transmit_awdl(const uint8_t *frame, size_t len, const TxParams &params, bool kick);
+  void mt7925_flush_awdl_tx();
+  void mt7925_reclaim_awdl_tx(bool check_fetch = false);
+  void mt7925_snoop_rx_ba(const uint8_t *frame, size_t len);
+  void mt7925_snoop_tx_ba(const uint8_t *frame, size_t len);
+  int mt7925_get_or_add_awdl_peer(const uint8_t mac[6]);
+  bool mt7925_renew_concurrent_roc(const RxHandler &on_rx);
+  bool mt7925_program_ring(uint32_t base, uint32_t address, uint32_t count, uint32_t cpu);
+  void mt7925_defer_frame(const uint8_t *data, size_t bytes);
+  void mt7925_set_fixed_rate_table(uint8_t tbl_idx, uint16_t rate_idx);
+  bool mt7925_mac_init(std::string &error);
+  bool mt7925_native_awdl_rx(std::string &error);
+  bool mt7925_parse_rx_packet(const uint8_t *buf, size_t len, uint8_t ring, RxFrame &out);
+  void mt7925_handle_tx_free(const uint8_t *data, size_t len);
+  size_t mt7925_poll(const RxHandler &on_rx);
+  void mt7925_close();
+
   struct PeerEntry {
     bool in_use = false;
     std::array<uint8_t, 6> mac{};
@@ -237,15 +315,16 @@ private:
   };
   struct DeferredRx {
     std::vector<uint8_t> frame;
-    int8_t dbm;
-    uint8_t channel;
+    RxFrame info; /* data is reconstructed from frame on delivery */
   };
 
   Logger _log;
   TxStatusHandler _on_tx_status;
   StopCheck _stopping;
-  RegProxy _proxy;
   DmaPool32 _dma;
+  /* Close the RegProxy handle (including its emergency DMA stop) before
+   * destroying the DMA pool so Windows never reuses pages while DMA is live. */
+  RegProxy _proxy;
 
   uint32_t _chip_id = 0;
   uint32_t _hw_rev = 0;
@@ -276,6 +355,27 @@ private:
   std::array<PeerEntry, MT792X_WTBL_RESERVED> _peers{}; /* slots 1..18 */
   std::array<PendingAddba, 32> _pending_addba{};
   std::array<PendingAddba, 32> _pending_tx_addba{};
+  bool _probe_complete = false;
+  bool _is_mt7925 = false;
+  uint8_t _mt7925_rx_streams = 1;
+  uint8_t _mt7925_bands = 0;
+  uint8_t _mt7925_passive_channels = 0;
+  uint8_t _mt7925_scan_id = 0;
+  uint8_t _mt7925_board_variant = 0;
+  std::vector<uint8_t> _mt7925_ram;
+  bool _mt7925_owns_device = false;
+  bool _mt7925_concurrent = false;
+  uint8_t _mt7925_awdl_channel = 6;
+  std::array<uint8_t, 6> _mt7925_awdl_mac{};
+  bool _mt7925_power_ready = false;
+  mt7925::AwDlTxSlots _mt7925_tx;
+  bool _mt7925_tx_fault = false;
+  uint8_t _mt7925_roc_request_id = 0;
+  uint8_t _mt7925_roc_bss = 0;
+  uint64_t _mt7925_roc_until = 0;
+  uint64_t _mt7925_awdl_renewals = 0;
+  bool _mt7925_rings_published = false;
+  int _mt7925_mcu_fault = 0;
   std::vector<uint8_t> _rx_pkt_buf;
   std::vector<uint8_t> _rx_unpad_buf;
   std::deque<DeferredRx> _deferred_rx;

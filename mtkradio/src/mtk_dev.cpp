@@ -6,6 +6,7 @@
 #include <sstream>
 
 #include "mtk_dev.h"
+#include "mtk_patch.h"
 #include "mtk_platform.h"
 
 namespace mtk {
@@ -313,6 +314,7 @@ void MtkDevice::log(const std::string &msg) {
  * Register Address Translation & Access
  * -------------------------------------------------------------------------- */
 uint32_t MtkDevice::remap_l1(uint32_t addr) {
+  if (is_mt7925()) return mt7925_remap_l1(addr);
   const uint32_t offset = addr & MT_HIF_REMAP_L1_OFFSET;
   const uint32_t base = (addr >> 16) & 0xffffu;
   if (_l1_base != base) {
@@ -326,6 +328,7 @@ uint32_t MtkDevice::remap_l1(uint32_t addr) {
 }
 
 uint32_t MtkDevice::translate_addr(uint32_t addr) {
+  if (is_mt7925()) return mt7925_translate_addr(addr);
   if (addr < 0x100000u) return addr;
   for (const auto &e : kFixedRegMap) {
     if (addr >= e.phys && (addr - e.phys) < e.size) {
@@ -426,6 +429,7 @@ bool MtkDevice::wfsys_reset(std::string &error) {
 }
 
 bool MtkDevice::probe(std::string &error) {
+  if (_probe_complete) return true;
   if (!_proxy.is_open()) {
     if (!_proxy.open(error)) return false;
   }
@@ -436,6 +440,10 @@ bool MtkDevice::probe(std::string &error) {
   if (_proxy.vendor() != PCI_VENDOR_MEDIATEK && _proxy.vendor() != 0x0b48) {
     error = "bound card is not MediaTek (vendor=" + hex32(_proxy.vendor()) + ")";
     return false;
+  }
+  if (_proxy.vendor() == PCI_VENDOR_MEDIATEK && _proxy.device() == 0x7925u) {
+    _probe_complete = mt7925_probe(error);
+    return _probe_complete;
   }
   if (_proxy.bar_len() < 0x100000u) {
     error = "BAR0 too small for MT7921/MT7922 (" + hex32(_proxy.bar_len()) + ", need >= 1 MiB)";
@@ -456,6 +464,7 @@ bool MtkDevice::probe(std::string &error) {
     error = "unexpected MediaTek chip_id " + hex32(_chip_id);
     return false;
   }
+  _probe_complete = true;
   return true;
 }
 
@@ -520,7 +529,7 @@ bool MtkDevice::alloc_tx_ring(Ring &r, uint32_t reg_base, uint32_t count, bool w
     d[i].buf1 = 0;
     d[i].info = 0;
   }
-  program_ring(r, false);
+  if (!is_mt7925()) program_ring(r, false);
   return true;
 }
 
@@ -531,6 +540,7 @@ bool MtkDevice::alloc_rx_ring(Ring &r, uint32_t reg_base, uint32_t count, std::s
   r.tail = 0;
   r.rx_reasm.clear();
   r.rx_reasm_drop = false;
+  r.rx_didx = {};
   r.desc_buf = _dma.alloc(count * sizeof(MtkDesc), 256);
   if (!r.desc_buf) {
     error = "failed to allocate 32-bit DMA descriptors for RX ring";
@@ -551,7 +561,7 @@ bool MtkDevice::alloc_rx_ring(Ring &r, uint32_t reg_base, uint32_t count, std::s
   }
   /* Arm all descriptors except one so cpu_idx = count - 1. */
   r.head = count - 1;
-  program_ring(r, true);
+  if (!is_mt7925()) program_ring(r, true);
   return true;
 }
 
@@ -694,7 +704,7 @@ void MtkDevice::tx_ring_reclaim(Ring &r) {
 
 bool MtkDevice::tx_ring_push(Ring &r, const void *data, size_t len, bool wait_done) {
   if (len == 0 || len > DmaPool32::kPageBytes) return false;
-  tx_ring_reclaim(r);
+  if (!is_mt7925()) tx_ring_reclaim(r);
   const uint32_t next = (r.head + 1) % r.count;
   if (next == r.tail) return false;
 
@@ -712,6 +722,18 @@ bool MtkDevice::tx_ring_push(Ring &r, const void *data, size_t len, bool wait_do
   r.head = next;
   wr(r.reg_base + 0x8, r.head);
 
+  if (wait_done && is_mt7925()) {
+    /* Connac3 consumes TX15/TX16 through the device index. A descriptor's
+     * DMA_DONE flag alone does not prove that this ring can be reused. */
+    if (!poll_reg(r.reg_base + 0xc, UINT32_MAX, r.head, 1000)) {
+      log("MT7925 DMA completion timeout at ring " + hex32(r.reg_base));
+      return false;
+    }
+    plat::mem_barrier();
+    d[idx].ctrl = MT_DMA_CTL_DMA_DONE;
+    r.tail = r.head;
+    return true;
+  }
   if (wait_done) {
     const uint64_t deadline = now_ms() + 1000;
     while (!(*static_cast<const volatile uint32_t *>(&d[idx].ctrl) & MT_DMA_CTL_DMA_DONE)) {
@@ -744,10 +766,13 @@ bool MtkDevice::rx_ring_pop(Ring &r, std::vector<uint8_t> &out, bool commit) {
   static constexpr size_t kMaxReasmBytes = 12288;
   MtkDesc *d = r.descs();
   out.clear();
-  for (;;) {
+  for (uint32_t scanned = 0; scanned < r.count; ++scanned) {
     const uint32_t idx = r.tail;
     const uint32_t ctrl = *static_cast<const volatile uint32_t *>(&d[idx].ctrl);
     if (!(ctrl & MT_DMA_CTL_DMA_DONE)) return false;
+    if (is_mt7925() && !r.rx_didx.ready(idx, r.count, [&] { return rr(r.reg_base + 0xc); })) {
+      return false;
+    }
 
     plat::mem_barrier();
     const uint32_t len = field_get(MT_DMA_CTL_SD_LEN0, ctrl);
@@ -791,6 +816,7 @@ bool MtkDevice::rx_ring_pop(Ring &r, std::vector<uint8_t> &out, bool commit) {
 
     if (last_sec) return !out.empty();
   }
+  return false;
 }
 
 void MtkDevice::rx_ring_commit(Ring &r) {
@@ -825,7 +851,9 @@ bool MtkDevice::mcu_wait_response(uint8_t seq, std::vector<uint8_t> &out, unsign
       if (parse_rx_packet(pkt.data(), pkt.size(), frame)) {
         constexpr size_t kDeferredRxLimit = 64;
         if (_deferred_rx.size() == kDeferredRxLimit) _deferred_rx.pop_front();
-        _deferred_rx.push_back({{frame.data, frame.data + frame.len}, frame.dbm, frame.channel});
+        std::vector<uint8_t> bytes(frame.data, frame.data + frame.len);
+        frame.data = nullptr;
+        _deferred_rx.push_back({std::move(bytes), frame});
       } else {
         handle_rx_meta(pkt.data(), pkt.size());
       }
@@ -991,36 +1019,19 @@ bool MtkDevice::load_patch(const std::string &path, std::string &error) {
     mcu_patch_sem_ctrl(false);
     return false;
   }
-  if (fw.size() < sizeof(MtkPatchHdr)) {
+  mtk_patch_image patch{};
+  if (!mtk_patch_open(fw.data(), fw.size(), &patch)) {
     mcu_patch_sem_ctrl(false);
-    error = "patch image too small";
+    error = "invalid ROM patch section table or payload";
     return false;
   }
-
-  const auto *hdr = reinterpret_cast<const MtkPatchHdr *>(fw.data());
-  const uint32_t n_region = bswap32(hdr->desc.n_region);
-  log("loading ROM patch (" + std::to_string(n_region) + " regions, " +
+  log("loading ROM patch (" + std::to_string(patch.count) + " regions, " +
       std::to_string(fw.size()) + " bytes)");
 
   bool ok = true;
-  for (uint32_t i = 0; i < n_region; i++) {
-    const auto *sec = reinterpret_cast<const MtkPatchSec *>(
-        fw.data() + sizeof(MtkPatchHdr) + i * sizeof(MtkPatchSec));
-    if ((bswap32(sec->type) & PATCH_SEC_TYPE_MASK) != PATCH_SEC_TYPE_INFO) {
-      error = "unsupported patch section type";
-      ok = false;
-      break;
-    }
-    const uint32_t addr = bswap32(sec->addr);
-    const uint32_t len = bswap32(sec->len);
-    const uint32_t offs = bswap32(sec->offs);
-    const uint32_t sec_info = bswap32(sec->sec_key_idx);
-    if (offs + len > fw.size()) {
-      error = "patch section out of bounds";
-      ok = false;
-      break;
-    }
-
+  for (uint32_t i = 0; i < patch.count; ++i) {
+    const auto region = mtk_patch_region_at(&patch, i);
+    const uint32_t sec_info = region.key;
     uint32_t mode = DL_MODE_NEED_RSP;
     if (sec_info != PATCH_SEC_NOT_SUPPORT) {
       const uint32_t enc = field_get(PATCH_SEC_ENC_TYPE_MASK, sec_info);
@@ -1034,12 +1045,12 @@ bool MtkDevice::load_patch(const std::string &path, std::string &error) {
       }
     }
 
-    if (!mcu_init_download(addr, len, mode)) {
+    if (!mcu_init_download(region.address, region.length, mode)) {
       error = "patch init_download failed for region " + std::to_string(i);
       ok = false;
       break;
     }
-    if (!mcu_send_scatter(fw.data() + offs, len, error)) {
+    if (!mcu_send_scatter(fw.data() + region.offset, region.length, error)) {
       ok = false;
       break;
     }
@@ -1275,6 +1286,7 @@ bool MtkDevice::mac_init(std::string &error) {
 
 bool MtkDevice::hard_reset(std::string &error) {
   if (!probe(error)) return false;
+  if (is_mt7925()) return mt7925_hard_reset(error);
   log("issuing CBTOP RGU whole-path Wi-Fi subsystem reset...");
   uint32_t v = l1_rr(MT_CBTOP_RGU_WF_SUBSYS_RST);
   l1_wr(MT_CBTOP_RGU_WF_SUBSYS_RST, v | MT_CBTOP_RGU_WF_SUBSYS_RST_WF_WHOLE_PATH);
@@ -1295,6 +1307,15 @@ bool MtkDevice::open(const Options &options, std::string &error) {
     _country = "US";
   }
   if (!probe(error)) return false;
+  if (is_mt7925()) {
+    _channel = 0;
+    _width_mhz = 20;
+    if (!mt7925_load_firmware(options.firmware_dir, error)) {
+      mt7925_close();
+      return false;
+    }
+    return true;
+  }
   /* Reset WF subsystem out of any previous OS driver firmware state into clean ROM boot. */
   if (!wfsys_reset(error)) return false;
   if (!driver_own(error)) return false;
@@ -1305,6 +1326,7 @@ bool MtkDevice::open(const Options &options, std::string &error) {
 }
 
 bool MtkDevice::set_address(const uint8_t address[6]) {
+  if (is_mt7925()) return mt7925_set_address(address);
   if (std::memcmp(_mac.data(), address, 6) != 0) {
     _peers.fill(PeerEntry{});
     _pending_addba.fill(PendingAddba{});
@@ -1455,6 +1477,7 @@ bool MtkDevice::set_address(const uint8_t address[6]) {
 }
 
 bool MtkDevice::add_omac(uint8_t omac, const uint8_t addr[6], const uint8_t bssid[6], bool enable) {
+  if (is_mt7925()) return false;
 #pragma pack(push, 1)
   struct {
     uint8_t omac_idx;
@@ -1556,6 +1579,7 @@ bool MtkDevice::add_omac(uint8_t omac, const uint8_t addr[6], const uint8_t bssi
 }
 
 bool MtkDevice::set_station_identity(const uint8_t addr[6], const uint8_t bssid[6]) {
+  if (is_mt7925()) return mt7925_set_station_identity(addr, bssid);
   if (_sta_iface_up) {
     (void)add_omac(kStationOmac, _sta_addr.data(), _sta_bssid.data(), false);
   }
@@ -1567,6 +1591,10 @@ bool MtkDevice::set_station_identity(const uint8_t addr[6], const uint8_t bssid[
 }
 
 void MtkDevice::clear_station_identity() {
+  if (is_mt7925()) {
+    mt7925_clear_station_identity();
+    return;
+  }
   if (!_sta_iface_up) return;
   (void)add_omac(kStationOmac, _sta_addr.data(), _sta_bssid.data(), false);
   _sta_iface_up = false;
@@ -1642,6 +1670,7 @@ void MtkDevice::apply_rx_filter_mcu() {
 }
 
 void MtkDevice::restore_rx_filter() {
+  if (is_mt7925()) return;
   const uint32_t rfcr = MT_WF_RFCR_DROP_FCSFAIL | MT_WF_RFCR_DROP_VERSION |
                         MT_WF_RFCR_DROP_CTS | MT_WF_RFCR_DROP_RTS |
                         MT_WF_RFCR_DROP_CTL_RSV | MT_WF_RFCR_DROP_NDPA |
@@ -1690,6 +1719,7 @@ bool MtkDevice::mcu_set_chan_cmd(uint8_t ext_cid, uint8_t ch, unsigned width_mhz
 }
 
 bool MtkDevice::set_channel(uint8_t channel, unsigned width_mhz, uint8_t switch_reason) {
+  if (is_mt7925()) return mt7925_set_channel(channel, width_mhz, switch_reason);
   if (channel <= 14) width_mhz = 20;
   const bool band_changed = !_rx_path_set || ((channel <= 14) != (_channel <= 14));
   if (band_changed) {
@@ -1721,6 +1751,7 @@ bool MtkDevice::set_channel(uint8_t channel, unsigned width_mhz, uint8_t switch_
 }
 
 bool MtkDevice::start_monitor(uint8_t channel, unsigned width_mhz, const uint8_t address[6]) {
+  if (is_mt7925()) return mt7925_start_monitor(channel, width_mhz, address);
   if (!set_address(address)) return false;
   return set_channel(channel, width_mhz);
 }
@@ -1739,6 +1770,7 @@ int MtkDevice::find_peer_wcid(const uint8_t mac[6]) {
 }
 
 bool MtkDevice::mcu_register_peer(uint8_t wcid, const uint8_t mac[6]) {
+  if (is_mt7925()) return false;
   if (wcid == 0 || wcid >= kApWcid) return false;
 
   /* Clear WTBL admission counter before programming/reusing wcid. */
@@ -2436,6 +2468,7 @@ void MtkDevice::snoop_tx_ba(const uint8_t *frame, size_t len) {
 }
 
 bool MtkDevice::sta_add(uint8_t wcid, const uint8_t peer[6], const PeerCaps &caps, uint8_t omac) {
+  if (is_mt7925()) return mt7925_sta_add(wcid, peer, caps, omac);
   if (wcid == 0 || wcid >= MT792X_WTBL_RESERVED) return false;
 
   rmw(MT_WTBL_UPDATE, MT_WTBL_UPDATE_WLAN_IDX,
@@ -2510,6 +2543,7 @@ bool MtkDevice::sta_add(uint8_t wcid, const uint8_t peer[6], const PeerCaps &cap
 }
 
 bool MtkDevice::sta_remove(uint8_t wcid, const uint8_t peer[6], uint8_t omac) {
+  if (is_mt7925()) return mt7925_sta_remove(wcid, peer, omac);
   if (wcid == 0 || wcid >= MT792X_WTBL_RESERVED) return false;
   StaReq r(wcid, omac);
   uint8_t *t = r.add(STA_REC_BASIC, 20);
@@ -2524,6 +2558,7 @@ bool MtkDevice::sta_remove(uint8_t wcid, const uint8_t peer[6], uint8_t omac) {
 
 bool MtkDevice::sta_ba(uint8_t wcid, const uint8_t peer[6], uint8_t tid, uint16_t ssn, uint16_t win,
                        bool tx, bool enable, uint8_t omac) {
+  if (is_mt7925()) return mt7925_sta_ba(wcid, peer, tid, ssn, win, tx, enable, omac);
   if (wcid == 0 || wcid >= MT792X_WTBL_RESERVED || tid >= 8) return false;
   { /* mt76_connac_mcu_wtbl_ba_tlv */
     StaReq r(wcid, omac);
@@ -2609,6 +2644,7 @@ int MtkDevice::queue_tx_frame(const uint8_t *frame, size_t len, const uint32_t t
 
 int MtkDevice::transmit_raw(const uint8_t *frame, size_t len, uint16_t rate_val, uint8_t omac,
                             bool no_ack, bool force_altx) {
+  if (is_mt7925()) return mt7925_transmit_raw(frame, len, rate_val, omac, no_ack, force_altx);
   if (!_dma_running || !frame || len < 10 || len > DmaPool32::kPageBytes) return -1;
   const uint16_t fc = static_cast<uint16_t>(frame[0] | (frame[1] << 8));
   const uint8_t fc_type = static_cast<uint8_t>((fc >> 2) & 0x3u);
@@ -2650,6 +2686,7 @@ int MtkDevice::transmit_raw(const uint8_t *frame, size_t len, uint16_t rate_val,
 }
 
 int MtkDevice::transmit_sta(const uint8_t *frame, size_t len, uint8_t wcid, uint8_t omac) {
+  if (is_mt7925()) return mt7925_transmit_sta(frame, len, wcid, omac);
   if (!_dma_running || !frame || len < 26 || len > DmaPool32::kPageBytes) return -1;
   const uint16_t fc = static_cast<uint16_t>(frame[0] | (frame[1] << 8));
   const uint8_t fc_type = static_cast<uint8_t>((fc >> 2) & 0x3u);
@@ -2689,6 +2726,11 @@ bool MtkDevice::transmit(const uint8_t *frame, size_t len, unsigned rate_mbps, b
 }
 
 void MtkDevice::kick_tx() {
+  if (is_mt7925()) {
+    mt7925_flush_awdl_tx();
+    _tx_pending_kick = false;
+    return;
+  }
   if (_dma_running && _tx_pending_kick) {
     wr(_tx_data.reg_base + 0x8, _tx_data.head);
     _tx_pending_kick = false;
@@ -2696,6 +2738,7 @@ void MtkDevice::kick_tx() {
 }
 
 bool MtkDevice::transmit(const uint8_t *frame, size_t len, const TxParams &params, bool kick) {
+  if (is_mt7925()) return mt7925_transmit_awdl(frame, len, params, kick);
   if (!_dma_running || !frame || len < 16 || len > DmaPool32::kPageBytes) return false;
 
   /* Configure hardware RX Block Ack before transmitting ADDBA Response / DELBA. */
@@ -2911,6 +2954,7 @@ void MtkDevice::handle_rx_meta(const uint8_t *buf, size_t len) {
 }
 
 size_t MtkDevice::poll(const RxHandler &on_rx) {
+  if (is_mt7925()) return mt7925_poll(on_rx);
   if (!_dma_running) return 0;
 
   size_t count = 0;
@@ -2924,7 +2968,10 @@ size_t MtkDevice::poll(const RxHandler &on_rx) {
   if (!_deferred_rx.empty()) {
     std::deque<DeferredRx> deferred;
     deferred.swap(_deferred_rx);
-    for (const auto &f : deferred) deliver({f.frame.data(), f.frame.size(), f.dbm, f.channel});
+    for (auto &f : deferred) {
+      f.info.data = f.frame.data();
+      deliver(f.info);
+    }
   }
   auto drain_rx = [&](Ring &ring) {
     int uncommited = 0;
@@ -2954,6 +3001,11 @@ size_t MtkDevice::poll(const RxHandler &on_rx) {
 }
 
 void MtkDevice::close() {
+  _probe_complete = false;
+  if (is_mt7925()) {
+    mt7925_close();
+    return;
+  }
   if (_dma_running && _proxy.is_open()) {
     if (_verbose) {
       log("close stats: tx_data cidx=" + std::to_string(rr(_tx_data.reg_base + 0x8)) +
