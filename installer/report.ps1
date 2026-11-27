@@ -97,6 +97,7 @@ $WifiChips = @{
 # kind -> what the report says, and a hint for the reader (may be empty).
 $WifiKinds = @{
   'supported'     = @('supported by nekodrop', '')
+  'e138-validation' = @('experimental E138 validation build; AirDrop unverified', 'The radio requires usable board SAR data before transmission.')
   'supported-mtk' = @('supported by nekodrop (5 GHz Wi-Fi beside AirDrop, or on-demand; built-in MediaTek backend)', 'Joins 5 GHz Wi-Fi beside AirDrop, or runs on demand while Windows keeps Wi-Fi.')
   'supported-rtl' = @('supported by nekodrop (on-demand AirDrop, built-in RTL8852CE backend)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers.')
   'intel-fw'      = @('not supported: its firmware is not shipped upstream', 'nekodrop runs the Intel cards whose firmware ForbiddenItlwm ships (API 68); this one has none there.')
@@ -113,7 +114,18 @@ $WifiKinds = @{
 $WifiVendors = @{ '8086' = 'Intel'; '10EC' = 'Realtek'; '14C3' = 'MediaTek'; '17CB' = 'Qualcomm'; '168C' = 'Qualcomm Atheros'; '14E4' = 'Broadcom'
                   '0BDA' = 'Realtek'; '0E8D' = 'MediaTek'; '148F' = 'MediaTek (Ralink)'; '0CF3' = 'Qualcomm Atheros'; '8087' = 'Intel' }
 
-function Classify-WifiCard([string]$InstanceId, [string]$FriendlyName = '') {
+function Test-E138ValidationTarget([string]$InstanceId, [bool]$Enabled) {
+  return $Enabled -and $InstanceId -match '^PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00\\[^\\]+$'
+}
+function Test-E138ValidationPackage([string]$Root) {
+  $radio = Join-Path $Root 'radio\nekodrop-radio-mt7925-fast.exe'
+  $inf = Join-Path $Root 'driver\winawdl_regproxy.inf'
+  return (Test-Path -LiteralPath $radio -PathType Leaf) -and
+         (Test-Path -LiteralPath $inf -PathType Leaf) -and
+         (Select-String -LiteralPath $inf -Pattern '^\s*%DeviceDescMtk7925%\s*=\s*RegProxyE138\s*,\s*PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00\s*$' -Quiet)
+}
+
+function Classify-WifiCard([string]$InstanceId, [string]$FriendlyName = '', [bool]$E138Validation = $false) {
   $id = "$InstanceId".ToUpper()
   $parts = $id -split '\\'
   $bus = $parts[0]
@@ -125,6 +137,7 @@ function Classify-WifiCard([string]$InstanceId, [string]$FriendlyName = '') {
   elseif ($bus -eq 'PCI' -and $vendor) {
     $key = $vendor + ':' + $device
     if ($vendor -eq '8086' -and $SupportedIntelIds -contains $device) { $kind = 'supported'; $chip = 'Intel Wi-Fi 6/6E' }
+    elseif (Test-E138ValidationTarget $InstanceId $E138Validation) { $kind = 'e138-validation'; $chip = 'MediaTek MT7925 E138 REV_00' }
     elseif ($WifiChips.ContainsKey($key)) { $kind = $WifiChips[$key][0]; $chip = $WifiChips[$key][1] }
     else {
       # Only reached for a device already known to be wireless (by its medium
@@ -220,8 +233,57 @@ function Get-DiscoverySummary($attemptLines, $engineLines) {
   return $rows
 }
 
+# Summarize only the latest service start, even if a previous attempt reached
+# a later stage. The service log contains no end-to-end transfer result here.
+function Get-E138StartEvidence($Lines) {
+  $evidence = 'no E138 runtime evidence for this start'
+  for ($i = @($Lines).Count - 1; $i -ge 0; $i--) {
+    if ($Lines[$i] -match '^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d starting: ') { break }
+  }
+  if ($i -lt 0) { return 'no radio start boundary in the service log' }
+  for ($j = $i + 1; $j -lt $Lines.Count; $j++) {
+    $line = $Lines[$j]
+    $stage = $null
+    if ($line -match 'MT7925 E138 FastBa bring-up failed: (MT7925 (?:UMDF SAR|SAR methods).*)$') {
+      $stage = "stopped before AWDL transmit - board SAR: $($Matches[1])"
+    } elseif ($line -match 'MT7925 E138 FastBa (?:bring-up|link) failed: (.*)$') {
+      $stage = "stopped: $($Matches[1])"
+    } elseif ($line -match 'MT7925 SAR (MTDS=0x[\da-f]+/\d+ MTGS=0x[\da-f]+/\d+.*)$') {
+      $stage = "board SAR query: $($Matches[1])"
+    } elseif ($line -match 'MT7925 AWDL power CN primary=(44|149) status=0 .*active_domain=1') {
+      $stage = "firmware accepted power policy on channel $($Matches[1])"
+    } elseif ($line -match 'MT7925 channel (44|149) AWDL pipe ready') {
+      $stage = "radio pipe ready on channel $($Matches[1])"
+    } elseif ($line -match 'MT7925 fast host ready \| ch(44|149)/80 SHM \|') {
+      $stage = "AWDL host ready on channel $($Matches[1])/80 with SHM"
+    } elseif ($line -match 'MT7925 AWDL channel (44|149) ready for frames') {
+      $stage = "firmware granted AWDL channel $($Matches[1])"
+    }
+    if ($stage) {
+      $time = Get-LogTime $line
+      $evidence = if ($time) { $time.ToString('yyyy-MM-dd HH:mm:ss') + ' ' + $stage } else { $stage }
+    }
+  }
+  return $evidence
+}
+
 if ($SelfTest) {
   $fail = @()
+  $board = 'PCI\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00\1'
+  if ((Classify-WifiCard $board -E138Validation $true).Kind -ne 'e138-validation' -or
+      (Classify-WifiCard $board).Kind -eq 'e138-validation') { $fail += 'E138 package scope' }
+  foreach ($id in $board.Replace('REV_00','REV_01'), $board.Replace('105B','105C'), $board.Replace('7925','0717'),
+                  $board.Replace('REV_00','REV_000'), $board.Replace('\1',''), ($board + '\extra')) {
+    if ((Classify-WifiCard $id -E138Validation $true).Kind -eq 'e138-validation') { $fail += "E138 board scope: $id" }
+  }
+  $start = '2026-11-27 10:01:00 starting: on demand'
+  $older = '2026-11-27 10:00:10 awdld: MT7925 fast host ready | ch44/80 SHM | VHT RX 1SS TX 1SS'
+  $failure = '2026-11-27 10:01:01 radio: MT7925 E138 FastBa bring-up failed: MT7925 UMDF SAR request failed: 6'
+  $fresh = Get-E138StartEvidence @($older, $start, $failure)
+  if ($fresh -notmatch '2026-11-27 10:01:01 stopped before AWDL transmit.*failed: 6') { $fail += 'E138 failed-closed evidence' }
+  if ((Get-E138StartEvidence @($start, $failure, $start, $older)) -notmatch 'AWDL host ready on channel 44') { $fail += 'E138 fresh successful stage' }
+  if ((Get-E138StartEvidence @($start, $failure, $start)) -notmatch '^no E138 runtime evidence') { $fail += 'stale E138 evidence' }
+  if ((Get-E138StartEvidence @($failure)) -notmatch '^no radio start boundary') { $fail += 'unscoped E138 log' }
   $cases = @(
     @('PCI\VEN_8086&DEV_43F0&SUBSYS_00748086&REV_00\3&11583659&0&A3', 'supported', 'Intel Wi-Fi 6/6E'),
     @('PCI\VEN_8086&DEV_2725&SUBSYS_00248086&REV_1A\4&2A1B3C4D&0&00E0', 'supported', 'Intel Wi-Fi 6/6E'),
@@ -435,7 +497,10 @@ $SupportedCardPattern = '^PCI\\(?:VEN_8086&DEV_(' + ($SupportedIntelIds -join '|
 # Every present device once: the supported card and the other wireless cards
 # below both come from it.
 $pnpAll = @(Try-Get { Get-PnpDevice -PresentOnly } | Where-Object { $_ })
+$e138Validation = Test-E138ValidationPackage $app
+$e138Cards = @($pnpAll | Where-Object { Test-E138ValidationTarget $_.InstanceId $e138Validation })
 $card = $pnpAll | Where-Object { $_.InstanceId -match $SupportedCardPattern } | Select-Object -First 1
+if (-not $card -and $e138Cards.Count) { $card = $e138Cards[0] }
 # A device property as text ('' when missing); any device, not only $card, so
 # the report can show an unsupported card's driver too.
 function Dev-Prop([string]$instanceId, [string]$key) {
@@ -487,11 +552,11 @@ function Dev-Name($dev) {
 # One line per device: name, ID without the instance part (a USB adapter's
 # serial, often its MAC address), and what nekodrop makes of it.
 function Wireless-Summary($dev) {
-  $c = Classify-WifiCard $dev.InstanceId
+  $c = Classify-WifiCard $dev.InstanceId -E138Validation $e138Validation
   $hw = if ($c.Bus -and $c.HardwareId -and $c.HardwareId -ne $c.Bus) { "$($c.Bus)\$($c.HardwareId)" } else { $c.HardwareId }
   return "$(Dev-Name $dev) (``$(Redact $hw)``): $($c.Chip), $($c.Status)"
 }
-$procs = @('nekodrop-radio', 'nekodrop-radio-rtl', 'nekodrop-radio-mt', 'nekodrop-radio-mtk', 'awdld', 'nekodrop', 'NekoDropService') | ForEach-Object {
+$procs = @('nekodrop-radio', 'nekodrop-radio-rtl', 'nekodrop-radio-mt', 'nekodrop-radio-mtk', 'nekodrop-radio-mt7925-fast', 'awdld', 'nekodrop', 'NekoDropService') | ForEach-Object {
   $p = Get-Process $_ -ErrorAction SilentlyContinue
   if ($p) { "$_ (running)" } else { "$_ (not running)" }
 }
@@ -540,6 +605,11 @@ $cardSummary = if ($card) { "$($card.FriendlyName) ($($card.InstanceId -replace 
   elseif ($otherWireless.Count) { "no supported Wi-Fi card found; detected $(Wireless-Summary $otherWireless[0])$(if ($otherWireless.Count -gt 1) { " (+$($otherWireless.Count - 1) more below)" })" }
   else { 'no supported Wi-Fi card found' }
 W "- Card: $cardSummary"
+$e138Evidence = if ($e138Cards.Count) { Get-E138StartEvidence $serviceLog }
+if ($e138Cards.Count) {
+  W '- MT7925 E138 REV_00: experimental validation build; AirDrop unverified.'
+  if ($e138Evidence -like 'no *') { W "- E138: $e138Evidence." }
+}
 $lastErr = $serviceLog | Where-Object { $_ -match 'start failed|bring-up failed|keeps failing|taking the card failed|LMAC error|UMAC error|firmware error|refusing|cannot give' } | Select-Object -Last 1
 # The AirDrop engine's failures too (#4: "none in the log" beside send failures).
 $lastEngineErr = $engineLog | Where-Object { $_ -match '"state":"failed"|Traceback|\bERROR\b|send failed|WinError' -and $_ -notmatch 'mdns: (send|query) failed' } | Select-Object -Last 1
@@ -548,7 +618,9 @@ W "- Last AirDrop engine error: $(if ($lastEngineErr) { '`' + (Redact ($lastEngi
 W ''
 W '## Bring-up (last radio start)'
 W ''
-if ($start -lt 0) {
+if ($e138Evidence -and $e138Evidence -notlike 'no *') {
+  W ("Last E138 startup stage: " + (Redact $e138Evidence))
+} elseif ($start -lt 0) {
   W 'No radio start in the service log.'
 } else {
   W "From ``$(Redact ($attempt[0] -replace '\|', '/'))``"
@@ -690,7 +762,7 @@ if ($card) {
   # Each wireless card that is there, with what it is and its driver, so a
   # report tells an unlisted ID from a card nekodrop cannot drive (#16).
   foreach ($o in $otherWireless) {
-    $c = Classify-WifiCard $o.InstanceId
+    $c = Classify-WifiCard $o.InstanceId -E138Validation $e138Validation
     W ''
     W "- Other wireless device: $(Dev-Name $o), bus $(if ($c.Bus) { $c.Bus } else { '?' }), status $($o.Status), class $(if ($o.Class) { $o.Class } else { 'none (no driver)' })"
     W "  - Hardware ID: ``$(Redact $c.HardwareId)``"
@@ -768,7 +840,7 @@ W ''
 
 W '## Discovery timeline'
 W ''
-if ($start -ge 0) {
+if ($start -ge 0 -and (-not $e138Evidence -or $e138Evidence -like 'no *')) {
   W "Discovery timing (last radio start, seconds after ``$(Redact (($attempt[0] -replace '^\S+ \S+ ', '') -replace '\|', '/'))``):"
   W ''
   W '| Step | After | Line |'

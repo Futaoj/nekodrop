@@ -32,7 +32,7 @@ Windows 的 ACPI 事件跟踪记录了 PnP 绑定期间同一设备的三次 `_A
 
 ## 服务与图形界面验证构建
 
-整合配套的主线 AWDL 主机补丁并按仓库说明准备依赖后，可用
+按仓库说明准备依赖后，可用
 `scripts/build-installer.ps1 -E138Validation` 构建验证包。这个开关同时打包 E138
 无线进程、固件，并为服务和 PnP 注册精确到板号和修订号的设备。常规安装包不注册该设备。
 同一套服务自检可用 `NekoDropService.exe --selftest` 离线执行。

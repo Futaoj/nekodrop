@@ -375,11 +375,17 @@ Start-Transcript (Join-Path $state 'restore.log') -Force | Out-Null
 
 '1. Stopping nekodrop'
 $svc = Get-Service NekoDropService -ErrorAction SilentlyContinue
+$e138Radio = Join-Path $env:ProgramFiles 'nekodrop\radio\nekodrop-radio-mt7925-fast.exe'
 if ($svc) {
+  $serviceImage = (Get-CimInstance Win32_Service -Filter "Name='NekoDropService'" -ErrorAction SilentlyContinue).PathName
+  if ($serviceImage -match '^\s*"?(.*?\\NekoDropService\.exe)"?(?:\s|$)') {
+    $e138Radio = Join-Path (Split-Path $Matches[1]) 'radio\nekodrop-radio-mt7925-fast.exe'
+  }
   Stop-Service NekoDropService -Force -ErrorAction SilentlyContinue
   Set-Service NekoDropService -StartupType Disabled
   '   service stopped and disabled'
 }
+Get-Process nekodrop-radio-mt7925-fast -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $e138Radio } | Stop-Process -Force
 Get-Process nekodrop-radio, nekodrop-radio-rtl, nekodrop-radio-mt, nekodrop-radio-mtk, awdld -ErrorAction SilentlyContinue | Stop-Process -Force
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
   Where-Object { $_.CommandLine -like '*airdrop*engine.py*' } |

@@ -96,6 +96,7 @@ $WifiChips = @{
 # kind -> what the report says, and a hint for the reader (may be empty).
 $WifiKinds = @{
   'supported'     = @('supported by nekodrop', '')
+  'e138-validation' = @('experimental E138 validation build; AirDrop unverified', 'The radio requires usable board SAR data before transmission.')
   'supported-mtk' = @('supported by nekodrop (5 GHz Wi-Fi beside AirDrop, or on-demand; built-in MediaTek backend)', 'Joins 5 GHz Wi-Fi beside AirDrop, or runs on demand while Windows keeps Wi-Fi.')
   'supported-rtl' = @('supported by nekodrop (on-demand AirDrop, built-in RTL8852CE backend)', 'Windows keeps Wi-Fi normally; nekodrop takes the card only during AirDrop transfers.')
   'intel-fw'      = @('not supported: its firmware is not shipped upstream', 'nekodrop runs the Intel cards whose firmware ForbiddenItlwm ships (API 68); this one has none there.')
@@ -112,7 +113,18 @@ $WifiKinds = @{
 $WifiVendors = @{ '8086' = 'Intel'; '10EC' = 'Realtek'; '14C3' = 'MediaTek'; '17CB' = 'Qualcomm'; '168C' = 'Qualcomm Atheros'; '14E4' = 'Broadcom'
                   '0BDA' = 'Realtek'; '0E8D' = 'MediaTek'; '148F' = 'MediaTek (Ralink)'; '0CF3' = 'Qualcomm Atheros'; '8087' = 'Intel' }
 
-function Classify-WifiCard([string]$InstanceId, [string]$FriendlyName = '') {
+function Test-E138ValidationTarget([string]$InstanceId, [bool]$Enabled) {
+  return $Enabled -and $InstanceId -match '^PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00\\[^\\]+$'
+}
+function Test-E138ValidationPackage([string]$Root) {
+  $radio = Join-Path $Root 'radio\nekodrop-radio-mt7925-fast.exe'
+  $inf = Join-Path $Root 'driver\winawdl_regproxy.inf'
+  return (Test-Path -LiteralPath $radio -PathType Leaf) -and
+         (Test-Path -LiteralPath $inf -PathType Leaf) -and
+         (Select-String -LiteralPath $inf -Pattern '^\s*%DeviceDescMtk7925%\s*=\s*RegProxyE138\s*,\s*PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00\s*$' -Quiet)
+}
+
+function Classify-WifiCard([string]$InstanceId, [string]$FriendlyName = '', [bool]$E138Validation = $false) {
   $id = "$InstanceId".ToUpper()
   $parts = $id -split '\\'
   $bus = $parts[0]
@@ -124,6 +136,7 @@ function Classify-WifiCard([string]$InstanceId, [string]$FriendlyName = '') {
   elseif ($bus -eq 'PCI' -and $vendor) {
     $key = $vendor + ':' + $device
     if ($vendor -eq '8086' -and $SupportedIntelIds -contains $device) { $kind = 'supported'; $chip = 'Intel Wi-Fi 6/6E' }
+    elseif (Test-E138ValidationTarget $InstanceId $E138Validation) { $kind = 'e138-validation'; $chip = 'MediaTek MT7925 E138 REV_00' }
     elseif ($WifiChips.ContainsKey($key)) { $kind = $WifiChips[$key][0]; $chip = $WifiChips[$key][1] }
     else {
       # Only reached for a device already known to be wireless (by its medium
@@ -152,9 +165,6 @@ function Test-KnownWifiId([string]$InstanceId) {
 # (10EC:C852) and MediaTek MT7902/MT7921/MT7922, with a 4-hex boundary so a
 # 5-digit device ID (e.g. DEV_43F01 or DEV_C8520) can never match.
 $SupportedCardPattern = '^PCI\\(?:VEN_8086&DEV_(' + ($SupportedIntelIds -join '|') + ')|VEN_8086&DEV_272B|VEN_10EC&DEV_C852|VEN_14C3&DEV_(7902|7961|0608|7922|0616))(?=&|\\|$)'
-function Test-E138ValidationTarget([string]$InstanceId, [bool]$Enabled) {
-  return $Enabled -and $InstanceId -match '^PCI\\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00\\[^\\]+$'
-}
 $NoSupportedCard = 'This PC has no Wi-Fi card nekodrop supports (Intel AX201, AX200, AX203, AX210, AX211, AX411, 9560 on Qu, BE200 (experimental), Realtek RTL8852CE 10EC:C852, or MediaTek MT7902/MT7921/MT7922); nekodrop cannot run here.'
 $ReportUrl = 'https://github.com/zheznanohana/nekodrop/blob/main/installer/report.ps1'
 $IssuesUrl = 'https://github.com/zheznanohana/nekodrop/issues'
@@ -249,6 +259,24 @@ if ($SelfTest) {
   # The supported-card check: exact 16 Intel IDs + Realtek RTL8852CE + MediaTek MT7902/MT7921/MT7922 with 4-hex boundary.
   if ($SupportedCardPattern -ne '^PCI\\(?:VEN_8086&DEV_(43F0|A0F0|02F0|06F0|34F0|3DF0|4DF0|2723|2725|7A70|7AF0|51F0|51F1|54F0|7F70|7740)|VEN_8086&DEV_272B|VEN_10EC&DEV_C852|VEN_14C3&DEV_(7902|7961|0608|7922|0616))(?=&|\\|$)') {
     $fail += "supported-card pattern changed: $SupportedCardPattern"
+  }
+  # Check package detection against staged files, without reading installed drivers.
+  $fixture = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString()))
+  $radioDir = New-Item -ItemType Directory -Path (Join-Path $fixture.FullName 'radio')
+  $driverDir = New-Item -ItemType Directory -Path (Join-Path $fixture.FullName 'driver')
+  $testRadio = Join-Path $radioDir.FullName 'nekodrop-radio-mt7925-fast.exe'
+  $testInf = Join-Path $driverDir.FullName 'winawdl_regproxy.inf'
+  $exact = '%DeviceDescMtk7925% = RegProxyE138, PCI\VEN_14C3&DEV_7925&SUBSYS_E138105B&REV_00'
+  try {
+    [IO.File]::WriteAllText($testInf, $exact)
+    if (Test-E138ValidationPackage $fixture.FullName) { $fail += 'E138 INF alone enabled validation' }
+    [IO.File]::WriteAllBytes($testRadio, [byte[]]@())
+    if (-not (Test-E138ValidationPackage $fixture.FullName)) { $fail += 'missing E138 validation package' }
+    [IO.File]::WriteAllText($testInf, $exact.Replace('REV_00','REV_01'))
+    if (Test-E138ValidationPackage $fixture.FullName) { $fail += 'E138 package matched wrong INF revision' }
+  } finally {
+    foreach ($file in $testInf, $testRadio) { [IO.File]::Delete($file) }
+    foreach ($dir in $radioDir, $driverDir, $fixture) { [IO.Directory]::Delete($dir.FullName) }
   }
   foreach ($mtkDev in '7902', '7961', '0608', '7922', '0616') {
     if ("PCI\VEN_14C3&DEV_$mtkDev&SUBSYS_60401A3B&REV_00\4&1" -notmatch $SupportedCardPattern) { $fail += "14C3:$mtkDev not accepted" }
@@ -372,7 +400,7 @@ if ($SelfTest) {
   }
   # A top-level variable's value, only if it is pure literals (strings, arrays,
   # hashtables): evaluating it then runs no command.
-  function Get-LiteralValue($ast, [string]$name) {
+  function Get-LiteralValue($ast, [string]$name, [switch]$SourceText) {
     $a = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq "`$$name" }, $false)
     if (-not $a) { return $null }
     $code = $a.Right.Find({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -or
@@ -380,6 +408,7 @@ if ($SelfTest) {
                                       $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -or
                                       $n -is [System.Management.Automation.Language.ExpandableStringExpressionAst] }, $true)
     if ($code) { return $null }
+    if ($SourceText) { return $a.Extent.Text }
     return (& ([scriptblock]::Create($a.Right.Extent.Text)))
   }
   function ConvertTo-Comparable($v) {
@@ -394,6 +423,8 @@ if ($SelfTest) {
     if (-not $other) { $fail += 'report.ps1 does not parse' }
     else {
       foreach ($v in 'SupportedIntelIds', 'WifiChips', 'WifiKinds', 'WifiVendors') {
+        $literal = Get-LiteralValue $self $v -SourceText
+        if (-not (Ascii $literal) -or $literal -cne (Get-LiteralValue $other $v -SourceText)) { $fail += "Table $v must be identical ASCII in both scripts" }
         $mine = Get-LiteralValue $self $v; $theirs = Get-LiteralValue $other $v
         if ($null -eq $theirs -or (ConvertTo-Comparable $mine) -ne (ConvertTo-Comparable $theirs)) { $fail += "`$$v differs from report.ps1's" }
       }
@@ -461,10 +492,7 @@ function Step($what, [scriptblock]$do) {
 $pnpAll = @(Get-PnpDevice -PresentOnly)
 # The regular package does not carry the validation radio. Even in a validation
 # package, only this full board ID is eligible and Settings starts with it off.
-$proxyInf = Join-Path $Source 'driver\winawdl_regproxy.inf'
-$e138Validation = (Test-Path -LiteralPath (Join-Path $Source 'radio\nekodrop-radio-mt7925-fast.exe') -PathType Leaf) -and
-                  (Test-Path -LiteralPath $proxyInf -PathType Leaf) -and
-                  (Select-String -LiteralPath $proxyInf -Pattern '^%DeviceDescMtk7925%\s*=' -Quiet)
+$e138Validation = Test-E138ValidationPackage $Source
 if (-not ($pnpAll | Where-Object { $_.InstanceId -match $SupportedCardPattern -or
     (Test-E138ValidationTarget $_.InstanceId $e138Validation) })) {
   # Naming the cards is a courtesy: if reading the adapters or formatting
