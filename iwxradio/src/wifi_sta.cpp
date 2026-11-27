@@ -223,6 +223,13 @@ void WifiStation::reset_join_state() {
   _addba_answers.clear();
   _ba_token_valid = 0;
   _rx_reorder.clear();
+  _tx_ba_state = TxBaState::Idle;
+  _tx_ba_tries = 0;
+  _tx_ba_last_ask = 0;
+  _tx_batching = false;
+  _tx_batch_dirty = false;
+  _tx_wait.clear();
+  _qos_seq = 0;
   _sae_step = SaeStep::None;
   _sae_token.clear();
   _sae_sc = 0;
@@ -426,8 +433,11 @@ void WifiStation::learn_beacon(const uint8_t *f, size_t len) {
     } else if (_ap_capab & 0x10) {
       sec = "protected (not RSN-CCMP)";
     }
+    char extra[96];
+    std::snprintf(extra, sizeof(extra), " (cap=0x%04x ht=0x%04x ampdu=0x%02x vht=0x%08x wmm=%u)",
+                  _ap_capab, _ap_ht_cap, _ap_ampdu, _ap_vht_cap, _ap_wmm ? 1u : 0u);
     _log(std::string("station: beacon heard: ") + sec +
-         (_ap_ht ? ", HT" : "") + (_ap_vht ? ", VHT" : "") + ", " + std::to_string(_ap_width) + " MHz");
+         (_ap_ht ? ", HT" : "") + (_ap_vht ? ", VHT" : "") + ", " + std::to_string(_ap_width) + " MHz" + extra);
   }
 }
 
@@ -541,6 +551,7 @@ void WifiStation::send_assoc() {
   if (!plain() || (_ap_capab & 0x0010)) cap |= 0x0010;      /* privacy */
   if (_ap_capab & 0x0020) cap |= 0x0020;                    /* short preamble */
   if (!_beacon_seen || (_ap_capab & 0x0400)) cap |= 0x0400; /* short slot time */
+  if (_ap_capab & 0x8000) cap |= 0x8000;                    /* immediate block ack */
   put_le16(f, cap);
   put_le16(f, 10); /* listen interval */
   f.push_back(0);
@@ -566,6 +577,11 @@ void WifiStation::send_assoc() {
     f.insert(f.end(), rates.begin() + first, rates.end());
   }
   if (!plain()) f.insert(f.end(), _rsn_ie.begin(), _rsn_ie.end());
+  if (_ap_wmm) {
+    /* QoS Capability IE (46, len 1, QoS Info 0), as sent by OpenBSD/mac80211. */
+    const uint8_t qos_cap[3] = {46, 1, 0};
+    f.insert(f.end(), qos_cap, qos_cap + sizeof(qos_cap));
+  }
   if (_akm == Akm::Owe) {
     /* OWE Diffie-Hellman Parameter (extension 32): group 19, our public x. */
     const uint8_t head[5] = {255, 1 + 2 + 32, 32, 19, 0};
@@ -577,7 +593,7 @@ void WifiStation::send_assoc() {
      * 1 RX STBC stream; 64 KiB A-MPDU, 8 us spacing; MCS 0-15 (two chains).
      * Keep bit 11 clear (3839-byte max A-MSDU) so frames always fit in the
      * default 4 KiB RX DMA buffers. */
-    const uint16_t htcap = static_cast<uint16_t>((_ap_width >= 40 ? 0x0002 : 0) | 0x000c | 0x0020 |
+    const uint16_t htcap = static_cast<uint16_t>(0x0001 | (_ap_width >= 40 ? 0x0002 : 0) | 0x000c | 0x0020 |
                                                  (_ap_width >= 40 ? 0x0040 : 0) | 0x0100);
     const uint8_t ht[28] = {45,
                             26,
@@ -669,6 +685,20 @@ void WifiStation::handle_mgmt(const RxFrame &in) {
       _log(ctx);
       return fail("association refused, status " + std::to_string(status));
     }
+    if (status == 0) {
+      std::string ies;
+      for (size_t i = 30; i + 2 <= f.len;) {
+        const uint8_t id = f.data[i], n = f.data[i + 1];
+        if (i + 2 + n > f.len) break;
+        if (!ies.empty()) ies += ',';
+        ies += std::to_string(id) + ":" + std::to_string(n);
+        i += 2 + n;
+      }
+      char ab[192];
+      std::snprintf(ab, sizeof(ab), "station: assoc resp cap=0x%04x aid=%u ies=[%s]",
+                    le16(f.data + 24), aid & 0x3fff, ies.c_str());
+      _log(ab);
+    }
     if (_akm == Akm::Owe) {
       /* The AP's OWE Diffie-Hellman Parameter: group 19 and its public x. */
       const uint8_t *peer_x = nullptr;
@@ -730,8 +760,7 @@ void WifiStation::handle_mgmt(const RxFrame &in) {
     if (_addba_answers.size() < 8) _addba_answers.push_back(std::move(a));
   } else if (sub == 0xd0 && f.len >= 30 && f.data[24] == 3 && f.data[25] == 2) {
     /* DELBA (Block Ack category, action 2): the parameter set's bit 11 says
-     * whether the sender started the session, bits 12-15 the TID. The AP
-     * ending its own session means our receive session for it goes. */
+     * whether the sender started the session, bits 12-15 the TID. */
     const uint16_t params = le16(f.data + 26);
     const unsigned tid = params >> 12;
     if ((params & 0x0800) && tid < 8) {
@@ -740,6 +769,34 @@ void WifiStation::handle_mgmt(const RxFrame &in) {
       _ba_token_valid &= static_cast<uint8_t>(~(1u << tid));
       _log("station: the access point ended Block Ack on TID " + std::to_string(tid) + ", reason " +
            std::to_string(le16(f.data + 28)));
+    } else if (!(params & 0x0800) && tid == 0 && (_tx_ba_state == TxBaState::Active || _tx_ba_state == TxBaState::Asking)) {
+      if (_tx_ba_state == TxBaState::Active) {
+        _dev.sta_tx_agg_enable(false);
+        _dev.sta_tx_agg_flush();
+        _tx_ba_state = TxBaState::Idle;
+        _tx_ba_tries = 0;
+        _tx_ba_last_ask = 0;
+      }
+      _log("station: the access point ended TX Block Ack on TID 0, reason " + std::to_string(le16(f.data + 28)));
+    }
+  } else if (sub == 0xd0 && f.len >= 33 && f.data[24] == 3 && f.data[25] == 1) {
+    /* ADDBA Response from the AP to our TX Block Ack request (TID 0). */
+    awdl::AddbaAnswer ans;
+    if (!awdl::parse_addba_answer(f.data, f.len, _addr.data(), &ans)) {
+      _log("station: malformed ADDBA response (len " + std::to_string(f.len) + ")");
+      return;
+    }
+    _log("station: ADDBA response tid " + std::to_string(ans.tid) + " token " + std::to_string(ans.token) +
+         " status " + std::to_string(ans.status) + " imm " + std::to_string(ans.immediate ? 1 : 0) +
+         " window " + std::to_string(ans.window));
+    if (_tx_ba_state != TxBaState::Asking || ans.tid != 0 || ans.token == 0 || ans.token > _tx_ba_token) return;
+    if (ans.status == 0 && ans.immediate && _dev.sta_tx_agg_setup() && _dev.sta_tx_agg_enable(true)) {
+      _tx_ba_state = TxBaState::Active;
+      _log("station: TX Block Ack on TID 0 open (window " + std::to_string(ans.window) +
+           ", agg_seq " + std::to_string(_dev.sta_tx_agg_seq()) + ")");
+    } else {
+      _tx_ba_state = TxBaState::Failed;
+      _log("station: TX Block Ack on TID 0 refused (status " + std::to_string(ans.status) + ")");
     }
   } else if (sub == 0xd0 && f.len >= 33) {
     /* Block Ack request from the AP: firmware session + answer. */
@@ -753,9 +810,10 @@ void WifiStation::handle_mgmt(const RxFrame &in) {
     if (_cfg.block_ack.value_or(false) && r.immediate && (same || _dev.sta_add_rx_ba(r.tid, r.ssn, r.window))) {
       /* A repeated request (same dialog token) is answered again without
        * touching the firmware's session (round 2 #12). */
-      if (!same)
+      if (!same) {
         _log("station: Block Ack on TID " + std::to_string(r.tid) + " from sequence " + std::to_string(r.ssn) +
              ", window " + std::to_string(r.window));
+      }
       _ba_token[tid] = r.token;
       _ba_ssn[tid] = r.ssn;
       _ba_window[tid] = r.window;
@@ -903,14 +961,80 @@ void WifiStation::deliver(const uint8_t *da, const uint8_t *sa, const uint8_t *b
   }
 }
 
-bool WifiStation::send_data(const uint8_t *da, uint16_t ethertype, const uint8_t *payload, size_t len,
-                            bool protect) {
-  std::vector<uint8_t> f(24, 0);
-  f[0] = 0x08;
+bool WifiStation::transmit_qos_agg(const uint8_t *da, uint16_t ethertype, const uint8_t *payload, size_t len,
+                                   bool protect, bool kick) {
+  std::vector<uint8_t> f(26, 0);
+  f[0] = 0x88; /* QoS Data */
   f[1] = static_cast<uint8_t>(0x01 | (protect ? 0x40 : 0)); /* ToDS */
   std::memcpy(&f[4], _cfg.bssid, 6);
   std::memcpy(&f[10], _addr.data(), 6);
   std::memcpy(&f[16], da, 6);
+  const uint16_t sc = static_cast<uint16_t>(_dev.sta_tx_agg_seq() << 4);
+  f[22] = static_cast<uint8_t>(sc);
+  f[23] = static_cast<uint8_t>(sc >> 8);
+  f[24] = 0; /* TID 0, normal ACK */
+  f[25] = 0;
+  const uint8_t llc[6] = {0xaa, 0xaa, 0x03, 0, 0, 0};
+  f.insert(f.end(), llc, llc + 6);
+  put_be16(f, ethertype);
+  f.insert(f.end(), payload, payload + len);
+  if (_dev.sta_transmit_agg(f.data(), f.size(), protect, kick) < 0) return false;
+  _tx_packets++;
+  _tx_bytes += f.size();
+  return true;
+}
+
+bool WifiStation::flush_tx() {
+  bool sent_any = false;
+  if (_state == State::Running && _tx_ba_state == TxBaState::Active && _dev.sta_tx_agg_ready()) {
+    const unsigned cap = _dev.sta_tx_agg_cap();
+    unsigned batch = 0;
+    while (!_tx_wait.empty() && _dev.sta_tx_agg_queued() < cap) {
+      const PendingEth &p = _tx_wait.front();
+      if (p.frame.size() < 14) {
+        _tx_wait.pop_front();
+        continue;
+      }
+      const uint16_t ethertype = be16(p.frame.data() + 12);
+      if (!transmit_qos_agg(p.frame.data(), ethertype, p.frame.data() + 14, p.frame.size() - 14, p.protect, false))
+        break;
+      _tx_wait.pop_front();
+      _tx_batch_dirty = true;
+      sent_any = true;
+      if (++batch >= 32) {
+        _dev.sta_kick_tx_agg();
+        _tx_batch_dirty = false;
+        batch = 0;
+      }
+    }
+    if (_tx_batch_dirty) {
+      _dev.sta_kick_tx_agg();
+      _tx_batch_dirty = false;
+    }
+  } else {
+    _tx_batch_dirty = false;
+  }
+  _tx_batching = false;
+  return sent_any;
+}
+
+bool WifiStation::send_data(const uint8_t *da, uint16_t ethertype, const uint8_t *payload, size_t len,
+                            bool protect) {
+  const bool qos = _cfg.block_ack.value_or(false) && _ap_wmm && (_ap_ht || _ap_vht) &&
+                   ethertype != kEtherEapol && !(da[0] & 1);
+  std::vector<uint8_t> f(qos ? 26 : 24, 0);
+  f[0] = qos ? 0x88 : 0x08;
+  f[1] = static_cast<uint8_t>(0x01 | (protect ? 0x40 : 0)); /* ToDS */
+  std::memcpy(&f[4], _cfg.bssid, 6);
+  std::memcpy(&f[10], _addr.data(), 6);
+  std::memcpy(&f[16], da, 6);
+  if (qos) {
+    const uint16_t sc = static_cast<uint16_t>((++_qos_seq) << 4);
+    f[22] = static_cast<uint8_t>(sc);
+    f[23] = static_cast<uint8_t>(sc >> 8);
+    f[24] = 0; /* TID 0, normal ACK */
+    f[25] = 0;
+  }
   const uint8_t llc[6] = {0xaa, 0xaa, 0x03, 0, 0, 0};
   f.insert(f.end(), llc, llc + 6);
   put_be16(f, ethertype);
@@ -939,8 +1063,20 @@ void WifiStation::on_ethernet(const uint8_t *frame, size_t len) {
    * traffic, which a station may not send. */
   if (std::memcmp(frame + 6, _addr.data(), 6) != 0) return;
   const uint16_t ethertype = be16(frame + 12);
-  if (!(frame[0] & 1)) _tx_unicast++;
-  send_data(frame, ethertype, frame + 14, len - 14, _keys_installed && !plain());
+  const bool unicast = !(frame[0] & 1);
+  if (unicast) _tx_unicast++;
+  const bool protect = _keys_installed && !plain();
+  if (unicast && ethertype != kEtherEapol && _tx_ba_state == TxBaState::Active && _dev.sta_tx_agg_ready()) {
+    const unsigned cap = _dev.sta_tx_agg_cap();
+    if (_tx_wait.empty() && _dev.sta_tx_agg_queued() < cap &&
+        transmit_qos_agg(frame, ethertype, frame + 14, len - 14, protect, !_tx_batching)) {
+      if (_tx_batching) _tx_batch_dirty = true;
+      return;
+    }
+    if (_tx_wait.size() < 256) _tx_wait.push_back({std::vector<uint8_t>(frame, frame + len), protect});
+    return;
+  }
+  send_data(frame, ethertype, frame + 14, len - 14, protect);
 }
 
 /* ---------------------------------------------------------------- WPA2 */
@@ -1276,6 +1412,33 @@ void WifiStation::tick(uint64_t now_us) {
         _state_since = now_us;
       }
     }
+    break;
+  case State::Running:
+    /* Negotiate Station TX Block Ack (TID 0 A-MPDU) 1.5s after connecting (once
+     * AP authorization and DHCP settle), when DataPlaneAccel (block_ack=1) is on. */
+    if (_cfg.block_ack.value_or(false) && _keys_installed && _ap_wmm && (_ap_ht || _ap_vht) &&
+        _tx_unicast >= 4 && now_us >= _state_since + 1500000) {
+      if (_tx_ba_state == TxBaState::Idle) {
+        _tx_ba_state = TxBaState::Asking;
+        _tx_ba_tries = 0;
+        _tx_ba_last_ask = 0;
+      }
+      if (_tx_ba_state == TxBaState::Asking && (!_tx_ba_last_ask || now_us - _tx_ba_last_ask > 1000000)) {
+        if (++_tx_ba_tries > 3) {
+          _tx_ba_state = TxBaState::Failed;
+          _log("station: TX Block Ack on TID 0 timed out; sending unaggregated");
+        } else {
+          _tx_ba_last_ask = now_us;
+          std::vector<uint8_t> req(awdl::kAddbaResponseLength);
+          awdl::build_addba_request(req.data(), _cfg.bssid, _addr.data(), _cfg.bssid, ++_tx_ba_token, 0, 64,
+                                    0, ++_mgmt_seq);
+          req[27] |= 0x01; /* A-MSDU supported */
+          if (_pmf && _keys_installed) req[1] |= 0x40;
+          if (_addba_answers.size() < 8) _addba_answers.push_back(std::move(req));
+        }
+      }
+    }
+    flush_tx();
     break;
   default:
     break;

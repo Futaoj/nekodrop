@@ -308,9 +308,10 @@ bool IwxDevice::alloc_rings(std::string &error) {
   need.push_back(pages_of(cmd_count * sizeof(iwx_tfh_tfd)));
   need.push_back(pages_of(tx_count * sizeof(iwx_tfh_tfd)));
   need.push_back(pages_of(tx_count * sizeof(iwx_tfh_tfd)));
+  need.push_back(pages_of(tx_count * sizeof(iwx_tfh_tfd))); /* _sta_aggq */
   if (_opt.aggregate) need.push_back(pages_of(tx_count * sizeof(iwx_tfh_tfd)));
   if (bz()) {
-    for (int i = 0; i < (_opt.aggregate ? 4 : 3); i++) need.push_back(pages_of(bc_tbl_size));
+    for (int i = 0; i < (_opt.aggregate ? 5 : 4); i++) need.push_back(pages_of(bc_tbl_size));
   }
   need.push_back(pages_of(IWX_RX_MQ_RING_COUNT * rx_used_elem));
   need.push_back(pages_of(IWX_RX_MQ_RING_COUNT * (gen3() ? sizeof(iwx_rx_transfer_desc) : sizeof(uint64_t))));
@@ -419,6 +420,11 @@ bool IwxDevice::alloc_rings(std::string &error) {
             std::to_string(_dma.longest_run()) + "; " + std::to_string(pages_of(tx_count * sizeof(iwx_tfh_tfd))) +
             " needed)";
     return false;
+  }
+  /* Station TX A-MPDU ring (TID 0): optional, falls back to _staq if DMA is tight. */
+  if (!make_ring(_sta_aggq, tx_count, 0, kTxPayloadSlot)) {
+    _log("station: no DMA memory for TX aggregation ring; sending unaggregated");
+    _sta_aggq = TxRing{};
   }
   /* Experimental A-MPDU sending: its own ring for the peer's TID 0. Only when
    * asked for, so the default memory need is unchanged; without it the radio
@@ -2095,7 +2101,7 @@ void IwxDevice::kick_agg() {
 /* Compressed Block Ack notification (new TX API): the aggregation queue's
  * progress. Frees the ring up to the index the firmware gives. */
 void IwxDevice::handle_ba_notif(const uint8_t *payload, size_t len) {
-  if (!_agg_queue_enabled || len < offsetof(iwx_compressed_ba_notif, tfd)) return;
+  if ((!_agg_queue_enabled && !_sta_agg_queue_enabled) || len < offsetof(iwx_compressed_ba_notif, tfd)) return;
   const auto *r = reinterpret_cast<const iwx_compressed_ba_notif *>(payload);
   const unsigned n = le16toh(r->tfd_cnt);
   if (len < offsetof(iwx_compressed_ba_notif, tfd) + n * sizeof(iwx_compressed_ba_tfd)) return;
@@ -2103,28 +2109,46 @@ void IwxDevice::handle_ba_notif(const uint8_t *payload, size_t len) {
    * which queue, station and TID a notification names when none is ours,
    * so a report tells a queue mismatch from notifications never arriving. */
   bool ours = false;
-  for (unsigned i = 0; i < n; i++) ours = ours || le16toh(r->tfd[i].q_num) == _aggq.qid;
+  for (unsigned i = 0; i < n; i++) {
+    const unsigned q = le16toh(r->tfd[i].q_num);
+    if ((_agg_queue_enabled && q == _aggq.qid) || (_sta_agg_queue_enabled && q == _sta_aggq.qid)) ours = true;
+  }
   if (!ours && _ba_foreign_logged < 8) {
     _ba_foreign_logged++;
     std::string queues;
     for (unsigned i = 0; i < n && i < 4; i++) queues += (i ? "," : "") + std::to_string(le16toh(r->tfd[i].q_num));
-    _log("Block Ack notice for queue(s) [" + queues + "] (ours " + std::to_string(_aggq.qid) + "), station " +
-         std::to_string(r->sta_id) + ", flags " + hex(le32toh(r->flags)) + ", " + std::to_string(n) +
-         " TFD entries, txed " + std::to_string(le16toh(r->txed)) + ", done " + std::to_string(le16toh(r->done)));
+    _log("Block Ack notice for queue(s) [" + queues + "] (ours " + std::to_string(_aggq.qid) + "/" +
+         std::to_string(_sta_aggq.qid) + "), station " + std::to_string(r->sta_id) + ", flags " +
+         hex(le32toh(r->flags)) + ", " + std::to_string(n) + " TFD entries, txed " +
+         std::to_string(le16toh(r->txed)) + ", done " + std::to_string(le16toh(r->done)));
   }
   for (unsigned i = 0; i < n; i++) {
     const iwx_compressed_ba_tfd &t = r->tfd[i];
-    if (le16toh(t.q_num) != _aggq.qid) continue;
-    _agg_stats.notifs++;
-    _agg_stats.txed += le16toh(r->txed);
-    _agg_stats.acked += le16toh(r->done);
-    _agg_stats.last_rate = le32toh(r->tx_rate);
-    _agg_stats.peak_frames = std::max<uint32_t>(_agg_stats.peak_frames, le16toh(r->txed));
-    const unsigned idx = le16toh(t.tfd_index) & (_aggq.count - 1);
-    const unsigned freed = (idx + _aggq.count - _aggq.tail) % _aggq.count;
-    if (freed <= _aggq.queued) {
-      _aggq.tail = idx;
-      _aggq.queued -= freed;
+    const unsigned q = le16toh(t.q_num);
+    if (_agg_queue_enabled && q == _aggq.qid) {
+      _agg_stats.notifs++;
+      _agg_stats.txed += le16toh(r->txed);
+      _agg_stats.acked += le16toh(r->done);
+      _agg_stats.last_rate = le32toh(r->tx_rate);
+      _agg_stats.peak_frames = std::max<uint32_t>(_agg_stats.peak_frames, le16toh(r->txed));
+      const unsigned idx = le16toh(t.tfd_index) & (_aggq.count - 1);
+      const unsigned freed = (idx + _aggq.count - _aggq.tail) % _aggq.count;
+      if (freed <= _aggq.queued) {
+        _aggq.tail = idx;
+        _aggq.queued -= freed;
+      }
+    } else if (_sta_agg_queue_enabled && q == _sta_aggq.qid) {
+      _sta_agg_notifs++;
+      _sta_tx_acked += le16toh(r->done);
+      const unsigned txed = le16toh(r->txed);
+      const unsigned done = le16toh(r->done);
+      if (txed > done) _sta_tx_failed += (txed - done);
+      const unsigned idx = le16toh(t.tfd_index) & (_sta_aggq.count - 1);
+      const unsigned freed = (idx + _sta_aggq.count - _sta_aggq.tail) % _sta_aggq.count;
+      if (freed <= _sta_aggq.queued) {
+        _sta_aggq.tail = idx;
+        _sta_aggq.queued -= freed;
+      }
     }
   }
 }
@@ -2689,6 +2713,12 @@ bool IwxDevice::set_channel(uint8_t channel, unsigned width_mhz) {
   _width = width_mhz;
   /* Changing band under a live binding is what itlwm refuses (it asserts the
    * firmware on CDB parts); a modify within one band is safe. */
+  if (_sta_shared_binding && channel != _sta.channel) {
+    _log("channel change skipped while station shares binding on channel " + std::to_string(_sta.channel));
+    _channel = old_channel;
+    _width = old_width;
+    return false;
+  }
   if ((old_channel <= 14) != (channel <= 14)) {
     _log("channel change across bands is not supported live");
     _channel = old_channel;
@@ -2894,7 +2924,7 @@ int IwxDevice::transmit_on(TxRing &ring, const uint8_t *frame, size_t len, const
    * Concurrent, which read as loss (#11). The station has its own count; the
    * A-MPDU ring has agg_stats().frames. Counting only, no change to sending. */
   if (&ring == &_dataq) _tx_stats.submitted++;
-  else if (&ring == &_staq) _sta_tx_submitted++;
+  else if (&ring == &_staq || &ring == &_sta_aggq) _sta_tx_submitted++;
   return static_cast<int>(idx);
 }
 
@@ -3243,6 +3273,23 @@ void IwxDevice::handle_tx_resp(const uint8_t *payload, size_t len, unsigned slot
     }
     return;
   }
+  if (_sta_agg_queue_enabled && queue == _sta_aggq.qid) {
+    /* Station TX A-MPDU responses (frame_count > 1) are reclaimed by handle_ba_notif. */
+    if (r->frame_count > 1) return;
+    const unsigned status = le16toh(r->status.status) & IWX_TX_STATUS_MSK;
+    if (status != IWX_TX_STATUS_SUCCESS && status != IWX_TX_STATUS_DIRECT_DONE) _sta_tx_failed++;
+    else _sta_tx_acked++;
+    uint32_t ssn;
+    std::memcpy(&ssn, reinterpret_cast<const uint8_t *>(&r->status) + r->frame_count * sizeof(r->status),
+                sizeof(ssn));
+    const unsigned idx = (le32toh(ssn) & 0xfff) & (_sta_aggq.count - 1);
+    const unsigned freed = (idx + _sta_aggq.count - _sta_aggq.tail) % _sta_aggq.count;
+    if (freed <= _sta_aggq.queued) {
+      _sta_aggq.tail = idx;
+      _sta_aggq.queued -= freed;
+    }
+    return;
+  }
   if (_sta_queue_enabled && queue == _staq.qid) {
     /* The station's frames: the firmware retries them itself; only the ring
      * is reclaimed. Failures are logged, they mean the AP never acknowledged. */
@@ -3258,6 +3305,8 @@ void IwxDevice::handle_tx_resp(const uint8_t *payload, size_t len, unsigned slot
         }
       } else {
         _sta_tx_acked++;
+        if ((le16toh(r->frame_ctrl) & 0x000c) == 0x0008)
+          _sta_tx_last_rate = le32toh(r->initial_rate);
       }
     }
     uint32_t ssn;

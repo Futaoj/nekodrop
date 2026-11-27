@@ -243,8 +243,8 @@ bool IwxDevice::sta_join(const StaParams &p) {
   sta_leave();
   _sta = p;
   /* Always its own PHY and binding: sharing the listener's binding left
-   * authentication unanswered on a passive channel (hardware, 2026-11-17),
-   * while a separate PHY on the same 5 GHz channel joins fine. */
+   * authentication unanswered on a passive channel (hardware, 2026-11-17) and
+   * starved station TX on passive-flagged 5 GHz channels (flags=0xf61). */
   _sta_shared_binding = false;
   if (!nic_lock()) return false;
   int err = 0;
@@ -389,7 +389,10 @@ bool IwxDevice::sta_associated(uint16_t aid, uint8_t dtim_period) {
                : _sta.width >= 40 ? IWX_STA_FLG_FAT_EN_40MHZ
                                   : IWX_STA_FLG_FAT_EN_20MHZ;
       flags |= _sta.mimo ? IWX_STA_FLG_MIMO_EN_MIMO2 : IWX_STA_FLG_MIMO_EN_SISO;
-      flags |= IWX_STA_FLG_MAX_AGG_SIZE_64K | IWX_STA_FLG_AGG_MPDU_DENS_8US;
+      const uint32_t max_agg =
+          (_sta.vht && ((_sta.ap_vht_cap >> 23) & 7u) >= 7u) ? IWX_STA_FLG_MAX_AGG_SIZE_1024K
+                                                            : IWX_STA_FLG_MAX_AGG_SIZE_64K;
+      flags |= max_agg | IWX_STA_FLG_AGG_MPDU_DENS_8US;
     }
     cmd.station_flags = htole32(flags);
     cmd.station_flags_msk = htole32(mask);
@@ -773,7 +776,11 @@ void IwxDevice::sta_leave() {
         if (const int e = send_cmd(IWX_TXPATH_FLUSH, &f, sizeof(f), false, nullptr))
           _log("station: MLD could not flush before removing it (" + std::to_string(e) + ")");
       }
-      if (_sta_queue_enabled && !_fw_error) {
+  if (_sta_agg_queue_enabled && !_fw_error) {
+    if (const int e = disable_queue(IWX_STATION_ID, 0))
+      _log("station: MLD could not disable TX agg queue (" + std::to_string(e) + ")");
+  }
+  if (_sta_queue_enabled && !_fw_error) {
         if (const int e = disable_queue(IWX_STATION_ID, IWX_MGMT_TID))
           _log("station: MLD could not disable queue (" + std::to_string(e) + ")");
       }
@@ -800,11 +807,12 @@ void IwxDevice::sta_leave() {
       nic_unlock();
     }
     _sta_phy_added = _sta_mac_added = _sta_binding_added = _sta_link_added = _sta_link_active = false;
-    _sta_sta_added = _sta_queue_enabled = _sta_assoc = _sta_tlc = _sta_session_prot = _sta_mfp = false;
+    _sta_sta_added = _sta_queue_enabled = _sta_agg_queue_enabled = _sta_agg_active = _sta_assoc = _sta_tlc = _sta_session_prot = _sta_mfp = false;
     _sta_ba_tids = _sta_gtk_mask = _sta_igtk_id = 0;
     _sta_ptk_flags = 0;
     std::memset(_sta_baid, 0xff, sizeof(_sta_baid));
     _staq.queued = 0;
+    _sta_aggq.queued = 0;
     return;
   }
   if (!_fw_error && nic_lock()) {
@@ -876,7 +884,87 @@ void IwxDevice::sta_leave() {
     nic_unlock();
   }
   _sta_phy_added = _sta_mac_added = _sta_binding_added = _sta_sta_added = false;
-  _sta_queue_enabled = _sta_assoc = _sta_tlc = _sta_session_prot = false;
+  _sta_queue_enabled = _sta_agg_queue_enabled = _sta_agg_active = _sta_assoc = _sta_tlc = _sta_session_prot = false;
   _sta_ba_tids = 0;
   _staq.queued = 0;
+  _sta_aggq.queued = 0;
+}
+
+bool IwxDevice::sta_tx_agg_setup() {
+  if (!_sta_sta_added || !_sta_assoc || !_sta_aggq.count || _fw_error) return false;
+  if (_sta_agg_queue_enabled) return true;
+  if (!nic_lock()) return false;
+  const int err = enable_queue(_sta_aggq, IWX_STATION_ID, 0);
+  nic_unlock();
+  if (err) {
+    _log("station: TX aggregation queue refused (" + std::to_string(err) + ")");
+    return false;
+  }
+  _sta_agg_queue_enabled = true;
+  _sta_agg_active = false;
+  _sta_agg_seq = static_cast<uint16_t>(_sta_aggq.cur & 0xfff);
+  _log("station: TX aggregation queue open (qid " + std::to_string(_sta_aggq.qid) + ", tid 0)");
+  return true;
+}
+
+bool IwxDevice::sta_tx_agg_enable(bool on) {
+  if (!_sta_sta_added || !_sta_agg_queue_enabled || _fw_error) return false;
+  if (use_mld()) {
+    _sta_agg_active = on;
+    return true;
+  }
+  iwx_add_sta_cmd cmd{};
+  cmd.sta_id = IWX_STATION_ID;
+  cmd.station_type = IWX_STA_LINK;
+  cmd.mac_id_n_color = htole32(IWX_FW_CMD_ID_AND_COLOR(kStaMac, 0));
+  cmd.add_modify = IWX_STA_MODE_MODIFY;
+  cmd.tid_disable_tx = htole16(static_cast<uint16_t>(on ? 0xfffe : 0xffff));
+  cmd.modify_mask = IWX_STA_MODIFY_TID_DISABLE_TX;
+  uint32_t status = IWX_ADD_STA_SUCCESS;
+  if (!nic_lock()) return false;
+  const int err = send_cmd_status(IWX_ADD_STA, &cmd, sizeof(cmd), &status);
+  nic_unlock();
+  const bool ok = !err && (status & IWX_ADD_STA_STATUS_MASK) == IWX_ADD_STA_SUCCESS;
+  if (ok) _sta_agg_active = on;
+  else _log("station: TX aggregation " + std::string(on ? "enable" : "disable") + " refused (" + std::to_string(err) + ")");
+  return ok;
+}
+
+bool IwxDevice::sta_tx_agg_flush() {
+  if (!_sta_sta_added || !_sta_agg_queue_enabled || _fw_error) return false;
+  iwx_tx_path_flush_cmd cmd{};
+  cmd.sta_id = htole32(IWX_STATION_ID);
+  cmd.tid_mask = htole16(1u);
+  if (!nic_lock()) return false;
+  const int err = send_cmd(IWX_TXPATH_FLUSH, &cmd, sizeof(cmd), false, nullptr);
+  nic_unlock();
+  if (!err) {
+    _sta_aggq.tail = _sta_aggq.cur & (_sta_aggq.count - 1);
+    _sta_aggq.queued = 0;
+    _sta_agg_seq = static_cast<uint16_t>(_sta_aggq.cur & 0xfff);
+  }
+  return err == 0;
+}
+
+int IwxDevice::sta_transmit_agg(const uint8_t *frame, size_t len, bool encrypt, bool kick) {
+  if (!_sta_agg_queue_enabled || !_sta_agg_active || _fw_error) return -1;
+  TxRate rate;
+  if (_sta_tlc) {
+    rate.kind = TxRate::Auto;
+  } else if (_sta.ht || _sta.vht) {
+    rate.kind = TxRate::Ht;
+    rate.mcs = _sta.mimo ? 12 : 7;
+  } else {
+    rate.kind = TxRate::Legacy;
+    rate.mbps_x2 = 108;
+  }
+  const int slot = transmit_on(_sta_aggq, frame, len, rate, encrypt, kick);
+  if (slot >= 0) _sta_agg_seq = static_cast<uint16_t>((_sta_agg_seq + 1) & 0xfff);
+  return slot;
+}
+
+void IwxDevice::sta_kick_tx_agg() {
+  if (!_sta_agg_queue_enabled || !_sta_agg_active || _fw_error) return;
+  plat_fence();
+  wr(IWX_HBUS_TARG_WRPTR, (_sta_aggq.qid << 16) | _sta_aggq.cur);
 }

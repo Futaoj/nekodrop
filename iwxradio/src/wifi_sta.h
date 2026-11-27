@@ -57,6 +57,11 @@ public:
   void on_frame(const RxFrame &f);
   /* An Ethernet frame Windows sent on the TAP adapter. */
   void on_ethernet(const uint8_t *frame, size_t len);
+  /* Batch TAP TX doorbells across a single inbox drain when TX A-MPDU is active. */
+  void begin_tx_batch() { _tx_batching = true; _tx_batch_dirty = false; }
+  bool flush_tx();
+  bool tx_pending() const { return !_tx_wait.empty() || _dev.sta_tx_agg_queued() > 0; }
+  bool tx_ba_active() const { return _tx_ba_state == TxBaState::Active; }
   /* Timers: call every few milliseconds from the device thread. */
   void tick(uint64_t now_us);
   void stop();
@@ -193,7 +198,17 @@ private:
   std::vector<uint8_t> _rsn_ie;
 
   std::deque<std::vector<uint8_t>> _addba_answers;
-  uint16_t _mgmt_seq = 0;
+  /* Station TX Block Ack (TID 0, A-MPDU) gated by _cfg.block_ack. */
+  enum class TxBaState : uint8_t { Idle, Asking, Active, Failed };
+  TxBaState _tx_ba_state = TxBaState::Idle;
+  uint8_t _tx_ba_token = 0;
+  unsigned _tx_ba_tries = 0;
+  uint64_t _tx_ba_last_ask = 0;
+  bool _tx_batching = false, _tx_batch_dirty = false;
+  struct PendingEth { std::vector<uint8_t> frame; bool protect = false; };
+  std::deque<PendingEth> _tx_wait;
+  bool transmit_qos_agg(const uint8_t *da, uint16_t ethertype, const uint8_t *payload, size_t len, bool protect, bool kick);
+  uint16_t _mgmt_seq = 0, _qos_seq = 0;
   iwx::RxBaReorder _rx_reorder;
   uint64_t _rx_packets = 0, _tx_packets = 0, _tx_unicast = 0, _rx_bytes = 0, _tx_bytes = 0;
   RxStats _rx;

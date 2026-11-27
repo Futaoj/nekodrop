@@ -39,6 +39,18 @@ public:
   virtual int sta_transmit(const uint8_t *frame, size_t len, const TxRate &rate, bool encrypt) = 0;
   virtual bool sta_add_rx_ba(unsigned tid, uint16_t ssn, uint16_t window) = 0;
   virtual bool sta_remove_rx_ba(unsigned tid) = 0;
+  /* Optional Station TX A-MPDU / Block Ack on TID 0 (gated by StaConfig::block_ack). */
+  virtual bool sta_tx_agg_setup() { return false; }
+  virtual bool sta_tx_agg_enable(bool /*on*/) { return false; }
+  virtual bool sta_tx_agg_flush() { return false; }
+  virtual bool sta_tx_agg_ready() const { return false; }
+  virtual uint16_t sta_tx_agg_seq() const { return 0; }
+  virtual unsigned sta_tx_agg_queued() const { return 0; }
+  virtual unsigned sta_tx_agg_cap() const { return 0; }
+  virtual int sta_transmit_agg(const uint8_t * /*frame*/, size_t /*len*/, bool /*encrypt*/, bool /*kick*/ = true) {
+    return -1;
+  }
+  virtual void sta_kick_tx_agg() {}
   virtual void sta_leave() = 0;
   virtual const StaParams &sta_params() const = 0;
 
@@ -70,6 +82,17 @@ public:
     return _dev.sta_add_rx_ba(tid, ssn, window);
   }
   bool sta_remove_rx_ba(unsigned tid) override { return _dev.sta_remove_rx_ba(tid); }
+  bool sta_tx_agg_setup() override { return _dev.sta_tx_agg_setup(); }
+  bool sta_tx_agg_enable(bool on) override { return _dev.sta_tx_agg_enable(on); }
+  bool sta_tx_agg_flush() override { return _dev.sta_tx_agg_flush(); }
+  bool sta_tx_agg_ready() const override { return _dev.sta_tx_agg_ready(); }
+  uint16_t sta_tx_agg_seq() const override { return _dev.sta_tx_agg_seq(); }
+  unsigned sta_tx_agg_queued() const override { return _dev.sta_tx_agg_queued(); }
+  unsigned sta_tx_agg_cap() const override { return _dev.sta_tx_agg_cap(); }
+  int sta_transmit_agg(const uint8_t *frame, size_t len, bool encrypt, bool kick = true) override {
+    return _dev.sta_transmit_agg(frame, len, encrypt, kick);
+  }
+  void sta_kick_tx_agg() override { _dev.sta_kick_tx_agg(); }
   void sta_leave() override { _dev.sta_leave(); }
   const StaParams &sta_params() const override { return _dev.sta_params(); }
 

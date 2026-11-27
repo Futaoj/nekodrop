@@ -56,6 +56,12 @@ public sealed class Settings
     /// "colourful", Windows' accent with each state in its own colour.
     /// </summary>
     public string Accent { get; set; } = "";
+    /// <summary>Experimental: enable Mutual Transmission Alliance (Android Share v2 LAN).</summary>
+    public bool MtaOn { get; set; }
+    /// <summary>Experimental: relay files between Apple (AirDrop) and Android (MTA) through this PC.</summary>
+    public bool MtaRelay { get; set; }
+    /// <summary>When relaying files between phones, also keep a copy in SaveFolder on this PC.</summary>
+    public bool MtaRelayKeepLocal { get; set; }
     /// <summary>A version the user chose to skip.</summary>
     public string SkipVersion { get; set; } = "";
 

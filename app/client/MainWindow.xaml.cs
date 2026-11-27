@@ -86,6 +86,8 @@ public partial class MainWindow : Window
     {
         AllowToggle.IsChecked = A.Model.Allow;
         UpdateAutoAcceptUi();
+        MtaRelayRow.Visibility = A.Settings.MtaOn ? Visibility.Visible : Visibility.Collapsed;
+        MtaRelayToggle.IsChecked = A.Settings.MtaRelay;
         ModeList.Children.Clear();
         foreach (var (key, text) in new[] { ("concurrent", L.T("mode.concurrent.short")), ("ondemand", L.T("mode.ondemand.short")), ("off", L.T("mode.off.short")) })
             ModeList.Children.Add(ModeChoice(key, text, A.Model.Mode == key));
@@ -110,6 +112,8 @@ public partial class MainWindow : Window
         A.SetAutoAccept(AutoAcceptToggle.IsChecked == true ? "everyone" : "off");
         UpdateAutoAcceptUi();
     }
+
+    void MtaRelay_Click(object sender, RoutedEventArgs e) => A.SetMtaRelay(MtaRelayToggle.IsChecked == true);
 
     Button ModeChoice(string key, string text, bool chosen) =>
         Choice(text, chosen, () => { A.Service.SetMode(key); StatusPopup.IsOpen = false; });

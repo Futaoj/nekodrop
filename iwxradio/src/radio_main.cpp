@@ -1151,6 +1151,7 @@ int main(int argc, char **argv) {
         }
       }
       pipe.flush_send();
+      if (sta) sta->begin_tx_batch();
       for (int n = 0; n < 128 && (inbox.pop(req) || (pipe.pop_shm_tx(req.payload) && (req.type = RADIO_LINK_TX, true))); n++) {
         busy = true;
         if (req.type == RADIO_LINK_TX) {
@@ -1258,6 +1259,7 @@ int main(int argc, char **argv) {
           dev.set_channel(ch, ch <= 14 ? 20 : opt.width);
         }
       }
+      if (sta && sta->flush_tx()) busy = true;
       if (stopping()) break;
       /* Block Ack: open the firmware session, then answer from our queue. The
        * peer repeats its request until it hears an answer. */
@@ -1583,10 +1585,12 @@ int main(int argc, char **argv) {
           std::vector<uint8_t> ans;
           while (sta->take_addba(ans)) {
             TxRate r;
-            dev.sta_transmit(ans.data(), ans.size(), r, sta->state() == WifiStation::State::Running);
+            const bool prot = ans.size() > 1 && (ans[1] & 0x40) != 0;
+            if (dev.sta_transmit(ans.data(), ans.size(), r, prot) < 0)
+              log_line("station: failed to queue action frame");
           }
         }
-        if (sta->state() != WifiStation::State::Running) busy = true;
+        if (sta->state() != WifiStation::State::Running || sta->tx_pending()) busy = true;
       }
       if constexpr (std::is_same_v<Dev, IwxDevice>) {
         if (dev.keep_on_channel()) busy = true;
@@ -1726,19 +1730,27 @@ int main(int argc, char **argv) {
         if (sta) {
           const auto &r = sta->rx_stats();
           const auto ws = sta->tap().write_stats();
-          unsigned sta_acked = 0, sta_failed = 0, sta_submitted = 0; /* sta is only ever set with supports_station */
+          unsigned sta_acked = 0, sta_failed = 0, sta_submitted = 0;
+          uint32_t sta_tx_ba = 0, sta_tx_rate = 0;
           if constexpr (caps.supports_station) {
             sta_acked = dev.sta_tx_acked();
             sta_failed = dev.sta_tx_failed();
             sta_submitted = dev.sta_tx_submitted();
+            if constexpr (std::is_same_v<Dev, IwxDevice>) {
+              sta_tx_ba = dev.sta_tx_ba_notifs();
+              sta_tx_rate = dev.sta_tx_last_rate();
+            }
           }
+          char txr[32];
+          std::snprintf(txr, sizeof(txr), "0x%08x", sta_tx_rate);
           /* "N submitted" here, no longer in the "tx:" line (#11): those
            * frames are the station's, not AWDL's. */
           log_line(std::string("wifi: ") + sta->state_name() + ", " + std::to_string(sta->rx_packets()) +
                    " packets in, " + std::to_string(sta->tx_packets()) + " out; frames to the AP " +
                    std::to_string(sta_submitted) + " submitted, " +
                    std::to_string(sta_acked) + " acknowledged, " + std::to_string(sta_failed) +
-                   " not; from the AP " + std::to_string(r.data) + " data frames (" + std::to_string(r.unicast) + " unicast), " + std::to_string(r.amsdu) +
+                   " not (txBA " + (sta->tx_ba_active() ? "on" : "off") + ", BAs " + std::to_string(sta_tx_ba) +
+                   ", txRate " + txr + "); from the AP " + std::to_string(r.data) + " data frames (" + std::to_string(r.unicast) + " unicast), " + std::to_string(r.amsdu) +
                    " A-MSDU, dropped " + std::to_string(r.undecrypted) + " undecrypted, " +
                    std::to_string(r.not_llc) + " not LLC, " + std::to_string(r.tap_failed) + " TAP; TAP writes " +
                    std::to_string(ws.writes) + ", queue max " +

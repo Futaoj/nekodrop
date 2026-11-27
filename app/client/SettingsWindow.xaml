@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:NekoDrop"
-        Title="{local:T set.title}" Width="520" Height="720" MinWidth="460" MinHeight="480"
+        Title="{local:T set.title}" Width="560" Height="720" MinWidth="500" MinHeight="480"
         WindowStartupLocation="CenterScreen"
         Foreground="{DynamicResource Text}" FontFamily="{DynamicResource UiFont}" FontSize="13">
   <Window.Resources>
@@ -43,6 +43,7 @@
         <RadioButton x:Name="TabGeneral" Style="{StaticResource Pivot}" Content="{local:T set.tab.general}" GroupName="tab" Checked="Tab_Checked"/>
         <RadioButton x:Name="TabNetwork" Style="{StaticResource Pivot}" Content="{local:T set.tab.network}" GroupName="tab" Checked="Tab_Checked"/>
         <RadioButton x:Name="TabAppleId" Style="{StaticResource Pivot}" Content="{local:T set.tab.appleid}" GroupName="tab" Checked="Tab_Checked"/>
+        <RadioButton x:Name="TabMta" Style="{StaticResource Pivot}" Content="{local:T set.tab.mta}" GroupName="tab" Checked="Tab_Checked"/>
         <RadioButton x:Name="TabHardware" Style="{StaticResource Pivot}" Content="{local:T set.tab.hardware}" GroupName="tab" Checked="Tab_Checked"/>
         <RadioButton x:Name="TabUpdates" Style="{StaticResource Pivot}" Content="{local:T set.tab.updates}" GroupName="tab" Checked="Tab_Checked"/>
       </StackPanel>
@@ -255,6 +256,63 @@
               <TextBlock Text="{local:T aid.howNote}" Style="{StaticResource Sub12}" TextWrapping="Wrap" Margin="0,6,0,0"/>
             </StackPanel>
           </Border>
+          </StackPanel>
+        </StackPanel>
+
+        <!-- Android Share (Mutual Transmission Alliance) and Cross-Ecosystem Relay -->
+        <StackPanel x:Name="PageMta" Visibility="Collapsed">
+          <Border Style="{StaticResource CardPad}">
+            <DockPanel>
+              <CheckBox x:Name="MtaOnBox" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Margin="12,0,0,0"
+                        Checked="MtaOn_Changed" Unchecked="MtaOn_Changed"/>
+              <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="{local:T mta.on}" Style="{StaticResource T13S}"/>
+                  <Border Background="{DynamicResource WarnBg}" CornerRadius="4" Padding="6,1" Margin="8,0,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="{local:T aid.experimental}" FontSize="11" Foreground="{DynamicResource Warn}"/>
+                  </Border>
+                </StackPanel>
+                <TextBlock Text="{local:T mta.onHint}" Style="{StaticResource Sub12}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+              </StackPanel>
+            </DockPanel>
+          </Border>
+          <StackPanel x:Name="MtaBody">
+            <Border Style="{StaticResource CardPad}">
+              <StackPanel>
+                <DockPanel>
+                  <CheckBox x:Name="MtaRelayBox" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Margin="12,0,0,0"
+                            Checked="MtaRelay_Changed" Unchecked="MtaRelay_Changed"/>
+                  <StackPanel>
+                    <TextBlock Text="{local:T mta.relay}" Style="{StaticResource T13S}"/>
+                    <TextBlock Text="{local:T mta.relayHint}" Style="{StaticResource Sub12}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                  </StackPanel>
+                </DockPanel>
+                <Border Style="{StaticResource Rule}" Margin="0,12"/>
+                <DockPanel x:Name="MtaKeepLocalRow">
+                  <CheckBox x:Name="MtaRelayKeepLocalBox" DockPanel.Dock="Right" Style="{StaticResource WinToggle}" Margin="12,0,0,0"/>
+                  <StackPanel>
+                    <TextBlock Text="{local:T mta.keepLocal}" FontSize="13" FontWeight="Medium"/>
+                    <TextBlock Text="{local:T mta.keepLocalHint}" Style="{StaticResource Sub12}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                  </StackPanel>
+                </DockPanel>
+              </StackPanel>
+            </Border>
+            <Border Style="{StaticResource CardPad}">
+              <StackPanel>
+                <TextBlock Text="{local:T mta.diagTitle}" Style="{StaticResource T13S}"/>
+                <TextBlock Text="{local:T mta.diagHint}" Style="{StaticResource Sub12}" TextWrapping="Wrap" Margin="0,4,0,10"/>
+                <StackPanel Orientation="Horizontal">
+                  <Button x:Name="MtaDiagButton" Style="{StaticResource WinButton}" Content="{local:T mta.diagButton}" Click="MtaDiag_Click" Padding="12,6"/>
+                  <TextBlock x:Name="MtaDiagStatus" Style="{StaticResource Sub12}" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+            <Border Style="{StaticResource CardPad}">
+              <StackPanel>
+                <TextBlock Text="{local:T mta.howTitle}" Style="{StaticResource T13S}"/>
+                <TextBlock Text="{local:T mta.howBody}" Style="{StaticResource Sub12}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+              </StackPanel>
+            </Border>
           </StackPanel>
         </StackPanel>
 

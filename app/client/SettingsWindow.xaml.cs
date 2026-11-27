@@ -41,6 +41,10 @@ public partial class SettingsWindow : Window
         ShowSpeedBox.IsChecked = s.ShowTransferSpeed;
         AppleIdOnBox.IsChecked = s.AppleIdOn;
         AppleIdOn_Changed(AppleIdOnBox, new RoutedEventArgs());
+        MtaOnBox.IsChecked = s.MtaOn;
+        MtaRelayBox.IsChecked = s.MtaRelay;
+        MtaRelayKeepLocalBox.IsChecked = s.MtaRelayKeepLocal;
+        MtaOn_Changed(MtaOnBox, new RoutedEventArgs());
         ShowReceive();
         ShowIdentity();
         _hotkeyKeys = Hotkey.TryParse(s.HotkeyKeys, out _, out _) ? s.HotkeyKeys : Hotkey.Default;
@@ -68,7 +72,7 @@ public partial class SettingsWindow : Window
         A.Service.Reply += OnCardsReply;
         Closed += (_, _) => A.Service.Reply -= OnCardsReply;
         A.Service.RequestCards();
-        (tab switch { "network" => TabNetwork, "appleid" => TabAppleId, "hardware" => TabHardware, "updates" => TabUpdates, _ => TabGeneral }).IsChecked = true;
+        (tab switch { "network" => TabNetwork, "appleid" => TabAppleId, "mta" => TabMta, "hardware" => TabHardware, "updates" => TabUpdates, _ => TabGeneral }).IsChecked = true;
     }
 
     void Tab_Checked(object sender, RoutedEventArgs e)
@@ -77,6 +81,7 @@ public partial class SettingsWindow : Window
         PageGeneral.Visibility = TabGeneral.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         PageNetwork.Visibility = TabNetwork.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         PageAppleId.Visibility = TabAppleId.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        PageMta.Visibility = TabMta.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         PageHardware.Visibility = TabHardware.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         PageUpdates.Visibility = TabUpdates.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -331,6 +336,9 @@ public partial class SettingsWindow : Window
         var receiveChanged = receive != s.Receive || appleIdOn != s.AppleIdOn;
         s.AppleIdOn = appleIdOn;
         s.Receive = receive;
+        s.MtaOn = MtaOnBox.IsChecked == true;
+        s.MtaRelay = s.MtaOn && MtaRelayBox.IsChecked == true;
+        s.MtaRelayKeepLocal = MtaRelayKeepLocalBox.IsChecked == true;
         var hotkeyChanged = (HotkeyBox.IsChecked == true) != s.Hotkey || _hotkeyKeys != s.HotkeyKeys;
         s.Hotkey = HotkeyBox.IsChecked == true;
         s.HotkeyKeys = _hotkeyKeys;
@@ -350,6 +358,7 @@ public partial class SettingsWindow : Window
         s.Save();
         try { Shell.Register(s.StartWithWindows); } catch (Exception) { }
         A.Engine.Apply(s);
+        A.ApplyMta();
         var mode = ModeConcurrent.IsChecked == true ? "concurrent" : ModeOnDemand.IsChecked == true ? "ondemand" : "off";
         if (mode != (string?)A.Service.Last?["mode"]) A.Service.SetMode(mode);
         var fastUnlock = FastUnlockBox.IsChecked == true;
@@ -482,6 +491,59 @@ public partial class SettingsWindow : Window
         try { AppleId.SignOut(); } catch (Exception x) { MessageBox.Show(this, x.Message, "nekodrop"); return; }
         if (A.Settings.Receive == "contacts") { A.Settings.Receive = "everyone"; A.Settings.Save(); }
         IdentityChanged();
+    }
+
+    // ---------------------------------------- Android Share (MTA) & Relay
+
+    void MtaOn_Changed(object sender, RoutedEventArgs e)
+    {
+        if (MtaBody is null) return;
+        MtaBody.IsEnabled = MtaOnBox.IsChecked == true;
+        MtaBody.Opacity = MtaBody.IsEnabled ? 1 : 0.5;
+        MtaRelay_Changed(MtaRelayBox, e);
+    }
+
+    void MtaRelay_Changed(object sender, RoutedEventArgs e)
+    {
+        if (MtaKeepLocalRow is null) return;
+        MtaKeepLocalRow.IsEnabled = MtaOnBox.IsChecked == true && MtaRelayBox.IsChecked == true;
+        MtaKeepLocalRow.Opacity = MtaKeepLocalRow.IsEnabled ? 1 : 0.5;
+    }
+
+    async void MtaDiag_Click(object sender, RoutedEventArgs e)
+    {
+        MtaDiagButton.IsEnabled = false;
+        MtaDiagStatus.Text = L.T("mta.diagScanning");
+        try
+        {
+            var report = await MtaEngine.ScanDiagnosticsAsync(8);
+            var stamp = DateTime.Now.ToString("yyyyMMdd-HHmm");
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = L.T("mta.diagButton"),
+                Filter = "Diagnostic Report (*.txt)|*.txt",
+                FileName = $"nekodrop-mta-ble-diag-{stamp}.txt",
+                InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+            };
+            if (Native.ShowDialog(this, dlg, dlg.Title) != true)
+            {
+                MtaDiagStatus.Text = "";
+                return;
+            }
+            System.IO.File.WriteAllText(dlg.FileName, report, System.Text.Encoding.UTF8);
+            MtaDiagStatus.Text = "✓ " + L.F("mta.diagSaved", System.IO.Path.GetFileName(dlg.FileName));
+            SavedText.Text = MtaDiagStatus.Text;
+            try { System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{dlg.FileName}\""); } catch (Exception) { }
+        }
+        catch (Exception x)
+        {
+            MtaDiagStatus.Text = x.Message;
+            MessageBox.Show(this, x.Message, "nekodrop", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            MtaDiagButton.IsEnabled = true;
+        }
     }
 
     // ------------------------------------------------- recording the shortcut

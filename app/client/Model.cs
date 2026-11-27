@@ -21,19 +21,24 @@ public abstract class Observable : INotifyPropertyChanged
 public sealed class Device : Observable
 {
     public required string Id { get; init; }
-    string _name = "", _model = "", _status = L.T("dev.ready");
+    string _name = "", _model = "", _status = L.T("dev.ready"), _protocol = "airdrop";
     double _progress;
     bool _busy;
     public string Name { get => _name; set { Set(ref _name, value); Raise(nameof(Glyph)); } }
     public string Model { get => _model; set { Set(ref _model, value); Raise(nameof(Glyph)); } }
+    public string Protocol { get => _protocol; set { Set(ref _protocol, value); Raise(nameof(IsMta)); } }
+    public bool IsMta => Protocol != "airdrop";
     public string Glyph
     {
         get
         {
             if (Model.StartsWith("Mac", StringComparison.OrdinalIgnoreCase)) return "\uE7F8";
-            if (Model.StartsWith("iPad", StringComparison.OrdinalIgnoreCase)) return "\uE70A";
+            if (Model.StartsWith("iPad", StringComparison.OrdinalIgnoreCase) ||
+                Model.Contains("Tablet", StringComparison.OrdinalIgnoreCase) ||
+                Model.Contains("Pad", StringComparison.OrdinalIgnoreCase)) return "\uE70A";
             if (Model.StartsWith("iPhone", StringComparison.OrdinalIgnoreCase)) return "\uE8EA";
-            if (Name.Contains("iPad", StringComparison.OrdinalIgnoreCase)) return "\uE70A";
+            if (Name.Contains("iPad", StringComparison.OrdinalIgnoreCase) ||
+                Name.Contains("Pad", StringComparison.OrdinalIgnoreCase)) return "\uE70A";
             if (Name.Contains("Mac", StringComparison.OrdinalIgnoreCase)) return "\uE7F8";
             return "\uE8EA";
         }
@@ -110,4 +115,9 @@ public sealed class AppModel : Observable
     public string Portal { get => _portal; set => Set(ref _portal, value); }
     /// <summary>Receiving allowed (visible to others).</summary>
     public bool Allow { get => _allow; set => Set(ref _allow, value); }
+    bool _mtaOn, _mtaRelay;
+    /// <summary>Experimental Android Mutual Transmission Alliance (v2 LAN) enabled.</summary>
+    public bool MtaOn { get => _mtaOn; set => Set(ref _mtaOn, value); }
+    /// <summary>Experimental Apple &lt;-&gt; Android relay mode enabled.</summary>
+    public bool MtaRelay { get => _mtaRelay; set => Set(ref _mtaRelay, value); }
 }

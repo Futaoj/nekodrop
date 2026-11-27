@@ -68,6 +68,7 @@ public sealed class App : Application
     public Settings Settings { get; } = Settings.Load();
     public ServiceLink Service { get; } = new();
     public Engine Engine { get; } = new();
+    public MtaEngine Mta { get; } = new();
     readonly Wake _wake = new();
     Forms.NotifyIcon? _tray;
     MainWindow? _window;
@@ -77,6 +78,7 @@ public sealed class App : Application
     readonly Dictionary<string, string> _askIcon = [];
     readonly Dictionary<string, List<string>> _recentBatches = [];
     readonly Dictionary<string, (string DeviceId, string DeviceName, List<string> Files)> _sendInfo = [];
+    readonly Dictionary<string, (string FromName, List<string> TempPaths)> _relayOrigin = [];
     readonly Dictionary<string, SpeedMeter> _rxSpeed = [];
     readonly Dictionary<string, SpeedMeter> _txSpeed = [];
 
@@ -149,10 +151,29 @@ public sealed class App : Application
             Model.RadioOn = false;
         });
         Model.Allow = Settings.Discoverable;
+        Model.MtaOn = Settings.MtaOn;
+        Model.MtaRelay = Settings.MtaRelay;
         Service.Start();
         Engine.Event += o => Dispatcher.BeginInvoke(() => OnEngine(o));
         Engine.Event += o => EngineLog(o.ToJsonString());
         Engine.Log += EngineLog;
+        Mta.Event += o => Dispatcher.BeginInvoke(() => OnEngine(o));
+        Mta.Event += o =>
+        {
+            var ev = (string?)o["event"];
+            if (ev == "incoming" || (ev == "send" && (string?)o["state"] == "sending")) return;
+            EngineLog(o.ToJsonString());
+        };
+        Mta.Log += EngineLog;
+        Mta.IncomingHandshake += () => Dispatcher.BeginInvoke(() =>
+        {
+            if (Settings.MtaOn && Settings.MtaRelay)
+            {
+                Service.Wake();
+                Engine.Look(true);
+            }
+        });
+        Mta.Apply(Settings);
         if (Settings.Discoverable) StartEngine();
         _wake.AirDropNearby += () => Dispatcher.BeginInvoke(() =>
         {
@@ -384,6 +405,7 @@ public sealed class App : Application
             ("settings-general", () => new SettingsWindow("general"), 0),
             ("settings-network", () => new SettingsWindow("network"), 0),
             ("settings-appleid", () => new SettingsWindow("appleid"), 0),
+            ("settings-mta", () => { Settings.MtaOn = true; Settings.MtaRelay = true; return new SettingsWindow("mta"); }, 0),
             ("settings-hardware", () => new SettingsWindow("hardware"), 0),
             ("settings-updates", () => new SettingsWindow("updates"), 0),
             ("history", () => new HistoryWindow(), 0),
@@ -561,6 +583,7 @@ public sealed class App : Application
         if (_send.WindowState == WindowState.Minimized) _send.WindowState = WindowState.Normal;
         _send.Activate();
         Engine.Look(true);
+        Mta.Look(true);
     }
 
     ResourceDictionary? _styles;
@@ -715,8 +738,25 @@ public sealed class App : Application
         Model.Allow = on;
         Settings.Discoverable = on;
         Settings.Save();
+        Mta.Apply(Settings);
         if (on) { StartEngine(); Service.Wake(); }
         else Engine.Dispose();
+    }
+
+    public void ApplyMta()
+    {
+        if (!Settings.MtaOn) Settings.MtaRelay = false;
+        Model.MtaOn = Settings.MtaOn;
+        Model.MtaRelay = Settings.MtaRelay;
+        Mta.Apply(Settings);
+        if (Settings.MtaOn && (_send is not null || _window is { IsVisible: true })) Mta.Look(true);
+    }
+
+    public void SetMtaRelay(bool on)
+    {
+        Settings.MtaRelay = Settings.MtaOn && on;
+        Settings.Save();
+        Model.MtaRelay = Settings.MtaRelay;
     }
 
     public void SetAutoAccept(string mode)
@@ -747,6 +787,7 @@ public sealed class App : Application
         if (opening) _window.Reveal();
         _lookTimer?.Stop();
         Engine.Look(true);
+        Mta.Look(true);
     }
 
     public void WindowClosed() { if (_send is null) StopLookingLater(); }
@@ -769,6 +810,7 @@ public sealed class App : Application
             if (Model.Devices.Any(d => d.Busy) || Model.Requests.Count > 0) return; // check again in 90 s
             _lookTimer.Stop();
             Engine.Look(false);
+            Mta.Look(false);
         };
         _lookTimer.Start();
     }
@@ -776,6 +818,7 @@ public sealed class App : Application
     void Quit()
     {
         _wake.Dispose();
+        Mta.Dispose();
         Engine.Dispose();
         Service.Dispose();
         if (_tray is not null) _tray.Visible = false;
@@ -947,7 +990,8 @@ public sealed class App : Application
 
     public void Answer(string id, bool accept)
     {
-        Engine.Answer(id, accept);
+        if (MtaEngine.IsMtaRequest(id)) Mta.Answer(id, accept);
+        else Engine.Answer(id, accept);
         if (_requests.TryGetValue(id, out var r))
         {
             r.Status = accept ? L.T("req.receiving") : L.T("req.declined");
@@ -962,8 +1006,9 @@ public sealed class App : Application
     /// </summary>
     void AttachAsk(Request r)
     {
-        var d = Model.Devices.FirstOrDefault(x => string.Equals(x.Name, r.Sender, StringComparison.OrdinalIgnoreCase) && x.Ask is null);
-        if (d is null) Model.Devices.Add(d = new Device { Id = "ask:" + r.Id, Name = r.Sender, Model = r.Model, ForAsk = true });
+        var isMta = MtaEngine.IsMtaRequest(r.Id);
+        var d = Model.Devices.FirstOrDefault(x => x.IsMta == isMta && string.Equals(x.Name, r.Sender, StringComparison.OrdinalIgnoreCase) && x.Ask is null);
+        if (d is null) Model.Devices.Add(d = new Device { Id = "ask:" + r.Id, Name = r.Sender, Model = r.Model, Protocol = isMta ? "mta2" : "airdrop", ForAsk = true });
         d.Ask = r;
     }
 
@@ -984,14 +1029,21 @@ public sealed class App : Application
             ShowSendError(problem);
             return;
         }
+        SendFilesToDevice(d, files);
+    }
+
+    void SendFilesToDevice(Device d, List<string> files, (string FromName, List<string> TempPaths)? relayMeta = null)
+    {
         var id = Guid.NewGuid().ToString("N")[..12];
         _sendInfo[id] = (d.Id, d.Name, files);
+        if (relayMeta is { } meta) _relayOrigin[id] = meta;
         d.Busy = true;
         d.State = "asking";
         d.Status = L.T("send.asking");
         d.Progress = 0;
         Service.Touch();
-        Engine.SendFiles(id, d.Id, files);
+        if (MtaEngine.IsMtaPeer(d.Id)) Mta.SendFiles(id, d.Id, files);
+        else Engine.SendFiles(id, d.Id, files);
     }
 
     /// <summary>
@@ -1108,7 +1160,7 @@ public sealed class App : Application
                  * moves channel and re-creates awdl0) knows no peers and is not
                  * looking: the old one's devices go, and an open window looks
                  * again (#9: the send window stayed empty after a move to 149). */
-                foreach (var stale in Model.Devices.Where(x => !x.Busy).ToList()) Model.Devices.Remove(stale);
+                foreach (var stale in Model.Devices.Where(x => !x.Busy && !x.IsMta).ToList()) Model.Devices.Remove(stale);
                 Model.DiscoveryBeaconUnavailable = false;
                 if (_send is not null || _window is { IsVisible: true }) Engine.Look(true);
                 break;
@@ -1122,6 +1174,7 @@ public sealed class App : Application
                 if (d is null) Model.Devices.Add(d = new Device { Id = id });
                 d.Name = (string?)o["name"] ?? L.T("dev.apple");
                 d.Model = (string?)o["model"] ?? "";
+                d.Protocol = (string?)o["protocol"] ?? (MtaEngine.IsMtaPeer(id) ? "mta2" : "airdrop");
                 break;
             }
             case "peer_gone":
@@ -1152,6 +1205,7 @@ public sealed class App : Application
                     Settings.Save();
                 }
                 var autoAccept = !waits ||
+                                 (Settings.MtaOn && Settings.MtaRelay) ||
                                  Settings.AutoAcceptMode == "everyone" ||
                                  (Settings.AutoAcceptMode == "contacts" && isContact) ||
                                  Settings.AlwaysAccept.Contains(key);
@@ -1169,7 +1223,14 @@ public sealed class App : Application
                 AttachAsk(r);
                 if (autoAccept)
                 {
-                    if (waits) Engine.Answer(id, true);
+                    // Pre-warm Android BLE scanner while iPhone is still uploading in Relay mode!
+                    if (Settings.MtaOn && Settings.MtaRelay && !MtaEngine.IsMtaRequest(id))
+                        Mta.Look(true);
+                    if (waits)
+                    {
+                        if (MtaEngine.IsMtaRequest(id)) Mta.Answer(id, true);
+                        else Engine.Answer(id, true);
+                    }
                 }
                 else
                 {
@@ -1193,8 +1254,8 @@ public sealed class App : Application
                     Model.Requests.Insert(0, inc);
                     AttachAsk(inc);
                 }
-                var incDone = (double?)o["done"] ?? 0;
-                var incTotal = (double?)o["total"] ?? 0;
+                var incDone = Num(o["done"]);
+                var incTotal = Num(o["total"]);
                 inc.Progress = incTotal > 0 ? Math.Clamp(incDone / incTotal, 0, 1) : 0;
                 var rxBase = incTotal > 0 ? L.F("req.receivingPct", inc.Progress) : L.T("req.receiving");
                 var rxRate = Settings.ShowTransferSpeed ? UpdateSpeed(_rxSpeed, id, incDone) : null;
@@ -1237,7 +1298,7 @@ public sealed class App : Application
                                                         string.Equals(Path.GetFileNameWithoutExtension(m), stem, StringComparison.OrdinalIgnoreCase));
                     if (mov is not null && pairedMovies.Add(mov)) livePairs[n] = mov;
                 }
-                _ = HandleStoredAsync(id, from, folder, names, livePairs, pairedMovies, askIcon);
+                _ = HandleStoredAsync(id, from, folder, names, livePairs, pairedMovies, askIcon, MtaEngine.IsMtaRequest(id));
                 break;
             }
             case "lost":
@@ -1270,8 +1331,8 @@ public sealed class App : Application
                 if (d is not null)
                 {
                     d.State = state is "done" ? "sent" : state ?? "";
-                    var total = (double?)o["total"] ?? 0;
-                    var done = (double?)o["done"] ?? (double?)o["sent"] ?? 0;
+                    var total = Num(o["total"]);
+                    var done = o["done"] is not null ? Num(o["done"]) : Num(o["sent"]);
                     d.Progress = total > 0 ? done / total : d.Progress;
                     var txRate = state == "sending" && Settings.ShowTransferSpeed ? UpdateSpeed(_txSpeed, id, done) : null;
                     d.Status = state switch
@@ -1304,17 +1365,50 @@ public sealed class App : Application
                     var firstName = info.Files.Count > 0 ? SendRules.Name(info.Files[0]) : L.T("what.some");
                     var summary = info.Files.Count <= 1 ? firstName : L.F("send.summary", firstName, info.Files.Count, info.Files.Count - 1);
                     var failureDetail = state == "failed" ? SendRules.FailureDetail(reason, info.Files) : "";
+                    var targetName = d?.Name ?? info.DeviceName;
                     AddHistory(new TransferRecord
                     {
                         Direction = "sent",
-                        Peer = d?.Name ?? info.DeviceName,
+                        Peer = targetName,
                         Name = summary,
                         Paths = [.. info.Files],
                         Bytes = MediaHelper.SumBytes(info.Files),
                         Status = state is "sent" or "done" ? "done" : state,
                         Error = failureDetail,
                     });
-                    if (state is "sent" or "done") Shell.DoneToast(id, L.F("done.sent", d?.Name ?? info.DeviceName), summary, null);
+                    if (_relayOrigin.Remove(id, out var relay))
+                    {
+                        if (state is "sent" or "done")
+                        {
+                            if (!Settings.MtaRelayKeepLocal)
+                            {
+                                foreach (var p in relay.TempPaths)
+                                {
+                                    try
+                                    {
+                                        if (MediaHelper.IsInsideFolder(p, Settings.SaveFolder) && File.Exists(p))
+                                            File.Delete(p);
+                                    }
+                                    catch (Exception) { }
+                                }
+                            }
+                            Shell.DoneToast(
+                                id,
+                                L.F("mta.relay.doneTitle", relay.FromName, targetName),
+                                Settings.MtaRelayKeepLocal ? L.F("mta.relay.doneKept", summary) : L.F("mta.relay.doneClean", summary),
+                                Settings.MtaRelayKeepLocal ? Settings.SaveFolder : null);
+                        }
+                        else
+                        {
+                            var why = failureDetail.Length > 0 ? failureDetail : L.T(state == "declined" ? "send.declined" : "send.failed");
+                            Shell.DoneToast(
+                                id,
+                                L.F("mta.relay.failedTitle", relay.FromName),
+                                L.F("mta.relay.keptLocal", why),
+                                Settings.SaveFolder);
+                        }
+                    }
+                    else if (state is "sent" or "done") Shell.DoneToast(id, L.F("done.sent", targetName), summary, null);
                     else if (state == "failed")
                     {
                         // A path can become a folder, or vanish, after the
@@ -1343,7 +1437,7 @@ public sealed class App : Application
     }
 
     async Task HandleStoredAsync(string id, string from, string folder, List<string> names,
-                                 Dictionary<string, string> livePairs, HashSet<string> pairedMovies, string? askIcon)
+                                 Dictionary<string, string> livePairs, HashSet<string> pairedMovies, string? askIcon, bool fromMta)
     {
         var convertHeic = Settings.AutoConvertHeic;
         var built = await Task.Run(() =>
@@ -1405,10 +1499,27 @@ public sealed class App : Application
             if (!string.IsNullOrEmpty(fetchedThumb)) hero = fetchedThumb;
         }
 
+        var relayFiles = new List<string>();
+        var allTempPaths = new List<string>();
+        foreach (var rec in built.records)
+        {
+            if (rec.IsLink || rec.Paths.Count == 0) continue;
+            if (File.Exists(rec.Paths[0])) relayFiles.Add(rec.Paths[0]);
+            foreach (var p in rec.Paths)
+                if (!allTempPaths.Contains(p, StringComparer.OrdinalIgnoreCase))
+                    allTempPaths.Add(p);
+        }
+        var shouldRelay = Settings.MtaOn && Settings.MtaRelay && relayFiles.Count > 0;
+
         await Dispatcher.InvokeAsync(() =>
         {
             foreach (var rec in built.records) AddHistory(rec);
             Model.RaiseStored();
+            if (shouldRelay)
+            {
+                _ = TryRelayAsync(id, from, fromMta, folder, relayFiles, allTempPaths);
+                return;
+            }
             if (built.records.Count == 0)
             {
                 Shell.DoneToast(id, L.F("done.received", from), L.F("done.savedTo", folder), folder);
@@ -1436,6 +1547,57 @@ public sealed class App : Application
                 Shell.ReceivedToast(id, L.F("done.received", from), body, folder, first.Id, hero);
             }
         });
+    }
+
+    async Task TryRelayAsync(string id, string from, bool fromMta, string folder, List<string> relayFiles, List<string> tempPaths)
+    {
+        Device? FindTarget() => Model.Devices.FirstOrDefault(d => !d.ForAsk && !d.Busy && (fromMta ? !d.IsMta : d.IsMta));
+
+        var target = FindTarget();
+        if (target is null)
+        {
+            if (fromMta)
+            {
+                Service.Wake();
+                Engine.Look(true);
+            }
+            else
+            {
+                Mta.Look(true);
+            }
+            var deadline = DateTime.UtcNow.AddSeconds(fromMta ? 6.5 : 5.0);
+            while (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(250);
+                target = await Dispatcher.InvokeAsync(FindTarget);
+                if (target is not null) break;
+            }
+            if (_send is null && _window is not { IsVisible: true })
+                await Dispatcher.InvokeAsync(StopLookingLater);
+        }
+
+        await Dispatcher.InvokeAsync(() =>
+        {
+            target ??= FindTarget();
+            if (target is null)
+            {
+                EngineLog($"relay: no opposite-ecosystem target found for {from}; kept files in {folder}");
+                Shell.DoneToast(id, L.T("mta.relay.noTargetTitle"), L.F("mta.relay.noTargetBody", from), folder);
+                return;
+            }
+            EngineLog($"relay: forwarding {relayFiles.Count} file(s) from {from} -> {target.Name} ({target.Protocol})");
+            SendFilesToDevice(target, relayFiles, (from, tempPaths));
+        });
+    }
+
+    static double Num(JsonNode? n)
+    {
+        if (n is not JsonValue v) return 0;
+        if (v.TryGetValue<double>(out var d)) return d;
+        if (v.TryGetValue<long>(out var l)) return l;
+        if (v.TryGetValue<int>(out var i)) return i;
+        if (v.TryGetValue<decimal>(out var m)) return (double)m;
+        return 0;
     }
 
     static string Describe(JsonArray? files, int linkCount = 0, JsonArray? urls = null)

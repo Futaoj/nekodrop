@@ -6,6 +6,34 @@
 
 ---
 
+## v2.3.3 (Preview / 预览版)
+
+### 中文
+
+- **新增安卓互传联盟支持（MTA v2 LAN，实验性，默认关闭）**：
+  - 设置页新增「安卓互传（实验性，默认关闭）」开关，纯用户态、零新增运行时依赖，支持与同一局域网 Wi-Fi 下的互传联盟 v2 机型（一加 / OPPO / 小米 / vivo / 荣耀 / 真我等）双向收发文件：BLE 雷达自动发现、流式 `ZIP_STORED` 实时解包保存、并行 Slicing-by-8 CRC32 校验，并在安装时自动配置局域网防火墙规则。
+  - **速度说明**：单网卡处于「并发模式（Concurrent）」时，安卓 → 电脑接收可跑满高速聚合，电脑 → 安卓上传受单卡分时及部分路由器 TX 聚合兼容限制约 ~2 MB/s；如需电脑向安卓高速传输大文件（50–80 MB/s），可切换至「按需模式（On Demand）」或使用有线/副网卡。
+- **新增跨生态中转模式（Apple AirDrop ⇄ 安卓互传，默认关闭）**：
+  - 开启后以本机作为桥接中转，支持在 iPhone / Mac（AirDrop）与安卓手机（互传联盟）之间自动转发文件。
+- **新增 BLE 隐私脱敏诊断扫描器**：
+  - 设置页内置一键 BLE 诊断扫描，自动脱敏 MAC 地址等隐私字段，便于不同品牌安卓机型排查互传广播兼容性。
+- **Intel 并发模式 STA 数据面增强（随 `DataPlaneAccel` 默认关闭）**：
+  - 为 Intel 并发模式新增 Station QoS Data（`0x88`）与 TID 0 TX Block Ack（A-MPDU）协商框架及 `txRate` 速率日志；遇到不响应 `ADDBA` 的路由器时自动平滑回退，关闭开关时零影响。
+
+### English
+
+- **Experimental Android Mutual Transmission Alliance support (MTA v2 over LAN, default off):**
+  - Added an opt-in **Android Share (Experimental)** toggle in Settings (pure user-mode, zero new runtime dependencies) for bidirectional file transfers with MTA v2 Android devices (OnePlus / OPPO / Xiaomi / vivo / Honor / realme, etc.) on the same Wi-Fi LAN: BLE radar discovery, streaming `ZIP_STORED` unpack, parallel Slicing-by-8 CRC32 verification, and automatic LAN firewall rules during installation.
+  - **Speed note:** In single-card **Concurrent** mode, Android → PC downloads run fast with RX aggregation, while PC → Android uploads are capped around ~2 MB/s on routers that ignore STA TX `ADDBA` requests; switch to **On Demand** mode (or use Ethernet / a secondary NIC) for full 50–80 MB/s PC → Android upload speeds.
+- **Cross-ecosystem Relay Mode (Apple AirDrop ⇄ Android MTA, default off):**
+  - Optional bridge mode using the Windows PC to relay files between Apple AirDrop devices and Android MTA devices.
+- **Privacy-redacted BLE diagnostic scanner:**
+  - Built-in one-click BLE scanner in Settings with automatic MAC/PII redaction to help diagnose vendor-specific MTA advertising packets.
+- **Intel Concurrent STA TX data-plane foundation (gated behind `DataPlaneAccel`, default off):**
+  - Added Station QoS Data (`0x88`) and TID 0 TX Block Ack (A-MPDU) negotiation plus `txRate` telemetry, with automatic clean fallback when an AP does not answer `ADDBA`.
+
+---
+
 ## v2.3.2 (Preview / 预览版)
 
 ### 中文

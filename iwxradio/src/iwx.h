@@ -160,14 +160,26 @@ public:
   bool sta_tlc() const { return _sta_tlc; }
   unsigned sta_tx_acked() const { return _sta_tx_acked; }
   unsigned sta_tx_failed() const { return _sta_tx_failed; }
-  /* Frames queued to the station's ring; tx_stats().submitted counts the
-   * AWDL data ring only, the ring its done/failed counts come from. */
   unsigned sta_tx_submitted() const { return _sta_tx_submitted; }
+  uint32_t sta_tx_last_rate() const { return _sta_tx_last_rate; }
+  uint32_t sta_tx_ba_notifs() const { return _sta_agg_notifs; }
   /* `encrypt`: the station's keys are installed and the frame carries the
    * protected bit; the firmware adds the CCMP header and MIC. */
   int sta_transmit(const uint8_t *frame, size_t len, const TxRate &rate, bool encrypt);
   bool sta_add_rx_ba(unsigned tid, uint16_t ssn, uint16_t window);
   bool sta_remove_rx_ba(unsigned tid);
+  /* Station TX A-MPDU / Block Ack on TID 0 (QoS Data, gated by DataPlaneAccel). */
+  bool sta_tx_agg_setup();
+  bool sta_tx_agg_enable(bool on);
+  bool sta_tx_agg_flush();
+  bool sta_tx_agg_ready() const { return _sta_agg_queue_enabled && _sta_agg_active; }
+  uint16_t sta_tx_agg_seq() const { return _sta_agg_seq; }
+  unsigned sta_tx_agg_queued() const { return _sta_aggq.queued; }
+  unsigned sta_tx_agg_cap() const {
+    return _sta_aggq.count > 16u ? ((_sta_aggq.count - 16u) < 128u ? (_sta_aggq.count - 16u) : 128u) : 0u;
+  }
+  int sta_transmit_agg(const uint8_t *frame, size_t len, bool encrypt, bool kick = true);
+  void sta_kick_tx_agg();
   void sta_leave();
   bool sta_active() const { return _sta_mac_added; }
   const StaParams &sta_params() const { return _sta; }
@@ -363,7 +375,11 @@ private:
   std::vector<DmaBuf> _fw_sections; /* kept until the card is reset */
   unsigned _rx_cur = 0;
   std::vector<unsigned> _rx_inflight; /* buffers being handled, oldest first (re-entrant poll) */
-  TxRing _cmdq, _dataq, _staq, _aggq;
+  TxRing _cmdq, _dataq, _staq, _sta_aggq, _aggq;
+  bool _sta_agg_queue_enabled = false;
+  bool _sta_agg_active = false;
+  uint16_t _sta_agg_seq = 0;
+  uint32_t _sta_agg_notifs = 0;
   bool _agg_queue_enabled = false;
   bool _agg_active = false;
   bool _agg_he80_active = false;
@@ -408,6 +424,7 @@ private:
   uint32_t _sta_ptk_flags = 0;
   uint8_t _sta_baid[8] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
   unsigned _sta_tx_acked = 0, _sta_tx_failed = 0, _sta_tx_fail_logged = 0, _sta_tx_submitted = 0;
+  uint32_t _sta_tx_last_rate = 0;
   bool _promisc = true;
   bool _ba_station = false;
   uint8_t _ba_peer[6] = {}, _ba_tids = 0, _ba_token[8] = {};

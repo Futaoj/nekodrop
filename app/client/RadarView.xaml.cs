@@ -195,7 +195,7 @@ public partial class RadarView : UserControl
     void OnModel(object? s, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(AppModel.Air) or nameof(AppModel.Detail) or
-            nameof(AppModel.DiscoveryBeaconUnavailable)) Update();
+            nameof(AppModel.DiscoveryBeaconUnavailable) or nameof(AppModel.MtaOn) or nameof(AppModel.MtaRelay)) Update();
     }
 
     void View_Checked(object sender, RoutedEventArgs e)
@@ -214,15 +214,17 @@ public partial class RadarView : UserControl
     {
         var air = A.Model.Air;
         var none = A.Model.Devices.Count == 0;
-        var blocked = air is "off" or "error" or "service_stopped" or "no_adapter";
+        var mtaActive = A.Model.MtaOn;
+        var ready = air == "ready" || (mtaActive && !none);
+        var blocked = !mtaActive && air is "off" or "error" or "service_stopped" or "no_adapter";
         // The list shows devices only; every other state is drawn on the radar.
-        var list = !blocked && air == "ready" && !none && ShowList;
+        var list = !blocked && ready && !none && ShowList;
 
         Blocked.Visibility = blocked ? Visibility.Visible : Visibility.Collapsed;
         RadarLayer.Visibility = !blocked && !list ? Visibility.Visible : Visibility.Collapsed;
         ListLayer.Visibility = list ? Visibility.Visible : Visibility.Collapsed;
         RadarChoice.IsEnabled = A.Model.Devices.Count <= RadarGeometry.MaxOnRadar;
-        RadarItems.Visibility = air == "ready" ? Visibility.Visible : Visibility.Collapsed;
+        RadarItems.Visibility = ready ? Visibility.Visible : Visibility.Collapsed;
 
         if (blocked) ShowBlocked(air);
 
