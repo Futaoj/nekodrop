@@ -17,6 +17,7 @@
   <a href="#交流群"><img alt="QQ群 1137780084" src="https://img.shields.io/badge/QQ%E7%BE%A4-1137780084-12b7f5?logo=qq&logoColor=white"></a>
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-0078d4">
   <img alt="speed" src="docs/badges/speed.zh-CN.svg">
+  <img alt="protocols" src="docs/badges/protocols.zh-CN.svg">
   <img alt="card" src="docs/badges/card.svg">
   <img alt="license" src="https://img.shields.io/badge/license-GPL--2.0-blue">
 </p>
